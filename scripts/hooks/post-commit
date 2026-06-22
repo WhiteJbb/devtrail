@@ -1,0 +1,23 @@
+#!/bin/sh
+# work-agent post-commit hook
+# Captures git commit to Obsidian vault automatically.
+# Install via: work-agent install-hooks --repo <path>
+
+WORK_AGENT_HOME=$(git config --local work-agent.home 2>/dev/null)
+[ -z "$WORK_AGENT_HOME" ] && exit 0
+
+PYTHON=$(git config --local work-agent.python 2>/dev/null)
+[ -z "$PYTHON" ] && PYTHON="python"
+
+PROJECT=$(git config --local work-agent.project 2>/dev/null)
+[ -z "$PROJECT" ] && PROJECT=$(basename "$(git rev-parse --show-toplevel)")
+
+REPO=$(git rev-parse --show-toplevel)
+
+# Convert Windows backslashes to forward slashes for Git Bash
+WORK_AGENT_HOME_UNIX=$(echo "$WORK_AGENT_HOME" | tr '\\' '/')
+
+cd "$WORK_AGENT_HOME_UNIX" && \
+  "$PYTHON" -m app.cli capture-commit --repo "$REPO" --project "$PROJECT" 2>/dev/null \
+  && echo "[work-agent] captured -> $PROJECT" \
+  || true

@@ -1,0 +1,5 @@
+# Default: auto line ending conversion
+* text=auto
+
+# Hook scripts must always use LF (Git Bash requires this)
+scripts/hooks/* text eol=lf

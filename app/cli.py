@@ -101,6 +101,67 @@ def init_vault() -> None:
         typer.echo(f"  기존 파일 유지: {len(result.existing_files)}개")
 
 
+@app.command("install-hooks")
+def install_hooks(
+    repo: Path = typer.Argument(..., help="대상 git 레포지토리 경로"),
+    project: str = typer.Option("", "--project", "-p", help="프로젝트 이름 (기본: 레포 폴더명)"),
+    force: bool = typer.Option(False, "--force", "-f", help="기존 hook 덮어쓰기"),
+) -> None:
+    """대상 git 레포지토리에 work-agent post-commit hook을 설치한다.
+
+    커밋할 때마다 자동으로 10_Worklog/GitSummaries/에 캡처된다.
+    """
+    import shutil
+    import stat
+    import subprocess
+    import sys
+
+    repo_path = repo.resolve()
+    if not (repo_path / ".git").exists():
+        _fail(f"{repo_path} 는 git 레포지토리가 아닙니다.")
+
+    hooks_dir = repo_path / ".git" / "hooks"
+    hook_dst = hooks_dir / "post-commit"
+
+    if hook_dst.exists() and not force:
+        typer.secho(f"이미 hook이 설치되어 있습니다: {hook_dst}", fg=typer.colors.YELLOW)
+        typer.echo("덮어쓰려면 --force 옵션을 사용하세요.")
+        raise typer.Exit(1)
+
+    hook_src = Path(__file__).parent.parent / "scripts" / "hooks" / "post-commit"
+    if not hook_src.exists():
+        _fail(f"hook 스크립트를 찾을 수 없습니다: {hook_src}")
+
+    # LF 줄 끝 강제 (Windows CRLF 환경에서도 Git Bash가 실행 가능하도록)
+    content = hook_src.read_bytes().replace(b"\r\n", b"\n")
+    hook_dst.write_bytes(content)
+    current_mode = hook_dst.stat().st_mode
+    hook_dst.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    work_agent_home = str(Path(__file__).parent.parent.resolve())
+    python_exe = sys.executable
+    project_name = project or repo_path.name
+
+    for key, val in [
+        ("work-agent.home", work_agent_home),
+        ("work-agent.python", python_exe),
+        ("work-agent.project", project_name),
+    ]:
+        subprocess.run(
+            ["git", "config", "--local", key, val],
+            cwd=str(repo_path),
+            check=True,
+            capture_output=True,
+        )
+
+    typer.secho("\npost-commit hook 설치 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  repo:    {repo_path}")
+    typer.echo(f"  project: {project_name}")
+    typer.echo(f"  python:  {python_exe}")
+    typer.echo(f"  home:    {work_agent_home}")
+    typer.echo("\n커밋할 때마다 자동으로 vault에 캡처됩니다.")
+
+
 @app.command("index-vault")
 def index_vault() -> None:
     """Obsidian Vault의 Markdown 노트를 읽고 root index.md를 갱신한다."""
