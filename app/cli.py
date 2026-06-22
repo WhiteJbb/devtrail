@@ -91,6 +91,24 @@ def write_draft(
     typer.echo("  (preview latest 로 확인할 수 있습니다)")
 
 
+@app.command("revise")
+def revise(target: str = typer.Argument("latest", help="latest 또는 slug")) -> None:
+    """기존 초안을 source 범위 안에서 문장/구조만 다듬는다(새 사실 추가 없음)."""
+    agent = BlogAgent()
+    post = _handle_llm_errors(lambda: agent.revise(target))
+
+    if post is None:
+        if target == "latest":
+            typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
+        else:
+            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
+        return
+
+    typer.secho(f"\n초안 다듬기 완료: {post.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {post.local_path}")
+    typer.echo("  (preview latest 로 확인할 수 있습니다)")
+
+
 @app.command("preview")
 def preview(target: str = typer.Argument("latest", help="latest 또는 slug")) -> None:
     """최신(또는 지정) 초안의 메타데이터와 본문 일부를 보여준다."""

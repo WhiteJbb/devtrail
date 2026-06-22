@@ -27,6 +27,7 @@ Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   
 | --- | --- |
 | `work-agent suggest-topics` | 최근 작업 기록·Git 로그·Notion 메모로 블로그 주제 추천 |
 | `work-agent write-draft "주제"` | 주제로 초안 생성 → `workspace/drafts/`에 Markdown 저장 + Notion 반영 |
+| `work-agent revise latest` | 기존 초안을 source 범위 안에서 문장/구조만 다듬기(새 사실 추가 없음) |
 | `work-agent preview latest` | 최신(또는 slug 지정) 초안의 메타데이터 + 본문 일부 |
 | `work-agent export-tistory latest` | 초안을 티스토리 붙여넣기용(HTML/MD)으로 변환 → `workspace/blogs/` |
 | `work-agent publish-done latest --url <주소>` | 티스토리 게시 완료 기록(status=published + URL → 로컬·Notion) |
