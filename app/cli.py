@@ -17,6 +17,7 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 from app.agents import BlogAgent
+from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.models import DraftRequest
 
@@ -243,6 +244,41 @@ def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 �
         typer.echo(f"  - [{verb} {mark}] {e.title}  ({e.slug})")
 
     typer.echo(f"\n  생성 {len(report.created)}건 · 갱신 {len(report.updated)}건")
+
+
+@app.command("serve-bot")
+def serve_bot() -> None:
+    """메신저 봇(텔레그램)을 long-polling으로 실행한다. 명령+알림 양방향."""
+    from app.messaging import CommandRouter, MessengerBot, get_messenger_provider
+    from app.messaging.base import MessengerNotConfiguredError
+
+    settings = get_settings()
+    try:
+        provider = get_messenger_provider(settings)
+    except MessengerNotConfiguredError as e:
+        _fail(
+            f"메신저가 설정되지 않았습니다.\n  {e}\n"
+            "  → .env에서 MESSENGER_PROVIDER=telegram, TELEGRAM_BOT_TOKEN을 설정하세요."
+        )
+
+    if not settings.allowed_chat_ids:
+        typer.secho(
+            "경고: TELEGRAM_ALLOWED_CHAT_IDS가 비어 있어 누구나 봇에 명령할 수 있습니다. "
+            "본인 chat id로 제한하세요.",
+            fg=typer.colors.YELLOW,
+        )
+
+    bot = MessengerBot(
+        provider=provider,
+        router=CommandRouter(),
+        allowed_chat_ids=settings.allowed_chat_ids,
+        default_chat_id=settings.telegram_chat_id,
+    )
+    typer.secho(f"봇 실행 중({provider.name}). Ctrl+C로 종료.", fg=typer.colors.GREEN)
+    try:
+        bot.run()
+    except KeyboardInterrupt:
+        typer.echo("\n봇을 종료합니다.")
 
 
 if __name__ == "__main__":

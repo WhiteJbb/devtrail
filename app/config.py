@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # --- Git ---
     git_log_limit: int = Field(default=20, alias="GIT_LOG_LIMIT")
 
+    # --- Messenger ---
+    messenger_provider: str = Field(default="", alias="MESSENGER_PROVIDER")
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    # 봇에 명령할 수 있는 chat id(허용 목록, 쉼표 구분). 비우면 아무나 명령 가능(권장하지 않음).
+    telegram_allowed_chat_ids: str = Field(default="", alias="TELEGRAM_ALLOWED_CHAT_IDS")
+    # 알림(outbound)을 보낼 기본 chat id.
+    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+
     # ----- 파생 경로 -----
     @property
     def workspace_path(self) -> Path:
@@ -73,6 +81,10 @@ class Settings(BaseSettings):
     @property
     def source_page_ids(self) -> list[str]:
         return [p.strip() for p in self.notion_source_page_ids.split(",") if p.strip()]
+
+    @property
+    def allowed_chat_ids(self) -> list[str]:
+        return [c.strip() for c in self.telegram_allowed_chat_ids.split(",") if c.strip()]
 
     # ----- 편의 판별 -----
     @property

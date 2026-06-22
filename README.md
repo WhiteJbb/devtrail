@@ -33,6 +33,7 @@ Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   
 | `work-agent export-tistory latest` | 초안을 티스토리 붙여넣기용(HTML/MD)으로 변환 → `workspace/blogs/` |
 | `work-agent publish-done latest --url <주소>` | 티스토리 게시 완료 기록(status=published + URL → 로컬·Notion) |
 | `work-agent sync-notion` | 로컬 draft 메타데이터를 Notion Blog DB와 동기화(상태 추적) |
+| `work-agent serve-bot` | 텔레그램 봇 실행(양방향: 폰에서 명령/알림) |
 
 설계 원칙:
 
@@ -204,7 +205,49 @@ updated_at:
 
 ---
 
-## 7. 구조
+## 7. 메신저 봇 (Telegram, 선택)
+
+폰에서 봇에게 명령을 보내 초안을 만들고 결과를 받는 양방향 연동입니다. 공개 서버/웹훅 없이 long-polling으로 동작합니다.
+
+### 7-1. 설정
+
+1. 텔레그램에서 **@BotFather**에게 `/newbot` → 봇 토큰을 받아 `TELEGRAM_BOT_TOKEN`에 넣습니다.
+2. `MESSENGER_PROVIDER=telegram`로 설정합니다.
+3. 본인 **chat id**를 `TELEGRAM_ALLOWED_CHAT_IDS`에 넣어 **나만 명령할 수 있게** 제한합니다(비우면 누구나 명령 가능 — 권장하지 않음). chat id는 봇에게 아무 메시지나 보낸 뒤 `https://api.telegram.org/bot<토큰>/getUpdates`에서 확인할 수 있습니다.
+4. 알림(outbound)을 받을 기본 대상은 `TELEGRAM_CHAT_ID`에 넣습니다.
+
+```env
+MESSENGER_PROVIDER=telegram
+TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_ALLOWED_CHAT_IDS=123456789
+TELEGRAM_CHAT_ID=123456789
+```
+
+### 7-2. 실행
+
+```bash
+work-agent serve-bot     # Ctrl+C로 종료
+```
+
+### 7-3. 봇 명령
+
+```
+/list              초안 목록
+/topics            주제 추천
+/draft <주제>      초안 생성
+/revise [slug]     초안 다듬기
+/preview [slug]    미리보기
+/export [slug]     티스토리용 변환
+/publish <url>     게시 완료 기록(최신 초안)
+/sync              Notion 동기화
+/help              도움말
+```
+
+> 봇은 CLI와 같은 `BlogAgent`를 호출하는 얇은 어댑터입니다. provider를 교체하면(예: Mattermost) 같은 라우터를 재사용할 수 있습니다.
+
+---
+
+## 8. 구조
 
 CLI는 얇게 유지하고, 로직은 계층으로 분리했습니다.
 
@@ -219,27 +262,28 @@ app/
 ├─ notion/                # client(protocol) / mock / real / mapping / factory
 ├─ repositories/          # blog_repository(로컬) / notion_blog_repository
 ├─ storage/markdown_storage.py   # frontmatter ↔ BlogPost
+├─ messaging/             # base / telegram / factory / router / bot (메신저 어댑터)
 ├─ models/                # BlogPost, SourceChunk, ...
 └─ prompts/*.md           # LLM 프롬프트(코드 밖으로 분리)
 ```
 
-흐름: `cli → blog_agent → services → (content_sources / llm / repositories / storage / notion)`
+흐름: `cli(또는 messaging) → blog_agent → services → (content_sources / llm / repositories / storage / notion)`
 
 자세한 설계 규칙은 [AGENTS.md](AGENTS.md) 참고.
 
 ---
 
-## 8. 테스트
+## 9. 테스트
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-로컬/Git 소스, collector, markdown storage, 저장소, LLM factory, 프롬프트, 서비스, CLI, Notion(mock client/mapping/sync/source)을 커버합니다. Notion 실제 API는 mock과 분리되어 키 없이 테스트됩니다.
+로컬/Git 소스, collector, markdown storage, 저장소, LLM factory, 프롬프트, 서비스, CLI, Notion(mock client/mapping/sync/source), 메신저(router/bot)를 커버합니다. Notion 실제 API와 메신저 네트워크는 mock/fake로 분리되어 키 없이 테스트됩니다.
 
 ---
 
-## 9. 향후 확장
+## 10. 향후 확장
 
 이번 MVP는 Blog Agent이며, 같은 계층 구조 위에 아래를 추가할 수 있게 설계되었습니다.
 
