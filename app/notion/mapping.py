@@ -85,16 +85,38 @@ _BLOCK_PREFIX = {
 }
 
 
+def _rich_join(rich: list) -> str:
+    return "".join(r.get("plain_text", r.get("text", {}).get("content", "")) for r in rich)
+
+
+def _image_url(payload: dict) -> str:
+    """이미지 블록에서 URL 추출. external(안정) 우선, file(임시 서명 URL) 폴백."""
+    external = (payload.get("external") or {}).get("url", "")
+    file_url = (payload.get("file") or {}).get("url", "")
+    return external or file_url
+
+
 def block_to_text(block: dict) -> str:
     """Notion 블록 하나를 평문(간이 마크다운)으로 변환.
 
-    rich_text를 가진 일반 텍스트 블록을 처리한다. 코드 블록은 펜스로 감싼다.
-    이미지/임베드 등 텍스트 없는 블록은 빈 문자열을 반환한다.
+    rich_text 텍스트 블록, 코드 블록(펜스), 이미지 블록(마크다운 이미지)을 처리한다.
+    URL/텍스트가 없는 블록은 빈 문자열을 반환한다.
+
+    주의: Notion 업로드 이미지(file)의 URL은 임시 서명 URL이라 만료될 수 있다.
+    안정적으로 쓰려면 외부 URL 이미지를 권장한다.
     """
     block_type = block.get("type", "")
     payload = block.get(block_type, {})
+
+    if block_type == "image":
+        url = _image_url(payload)
+        if not url:
+            return ""
+        caption = _rich_join(payload.get("caption", []))
+        return f"![{caption}]({url})"
+
     rich = payload.get("rich_text", [])
-    text = "".join(r.get("plain_text", r.get("text", {}).get("content", "")) for r in rich)
+    text = _rich_join(rich)
 
     if block_type == "code":
         lang = payload.get("language", "")

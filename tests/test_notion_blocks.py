@@ -13,7 +13,24 @@ def test_block_to_text_variants():
     assert mapping.block_to_text(h2) == "## 제목"
     assert mapping.block_to_text(bullet) == "- 항목"
     assert mapping.block_to_text(code) == "```python\nprint(1)\n```"
-    assert mapping.block_to_text(image) == ""
+    assert mapping.block_to_text(image) == ""  # URL 없는 이미지 블록은 무시
+
+
+def test_block_to_text_image_variants():
+    external = {
+        "type": "image",
+        "image": {
+            "type": "external",
+            "external": {"url": "https://img.test/a.png"},
+            "caption": [{"plain_text": "구성도"}],
+        },
+    }
+    file_img = {
+        "type": "image",
+        "image": {"type": "file", "file": {"url": "https://notion.test/signed.png"}, "caption": []},
+    }
+    assert mapping.block_to_text(external) == "![구성도](https://img.test/a.png)"
+    assert mapping.block_to_text(file_img) == "![](https://notion.test/signed.png)"
 
 
 def test_mock_get_page_text(tmp_path):
