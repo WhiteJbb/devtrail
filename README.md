@@ -8,11 +8,12 @@ The detailed refactoring plan lives in [docs/architecture.md](docs/architecture.
 
 ## Current Phase
 
-This branch implements Phase 1 through Phase 3 of the LLM Wiki Core refactor:
+This branch implements Phase 1 through Phase 4 of the LLM Wiki Core refactor:
 
 - Phase 1: docs and settings now describe Obsidian LLM Wiki Core as the project center.
 - Phase 2: `work-agent init-vault` creates the base vault structure.
 - Phase 3: `work-agent index-vault` parses Markdown/frontmatter/wiki links and updates `index.md`; `work-agent search` performs simple keyword search.
+- Phase 4: `work-agent capture`, `capture-chat`, `capture-commit`, and `daily-log` store raw traces in safe vault areas and append `log.md`.
 
 Existing BlogAgent, Notion, Telegram, Tistory export, and document agents are preserved.
 
@@ -22,6 +23,10 @@ Existing BlogAgent, Notion, Telegram, Tistory export, and document agents are pr
 work-agent init-vault
 work-agent index-vault
 work-agent search "RAG"
+work-agent capture "오늘 작업 메모" --project WorkAgent
+work-agent capture-chat --source chatgpt --project WorkAgent --file chat.md
+work-agent capture-commit --repo . --project WorkAgent
+work-agent daily-log
 ```
 
 Legacy and output-agent commands still exist:

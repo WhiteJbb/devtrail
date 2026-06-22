@@ -17,7 +17,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
+from app.agents import BlogAgent, CaptureAgent, PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.models import DraftRequest
@@ -53,6 +53,20 @@ def _wiki_service_from_settings() -> WikiService:
     if not settings.obsidian_vault_root:
         _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
     return WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
+
+
+def _capture_agent() -> CaptureAgent:
+    try:
+        return CaptureAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Capture를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
+def _print_capture_result(label: str, result) -> None:
+    verb = "생성" if result.created else "기존 파일 유지"
+    typer.secho(f"\n{label} {verb} 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.echo(f"  vault path: {result.rel_path}")
 
 
 @app.command("init-vault")
@@ -99,6 +113,57 @@ def search_vault(
         typer.echo(f"  score: {result.score}  matched: {', '.join(result.matched_terms)}")
         if note.summary:
             typer.echo(f"  {note.summary}")
+
+
+@app.command("capture")
+def capture_note(
+    text: str = typer.Argument(..., help="저장할 메모 내용"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+    source: str = typer.Option("manual", "--source", help="원본 출처"),
+) -> None:
+    """메모를 00_Inbox/Captures에 raw Markdown으로 저장한다."""
+    try:
+        result = _capture_agent().capture(text=text, project=project, source=source)
+    except ValueError as e:
+        _fail(str(e))
+    _print_capture_result("capture", result)
+
+
+@app.command("capture-chat")
+def capture_chat(
+    file: Path = typer.Option(..., "--file", "-f", help="저장할 대화 Markdown/text 파일"),
+    source: str = typer.Option(..., "--source", "-s", help="chatgpt, codex, claude 등 출처"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+) -> None:
+    """대화 파일을 00_Inbox/Chats에 raw Markdown으로 저장한다."""
+    try:
+        result = _capture_agent().capture_chat(file_path=file, source=source, project=project)
+    except (FileNotFoundError, ValueError) as e:
+        _fail(str(e))
+    _print_capture_result("chat capture", result)
+
+
+@app.command("capture-commit")
+def capture_commit(
+    repo: Path = typer.Option(Path.cwd(), "--repo", "-r", help="커밋을 읽을 git 저장소"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+    ref: str = typer.Option("HEAD", "--ref", help="캡처할 commit/ref"),
+) -> None:
+    """git commit을 10_Worklog/GitSummaries에 raw Markdown으로 저장한다."""
+    try:
+        result = _capture_agent().capture_commit(repo_dir=repo, project=project, ref=ref)
+    except ValueError as e:
+        _fail(str(e))
+    _print_capture_result("commit capture", result)
+
+
+@app.command("daily-log")
+def daily_log(
+    project: str = typer.Option("", "--project", "-p", help="프로젝트별 daily log가 필요할 때 지정"),
+) -> None:
+    """오늘 daily worklog 파일을 10_Worklog/Daily에 만든다."""
+    result = _capture_agent().daily_log(project=project)
+    _print_capture_result("daily log", result)
 
 
 @app.command("suggest-topics")
