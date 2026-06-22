@@ -31,5 +31,8 @@ work-agent = "app.cli:app"
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+"app.prompts" = ["*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
