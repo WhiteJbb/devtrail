@@ -12,6 +12,7 @@ from app.content_sources.collector import SourceCollector
 from app.content_sources.git_source import GitSource
 from app.content_sources.local_doc_source import LocalDocSource
 from app.content_sources.notion_source import NotionSource
+from app.content_sources.obsidian_source import ObsidianSource
 from app.notion.factory import get_notion_client
 
 
@@ -31,4 +32,12 @@ def build_source_collector(settings: Settings, repo_dir: Path) -> SourceCollecto
             source_page_ids=settings.source_page_ids,
         ),
     ]
+    if settings.obsidian_enabled:
+        sources.append(
+            ObsidianSource(
+                vault_dir=Path(settings.obsidian_vault_dir),
+                tags=settings.obsidian_tag_list,
+                folders=settings.obsidian_folder_list,
+            )
+        )
     return SourceCollector(sources, char_budget=settings.context_char_budget)

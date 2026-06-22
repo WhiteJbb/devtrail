@@ -7,10 +7,18 @@
 from __future__ import annotations
 
 import json
+from inspect import signature
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.llm.base import LLMProvider
+
+
+def _complete_json_mode(llm: "LLMProvider", prompt: str, system: str = "") -> str:
+    """json_mode를 지원하는 provider면 활성화해 호출, 아니면 일반 호출."""
+    if "json_mode" in signature(llm.complete).parameters:
+        return llm.complete(prompt, system, json_mode=True)
+    return llm.complete(prompt, system)
 
 
 class JSONParseError(ValueError):
@@ -77,9 +85,9 @@ def complete_json(llm: "LLMProvider", prompt: str, system: str = "") -> Any:
 
     LLM이 가끔 깨진/감싼 JSON을 줄 때 한 번 더 기회를 줘서 명령 실패를 줄인다.
     """
-    raw = llm.complete(prompt, system)
+    raw = _complete_json_mode(llm, prompt, system)
     try:
         return extract_json_object(raw)
     except JSONParseError:
-        raw2 = llm.complete(prompt + _FIX_HINT, system)
+        raw2 = _complete_json_mode(llm, prompt + _FIX_HINT, system)
         return extract_json_object(raw2)  # 두 번째도 실패하면 그대로 전파

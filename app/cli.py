@@ -355,6 +355,59 @@ def ask(
     typer.echo(reply)
 
 
+@app.command("wiki-ingest")
+def wiki_ingest(
+    folder: str = typer.Option("", "--folder", "-f", help="특정 폴더만 처리 (예: 50_Reference/AI)"),
+) -> None:
+    """Obsidian 볼트 소스 문서를 읽어 wiki 페이지를 생성·갱신한다."""
+    from app.agents.wiki_agent import build_wiki_agent
+
+    settings = get_settings()
+    if not settings.wiki_enabled:
+        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+
+    label = f"폴더: {folder}" if folder else f"전체 볼트: {settings.obsidian_vault_dir}"
+    typer.echo(f"wiki 생성 중... ({label})")
+    agent = build_wiki_agent(char_budget=settings.context_char_budget)
+    result = _handle_llm_errors(lambda: agent.ingest(folder_filter=folder))
+    typer.secho(result, fg=typer.colors.GREEN)
+
+
+@app.command("wiki-query")
+def wiki_query(
+    question: str = typer.Argument(..., help="위키에 물어볼 질문"),
+    save: str = typer.Option("", "--save", "-s", help="답변을 wiki 페이지로 저장 (예: ai/rag-tips.md)"),
+) -> None:
+    """wiki를 탐색해 질문에 답한다. --save로 답변을 페이지로 저장할 수 있다."""
+    from app.agents.wiki_agent import build_wiki_agent
+
+    settings = get_settings()
+    if not settings.wiki_enabled:
+        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+
+    agent = build_wiki_agent(char_budget=settings.context_char_budget)
+    answer = _handle_llm_errors(lambda: agent.query(question))
+    typer.echo(answer)
+    if save:
+        msg = _handle_llm_errors(lambda: agent.file_answer(question, answer, save))
+        typer.secho(f"\n{msg}", fg=typer.colors.GREEN)
+
+
+@app.command("wiki-lint")
+def wiki_lint() -> None:
+    """wiki 건강 상태 점검: 고아 페이지, 누락 링크, 갱신 필요 항목 등."""
+    from app.agents.wiki_agent import build_wiki_agent
+
+    settings = get_settings()
+    if not settings.wiki_enabled:
+        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+
+    typer.echo("wiki 점검 중...")
+    agent = build_wiki_agent(char_budget=settings.context_char_budget)
+    result = _handle_llm_errors(lambda: agent.lint())
+    typer.echo(result)
+
+
 @app.command("serve-bot")
 def serve_bot() -> None:
     """메신저 봇(텔레그램)을 long-polling으로 실행한다. 자연어/명령 + 알림 양방향."""

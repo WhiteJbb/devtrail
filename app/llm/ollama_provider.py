@@ -21,7 +21,7 @@ class OllamaProvider:
         self.timeout = timeout
         self.max_retries = max_retries
 
-    def complete(self, prompt: str, system: str = "") -> str:
+    def complete(self, prompt: str, system: str = "", json_mode: bool = False) -> str:
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -29,6 +29,8 @@ class OllamaProvider:
             "stream": False,
             "options": {"temperature": 0.4},
         }
+        if json_mode:
+            payload["format"] = "json"
         resp = request_with_retry(
             lambda: httpx.post(
                 f"{self.base_url}/api/generate",

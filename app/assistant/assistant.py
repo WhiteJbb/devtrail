@@ -30,6 +30,7 @@ DESCRIPTIONS = {
     "todo": "다음 할 일 제안",
     "portfolio": "포트폴리오 초안 생성",
     "resume": "이력서/자기소개서 초안 생성",
+    "wiki-query": "wiki 검색",
 }
 
 # command → CommandRouter 슬래시 토큰(블로그 명령)
@@ -47,10 +48,11 @@ _ROUTER_CMD = {
 _HELP = (
     "이렇게 자유롭게 말해보세요:\n"
     "· \"쓸만한 주제 추천해줘\"\n"
-    "· \"XCoreChat 개발환경 분리로 초안 써줘\"\n"
+    "· \"프로젝트 기반으로 초안 써줘\"\n"
     "· \"방금 초안 다듬어줘\"\n"
     "· \"오늘 작업 회고 정리해줘\"\n"
-    "· \"다음 할 일 알려줘\" / \"포트폴리오 초안\" / \"이력서 초안\""
+    "· \"다음 할 일 알려줘\" / \"포트폴리오 초안\" / \"이력서 초안\"\n"
+    "· \"wiki에서 RAG 구축 방법 알려줘\" (wiki 검색)"
 )
 
 # 확장 Agent 팩토리(테스트에서 주입 가능)
@@ -94,6 +96,14 @@ class Assistant:
     # ----- 3) 실행 -----
     def execute(self, intent: Intent) -> str:
         cmd = intent.command
+
+        if cmd == "wiki-query":
+            from app.agents.wiki_agent import build_wiki_agent
+            try:
+                agent = build_wiki_agent()
+                return agent.query(intent.arg or "")
+            except RuntimeError as e:
+                return f"wiki 검색 실패: {e}"
 
         if cmd in self.doc_agents:
             agent = self.doc_agents[cmd]()
