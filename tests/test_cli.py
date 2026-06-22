@@ -55,3 +55,10 @@ def test_preview_no_drafts(monkeypatch):
     result = runner.invoke(cli.app, ["preview", "latest"])
     assert result.exit_code == 0
     assert "저장된 초안이 없습니다" in result.output
+
+
+def test_ask_requires_llm():
+    # LLM 미설정 환경에서는 자연어 해석이 불가 → 안내 후 exit 1
+    result = runner.invoke(cli.app, ["ask", "오늘 회고 정리해줘"])
+    assert result.exit_code == 1
+    assert "LLM이 연결되어 있지 않습니다" in result.output
