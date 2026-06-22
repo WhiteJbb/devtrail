@@ -1,7 +1,6 @@
 """work-agent CLI 진입점.
 
-이 파일은 얇게 유지한다 — 인자 파싱과 출력만 담당하고,
-실제 로직은 services/agents 계층에 둔다. (스테이지 4에서 채운다)
+얇게 유지한다 — 인자 파싱과 출력만 담당하고, 실제 로직은 BlogAgent에 위임한다.
 """
 
 from __future__ import annotations
@@ -17,37 +16,111 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+from app.agents import BlogAgent
+from app.llm.base import LLMError, LLMNotConfiguredError
+from app.models import DraftRequest
+
 app = typer.Typer(
     add_completion=False,
     help="Work Agent — 작업 기록 기반 기술 블로그 초안 생성기",
     no_args_is_help=True,
 )
 
-_PENDING = "이 명령은 다음 단계에서 구현됩니다."
+
+def _fail(message: str) -> None:
+    typer.secho(message, fg=typer.colors.RED, err=True)
+    raise typer.Exit(code=1)
+
+
+def _handle_llm_errors(func):
+    """LLM 미설정/호출 실패를 사용자 친화적 메시지로 변환."""
+    try:
+        return func()
+    except LLMNotConfiguredError as e:
+        _fail(
+            f"LLM이 연결되어 있지 않습니다.\n  {e}\n"
+            "  → .env에서 LLM_PROVIDER와 관련 설정을 채운 뒤 다시 시도하세요."
+        )
+    except LLMError as e:
+        _fail(f"LLM 호출에 실패했습니다.\n  {e}")
 
 
 @app.command("suggest-topics")
 def suggest_topics() -> None:
     """최근 작업 기록을 바탕으로 블로그 주제를 추천한다."""
-    typer.echo(_PENDING)
+    agent = BlogAgent()
+    suggestions = _handle_llm_errors(agent.suggest_topics)
+
+    if not suggestions:
+        typer.echo("추천할 주제를 찾지 못했습니다. 작업 기록을 더 채운 뒤 다시 시도하세요.")
+        return
+
+    for i, s in enumerate(suggestions, 1):
+        title = s.title_candidates[0] if s.title_candidates else "(제목 후보 없음)"
+        typer.secho(f"\n[{i}] {title}", fg=typer.colors.CYAN, bold=True)
+        for alt in s.title_candidates[1:]:
+            typer.echo(f"    · {alt}")
+        if s.reason:
+            typer.echo(f"  이유: {s.reason}")
+        if s.outline:
+            typer.echo("  예상 목차:")
+            for item in s.outline:
+                typer.echo(f"    - {item}")
+        if s.source_refs:
+            typer.echo(f"  source: {', '.join(s.source_refs)}")
 
 
 @app.command("write-draft")
-def write_draft(topic: str = typer.Argument(..., help="블로그 주제")) -> None:
-    """특정 주제로 블로그 초안을 생성한다."""
-    typer.echo(_PENDING)
+def write_draft(
+    topic: str = typer.Argument(..., help="블로그 주제"),
+    source_project: str = typer.Option("", "--project", help="관련 프로젝트명"),
+    no_notion: bool = typer.Option(False, "--no-notion", help="Notion 동기화 건너뛰기"),
+) -> None:
+    """특정 주제로 블로그 초안을 생성해 workspace/drafts/에 저장한다."""
+    agent = BlogAgent()
+    request = DraftRequest(topic=topic, source_project=source_project, sync_notion=not no_notion)
+    post = _handle_llm_errors(lambda: agent.write_draft(request))
+
+    typer.secho(f"\n초안 생성 완료: {post.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {post.local_path}")
+    typer.echo(f"  slug: {post.slug}")
+    if post.tags:
+        typer.echo(f"  태그: {', '.join(post.tags)}")
+    if post.source_refs:
+        typer.echo(f"  source: {', '.join(post.source_refs)}")
+    typer.echo("  (preview latest 로 확인할 수 있습니다)")
 
 
 @app.command("preview")
 def preview(target: str = typer.Argument("latest", help="latest 또는 slug")) -> None:
     """최신(또는 지정) 초안의 메타데이터와 본문 일부를 보여준다."""
-    typer.echo(_PENDING)
+    agent = BlogAgent()
+    result = agent.preview(target)
+    if result is None:
+        if target == "latest":
+            typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
+        else:
+            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
+        return
+
+    post = result.post
+    typer.secho(f"\n{post.title}", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  status: {post.status.value}  |  slug: {post.slug}")
+    if post.tags:
+        typer.echo(f"  태그: {', '.join(post.tags)}")
+    if post.source_project:
+        typer.echo(f"  프로젝트: {post.source_project}")
+    if post.source_refs:
+        typer.echo(f"  source: {', '.join(post.source_refs)}")
+    typer.echo(f"  파일: {post.local_path}")
+    typer.secho("\n--- 본문 일부 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.excerpt)
 
 
 @app.command("sync-notion")
-def sync_notion(dry_run: bool = typer.Option(False, "--dry-run")) -> None:
+def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 반영 없이 계획만 출력")) -> None:
     """로컬 draft 메타데이터를 Notion Blog DB와 동기화한다."""
-    typer.echo(_PENDING)
+    typer.echo("Notion 동기화는 스테이지 5에서 구현됩니다.")
 
 
 if __name__ == "__main__":
