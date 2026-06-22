@@ -258,6 +258,37 @@ def worklog() -> None:
     typer.echo(result.text)
 
 
+@app.command("push-digest")
+def push_digest(
+    worklog: bool = typer.Option(False, "--worklog", help="작업 회고도 함께 보냄"),
+) -> None:
+    """주제 추천(+선택 작업 회고)을 메신저로 보낸다. 스케줄러로 정기 실행하면 알림처럼 동작."""
+    from app.messaging import get_messenger_provider
+    from app.messaging.base import MessengerNotConfiguredError
+    from app.services import build_digest
+
+    settings = get_settings()
+    try:
+        provider = get_messenger_provider(settings)
+    except MessengerNotConfiguredError as e:
+        _fail(
+            f"메신저가 설정되지 않았습니다.\n  {e}\n"
+            "  → .env에서 MESSENGER_PROVIDER, 토큰을 설정하세요."
+        )
+    if not settings.telegram_chat_id:
+        _fail("보낼 대상이 없습니다. .env에서 TELEGRAM_CHAT_ID를 설정하세요.")
+
+    suggestions = _handle_llm_errors(BlogAgent().suggest_topics)
+    worklog_text = ""
+    if worklog:
+        worklog_text = _handle_llm_errors(lambda: WorklogAgent().generate(save=False).text)
+
+    text = build_digest(suggestions, worklog_text)
+    provider.send(settings.telegram_chat_id, text)
+    typer.secho("푸시 전송 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  대상 chat: {settings.telegram_chat_id}  ·  주제 {len(suggestions)}건")
+
+
 @app.command("serve-bot")
 def serve_bot() -> None:
     """메신저 봇(텔레그램)을 long-polling으로 실행한다. 명령+알림 양방향."""
