@@ -25,5 +25,9 @@ class NotionClient(Protocol):
         ...
 
     def query_records(self, database_id: str) -> list[NotionRecord]:
-        """idea/worklog 등 일반 DB의 레코드를 반환."""
+        """idea/worklog 등 일반 DB의 레코드를 반환(본문 없이 제목/요약 수준)."""
+        ...
+
+    def get_page_text(self, page_id: str) -> str:
+        """페이지 본문(블록 내용)을 평문으로 반환. 없으면 빈 문자열."""
         ...

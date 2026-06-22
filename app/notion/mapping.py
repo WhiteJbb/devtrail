@@ -70,6 +70,37 @@ def _read_rich_text(prop: dict) -> str:
     return "".join(p.get("plain_text", p.get("text", {}).get("content", "")) for p in parts)
 
 
+# 블록 타입 → 마크다운 접두사. 본문 블록을 평문/간이 마크다운으로 변환할 때 사용.
+_BLOCK_PREFIX = {
+    "heading_1": "# ",
+    "heading_2": "## ",
+    "heading_3": "### ",
+    "bulleted_list_item": "- ",
+    "numbered_list_item": "1. ",
+    "to_do": "- ",
+    "quote": "> ",
+}
+
+
+def block_to_text(block: dict) -> str:
+    """Notion 블록 하나를 평문(간이 마크다운)으로 변환.
+
+    rich_text를 가진 일반 텍스트 블록을 처리한다. 코드 블록은 펜스로 감싼다.
+    이미지/임베드 등 텍스트 없는 블록은 빈 문자열을 반환한다.
+    """
+    block_type = block.get("type", "")
+    payload = block.get(block_type, {})
+    rich = payload.get("rich_text", [])
+    text = "".join(r.get("plain_text", r.get("text", {}).get("content", "")) for r in rich)
+
+    if block_type == "code":
+        lang = payload.get("language", "")
+        return f"```{lang}\n{text}\n```"
+    if not text:
+        return ""
+    return _BLOCK_PREFIX.get(block_type, "") + text
+
+
 def page_to_row(page: dict) -> NotionBlogRow:
     """Notion page 객체 → NotionBlogRow."""
     props = page.get("properties", {})

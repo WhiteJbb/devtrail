@@ -62,3 +62,15 @@ class MockNotionClient:
     def query_records(self, database_id: str) -> list[NotionRecord]:
         records = self._data.get("records", {}).get(database_id, [])
         return [NotionRecord(**r) for r in records]
+
+    def get_page_text(self, page_id: str) -> str:
+        # 시드된 레코드 중 id가 일치하는 것의 본문을 돌려준다.
+        # 우선순위: records[*].body > records[*].text. 명시 페이지는 pages[page_id]에 저장.
+        pages = self._data.get("pages", {})
+        if page_id in pages:
+            return pages[page_id]
+        for records in self._data.get("records", {}).values():
+            for rec in records:
+                if rec.get("id") == page_id:
+                    return rec.get("body") or rec.get("text") or ""
+        return ""
