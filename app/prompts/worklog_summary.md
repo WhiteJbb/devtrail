@@ -22,4 +22,4 @@
 - (source에서 드러나는 미완/후속 작업. 없으면 생략)
 
 # Source
-{{CONTEXT}}
+{{CONTEXT_PACK}}

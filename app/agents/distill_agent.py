@@ -17,7 +17,9 @@ from app.services.wiki_service import WikiNote, WikiService
 
 
 _RAW_PREFIXES = ("00_Inbox/", "10_Worklog/")
-_MAX_NOTE_CHARS = 1800
+_KNOWLEDGE_PREFIXES = ("20_Knowledge/", "30_Projects/")
+_MAX_NOTE_CHARS = 3000
+_MAX_RELATED = 8
 
 
 @dataclass(frozen=True)
@@ -62,11 +64,14 @@ class DistillAgent:
             return DistillResult(written=[], source_refs=[])
 
         context = self._render_context(notes)
+        related = self._find_related_knowledge(notes)
+        related_section = self._render_related_knowledge(related)
         prompt = render_prompt(
             "distill_candidates",
             KIND=kind,
             DATE=self._date(),
             CONTEXT=context,
+            RELATED_KNOWLEDGE=related_section,
         )
         data = complete_json(self._llm(), prompt)
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
@@ -91,6 +96,33 @@ class DistillAgent:
     def _note_date(self, note: WikiNote) -> str:
         value = note.metadata.get("date") or note.metadata.get("created_at") or ""
         return str(value)[:10]
+
+    def _find_related_knowledge(self, notes: list[WikiNote]) -> list[WikiNote]:
+        """기존 Knowledge/Projects 노트 중 관련된 것을 찾아 wikilink 후보로 반환."""
+        terms: set[str] = set()
+        for note in notes:
+            proj = note.metadata.get("project")
+            if proj:
+                terms.add(str(proj))
+            for tag in note.metadata.get("tags", []):
+                terms.add(str(tag))
+            for word in note.title.split():
+                if len(word) > 2:
+                    terms.add(word)
+        if not terms:
+            return []
+        query = " ".join(list(terms)[:12])
+        results = self.wiki_service.search(query, limit=_MAX_RELATED)
+        return [r.note for r in results if r.note.path.startswith(_KNOWLEDGE_PREFIXES)]
+
+    def _render_related_knowledge(self, related: list[WikiNote]) -> str:
+        if not related:
+            return "(관련 기존 지식 노트 없음)"
+        lines = []
+        for note in related:
+            stem = Path(note.path).stem
+            lines.append(f"- [[{stem}]] ({note.path}) — {note.title}")
+        return "\n".join(lines)
 
     def _render_context(self, notes: list[WikiNote]) -> str:
         parts: list[str] = []

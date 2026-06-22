@@ -84,6 +84,7 @@ class CaptureAgent:
         return result
 
     def capture_commit(self, repo_dir: Path, project: str = "", ref: str = "HEAD") -> CaptureResult:
+        repo_dir = repo_dir.resolve()
         if self._git(repo_dir, ["rev-parse", "--is-inside-work-tree"]) is None:
             raise ValueError(f"not a git repository: {repo_dir}")
 

@@ -19,4 +19,4 @@
 여러 프로젝트가 있으면 각각 위 구조로 반복한다.
 
 # Source
-{{CONTEXT}}
+{{CONTEXT_PACK}}

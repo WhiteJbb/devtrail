@@ -143,22 +143,34 @@ class CommandRouter:
 
         if cmd == "worklog":
             from app.agents import WorklogAgent
-            result = WorklogAgent().generate()
+            try:
+                result = WorklogAgent().generate()
+            except RuntimeError as e:
+                return f"실행 실패: {e}"
             return f"작업 회고 완료\n\n{result.text[:1500]}"
 
         if cmd == "todo":
             from app.agents import TodoAgent
-            result = TodoAgent().generate()
+            try:
+                result = TodoAgent().generate()
+            except RuntimeError as e:
+                return f"실행 실패: {e}"
             return f"할 일 제안\n\n{result.text[:1500]}"
 
         if cmd == "portfolio":
             from app.agents import PortfolioAgent
-            result = PortfolioAgent().generate()
+            try:
+                result = PortfolioAgent().generate()
+            except RuntimeError as e:
+                return f"실행 실패: {e}"
             return f"포트폴리오 초안\n\n{result.text[:1500]}"
 
         if cmd == "resume":
             from app.agents import ResumeAgent
-            result = ResumeAgent().generate()
+            try:
+                result = ResumeAgent().generate()
+            except RuntimeError as e:
+                return f"실행 실패: {e}"
             return f"이력서 초안\n\n{result.text[:1500]}"
 
         if cmd in ("write", "wb"):
