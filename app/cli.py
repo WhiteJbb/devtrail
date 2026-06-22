@@ -17,9 +17,10 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, CaptureAgent, DistillAgent, PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
+from app.agents import BlogAgent, CaptureAgent, CuratorAgent, DistillAgent, PortfolioAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
+from app.memory import ContextPackBuilder
 from app.models import DraftRequest
 from app.services.wiki_service import WikiService
 
@@ -209,6 +210,122 @@ def suggest_memory_patch() -> None:
     """최근 raw 기록에서 AgentMemory patch 후보를 60_Candidates/MemoryPatches에 만든다."""
     result = _handle_llm_errors(lambda: _distill_agent().suggest_memory_patch())
     _print_distill_result("suggest-memory-patch", result)
+
+
+@app.command("build-context")
+def build_context(
+    topic: str = typer.Argument(..., help="문맥을 수집할 주제"),
+    show_refs: bool = typer.Option(False, "--refs", "-r", help="source_refs 목록 출력"),
+) -> None:
+    """주제 관련 AgentMemory / Project Context / 관련 노트를 묶어 Context Pack을 만든다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    from pathlib import Path
+    vault_dir = Path(settings.obsidian_vault_root)
+    builder = ContextPackBuilder(vault_dir)
+    pack = builder.build(topic)
+
+    typer.secho(f"\nContext Pack: {topic}", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  source_refs: {len(pack.source_refs)}개")
+    typer.secho("\n--- Context Pack ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(pack.render())
+    if show_refs:
+        typer.secho("\n--- Source Refs ---", fg=typer.colors.BRIGHT_BLACK)
+        for ref in pack.source_refs:
+            typer.echo(f"  {ref}")
+
+
+def _curator_agent() -> CuratorAgent:
+    try:
+        return CuratorAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Curator를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
+@app.command("list-candidates")
+def list_candidates() -> None:
+    """60_Candidates/ 하위 후보 노트 목록을 보여준다."""
+    items = _curator_agent().list_candidates()
+    if not items:
+        typer.echo("60_Candidates/ 에 후보가 없습니다.")
+        return
+
+    typer.secho(f"\n후보 {len(items)}개", fg=typer.colors.CYAN, bold=True)
+    for item in items:
+        typer.echo(
+            f"  [{item.kind}] {item.title}"
+            + (f"  ({item.project})" if item.project else "")
+        )
+        typer.echo(f"    {item.rel_path}")
+
+
+@app.command("preview-candidate")
+def preview_candidate(
+    rel_path: str = typer.Argument(..., help="60_Candidates/ 기준 상대 경로"),
+) -> None:
+    """후보 노트의 내용을 미리 본다."""
+    try:
+        content = _curator_agent().preview_candidate(rel_path)
+    except ValueError as e:
+        _fail(str(e))
+    typer.secho(f"\n--- {rel_path} ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(content)
+
+
+@app.command("promote-candidate")
+def promote_candidate(
+    rel_path: str = typer.Argument(..., help="승격할 후보 노트 경로 (vault 기준)"),
+) -> None:
+    """후보 노트를 공식 Knowledge/Decision/Memory 영역으로 승격한다."""
+    try:
+        result = _curator_agent().promote_candidate(rel_path)
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho("\n승격 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  후보: {result.candidate_path}")
+    typer.echo(f"  승격됨: {result.promoted_path}")
+    typer.echo(f"  종류: {result.kind}")
+
+
+@app.command("apply-memory-patch")
+def apply_memory_patch(
+    rel_path: str = typer.Argument(..., help="적용할 MemoryPatch 후보 경로 (vault 기준)"),
+) -> None:
+    """MemoryPatch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다."""
+    try:
+        result = _curator_agent().apply_memory_patch(rel_path)
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho("\n메모리 패치 반영 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  후보: {result.candidate_path}")
+    typer.echo(f"  반영됨: {result.promoted_path}")
+
+
+@app.command("write-blog")
+def write_blog(
+    topic: str = typer.Argument(..., help="블로그 주제"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+) -> None:
+    """Context Pack을 기반으로 블로그 초안을 생성해 50_Outputs/Blog/Drafts/에 저장한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. write-draft로 기존 흐름을 사용하거나 .env에서 경로를 설정하세요.")
+    try:
+        agent = WikiBlogAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+
+    draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=project))
+    typer.secho(f"\n블로그 초안 생성 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {draft.path}")
+    typer.echo(f"  vault path: {draft.rel_path}")
+    if draft.tags:
+        typer.echo(f"  태그: {', '.join(draft.tags)}")
+    if draft.source_refs:
+        typer.echo(f"  source_refs: {len(draft.source_refs)}개")
 
 
 @app.command("suggest-topics")

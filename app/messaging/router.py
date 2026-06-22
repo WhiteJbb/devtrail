@@ -17,11 +17,18 @@ _HELP = (
     "/list — 초안 목록\n"
     "/topics — 주제 추천\n"
     "/draft <주제> — 초안 생성\n"
+    "/write <주제> — Wiki Core 기반 블로그 초안 생성\n"
     "/revise [slug] — 초안 다듬기\n"
     "/preview [slug] — 초안 미리보기\n"
     "/export [slug] — 티스토리용 변환\n"
     "/publish <url> — 게시 완료 기록(최신 초안)\n"
     "/sync — Notion 동기화\n"
+    "/search <검색어> — Vault 노트 검색\n"
+    "/capture <메모> — 메모를 Inbox에 저장\n"
+    "/distill — 오늘 기록에서 후보 생성\n"
+    "/context <주제> — Context Pack 조회\n"
+    "/candidates — 후보 노트 목록\n"
+    "/promote <경로> — 후보 노트 승격\n"
     "/wiki <질문> — wiki 검색 (예: /wiki vLLM 설정)\n"
     "/lint — wiki 건강 점검\n"
     "/worklog — 작업 회고\n"
@@ -153,5 +160,102 @@ class CommandRouter:
             from app.agents import ResumeAgent
             result = ResumeAgent().generate()
             return f"이력서 초안\n\n{result.text[:1500]}"
+
+        if cmd in ("write", "wb"):
+            if not arg:
+                return "주제를 함께 보내주세요. 예: /write XCoreChat 개발환경 분리"
+            try:
+                from app.agents.wiki_blog_agent import WikiBlogAgent
+                draft = WikiBlogAgent().write_blog(arg)
+                return f"블로그 초안 생성 완료: {draft.title}\nvault: {draft.rel_path}"
+            except RuntimeError as e:
+                return f"Wiki Core 미설정: {e}\n/draft 명령으로 기존 흐름을 사용하세요."
+
+        if cmd == "search":
+            if not arg:
+                return "검색어를 함께 보내주세요. 예: /search RAG"
+            try:
+                from app.config import get_settings
+                from app.services.wiki_service import WikiService
+                from pathlib import Path
+                settings = get_settings()
+                if not settings.obsidian_vault_root:
+                    return "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다."
+                service = WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
+                results = service.search(arg, limit=5)
+                if not results:
+                    return "검색 결과가 없습니다."
+                lines = [f"검색 결과 ({len(results)}건):"]
+                for r in results:
+                    lines.append(f"· {r.note.title} ({r.note.path})")
+                return "\n".join(lines)
+            except Exception as e:
+                return f"검색 실패: {e}"
+
+        if cmd == "capture":
+            if not arg:
+                return "메모 내용을 함께 보내주세요. 예: /capture 오늘 RAG 작업함"
+            try:
+                from app.agents import CaptureAgent
+                result = CaptureAgent().capture(text=arg)
+                verb = "저장" if result.created else "기존 파일 유지"
+                return f"메모 {verb} 완료\n{result.rel_path}"
+            except RuntimeError as e:
+                return f"Capture 실패: {e}"
+
+        if cmd == "distill":
+            try:
+                from app.agents import DistillAgent
+                result = DistillAgent().distill_today()
+                if not result.written:
+                    return "오늘 생성된 후보가 없습니다."
+                lines = [f"후보 {len(result.written)}개 생성:"]
+                for item in result.written:
+                    lines.append(f"· [{item.spec.kind}] {item.spec.title}")
+                return "\n".join(lines)
+            except RuntimeError as e:
+                return f"Distill 실패: {e}"
+
+        if cmd in ("context", "ctx"):
+            if not arg:
+                return "주제를 함께 보내주세요. 예: /context XCoreChat RAG"
+            try:
+                from app.config import get_settings
+                from app.memory.context_pack_builder import ContextPackBuilder
+                from pathlib import Path
+                settings = get_settings()
+                if not settings.obsidian_vault_root:
+                    return "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다."
+                builder = ContextPackBuilder(Path(settings.obsidian_vault_root))
+                pack = builder.build(arg)
+                preview = pack.render()[:1500]
+                return f"Context Pack ({len(pack.source_refs)}개 source)\n\n{preview}"
+            except Exception as e:
+                return f"Context Pack 실패: {e}"
+
+        if cmd == "candidates":
+            try:
+                from app.agents.curator_agent import CuratorAgent
+                items = CuratorAgent().list_candidates()
+                if not items:
+                    return "60_Candidates/ 에 후보가 없습니다."
+                lines = [f"후보 {len(items)}개:"]
+                for item in items[:10]:
+                    lines.append(f"· [{item.kind}] {item.title}")
+                if len(items) > 10:
+                    lines.append(f"  ... 외 {len(items) - 10}개")
+                return "\n".join(lines)
+            except RuntimeError as e:
+                return f"Candidates 조회 실패: {e}"
+
+        if cmd == "promote":
+            if not arg:
+                return "승격할 후보 경로를 보내주세요. 예: /promote 60_Candidates/Knowledge/abc.md"
+            try:
+                from app.agents.curator_agent import CuratorAgent
+                result = CuratorAgent().promote_candidate(arg)
+                return f"승격 완료: {result.promoted_path}"
+            except (RuntimeError, ValueError) as e:
+                return f"승격 실패: {e}"
 
         return f"알 수 없는 명령입니다.\n\n{_HELP}"
