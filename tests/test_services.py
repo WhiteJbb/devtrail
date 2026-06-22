@@ -34,6 +34,14 @@ def test_topic_recommender_parses_topics():
     assert out[0].source_refs == ["worklog:worklog"]
 
 
+def test_topic_recommender_excludes_existing_titles():
+    llm = FakeLLM(json.dumps({"topics": []}))
+    rec = TopicRecommender(_collector(), llm)
+    rec.recommend(exclude_titles=["이미 쓴 주제 A"])
+    # 제외 목록이 프롬프트에 반영되어야 한다.
+    assert "이미 쓴 주제 A" in llm.last_prompt
+
+
 def test_draft_generator_saves(tmp_path):
     repo = BlogRepository(MarkdownStorage(tmp_path))
     resp = json.dumps(

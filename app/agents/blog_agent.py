@@ -47,7 +47,9 @@ class BlogAgent:
     # ----- 유스케이스 -----
     def suggest_topics(self) -> list[TopicSuggestion]:
         recommender = TopicRecommender(self._collector(), self._llm())
-        return recommender.recommend()
+        # 이미 초안이 있는 주제는 추천에서 제외(중복 방지).
+        existing_titles = [p.title for p in self.repository.list_drafts()]
+        return recommender.recommend(exclude_titles=existing_titles)
 
     def write_draft(self, request: DraftRequest) -> BlogPost:
         generator = DraftGenerator(self._collector(), self._llm(), self.repository)
