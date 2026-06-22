@@ -24,6 +24,14 @@ def test_export_html(tmp_path):
     assert "<pre><code" in html  # 펜스 코드블록이 보존되어야 한다
 
 
+def test_export_html_renders_image(tmp_path):
+    repo, exporter = _setup(tmp_path)
+    repo.save_draft(BlogPost(title="T", slug="s1", body="![구성도](https://img.test/a.png)"))
+    result = exporter.export("s1", "html")
+    html = result.path.read_text(encoding="utf-8")
+    assert '<img' in html and 'src="https://img.test/a.png"' in html
+
+
 def test_export_md_keeps_body(tmp_path):
     repo, exporter = _setup(tmp_path)
     repo.save_draft(BlogPost(title="T", slug="s1", body="## 문제\n본문"))
