@@ -109,6 +109,36 @@ def revise(target: str = typer.Argument("latest", help="latest 또는 slug")) ->
     typer.echo("  (preview latest 로 확인할 수 있습니다)")
 
 
+_STATUS_COLOR = {
+    "idea": typer.colors.BRIGHT_BLACK,
+    "draft": typer.colors.YELLOW,
+    "review": typer.colors.CYAN,
+    "published": typer.colors.GREEN,
+}
+
+
+@app.command("list")
+def list_drafts() -> None:
+    """저장된 초안을 상태/수정일과 함께 목록으로 보여준다."""
+    agent = BlogAgent()
+    posts = agent.list_drafts()
+    if not posts:
+        typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
+        return
+
+    for post in posts:
+        status = post.status.value
+        color = _STATUS_COLOR.get(status, typer.colors.WHITE)
+        date = post.updated_at.strftime("%Y-%m-%d")
+        typer.echo(
+            f"  {date}  "
+            + typer.style(f"{status:<9}", fg=color)
+            + f"{post.title}  "
+            + typer.style(f"({post.slug})", fg=typer.colors.BRIGHT_BLACK)
+        )
+    typer.echo(f"\n  총 {len(posts)}건")
+
+
 @app.command("preview")
 def preview(target: str = typer.Argument("latest", help="latest 또는 slug")) -> None:
     """최신(또는 지정) 초안의 메타데이터와 본문 일부를 보여준다."""

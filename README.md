@@ -26,6 +26,7 @@ Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   
 | 명령 | 설명 |
 | --- | --- |
 | `work-agent suggest-topics` | 최근 작업 기록·Git 로그·Notion 메모로 블로그 주제 추천 |
+| `work-agent list` | 저장된 초안을 상태/수정일과 함께 목록 출력 |
 | `work-agent write-draft "주제"` | 주제로 초안 생성 → `workspace/drafts/`에 Markdown 저장 + Notion 반영 |
 | `work-agent revise latest` | 기존 초안을 source 범위 안에서 문장/구조만 다듬기(새 사실 추가 없음) |
 | `work-agent preview latest` | 최신(또는 slug 지정) 초안의 메타데이터 + 본문 일부 |
