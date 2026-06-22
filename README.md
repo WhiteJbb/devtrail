@@ -346,3 +346,7 @@ Blog Agent를 시작으로, 같은 계층 구조 위에 Agent를 추가합니다
 - **Resume / Cover Letter Agent** — 이력서 bullet / 자기소개서 초안 ✅ (`work-agent resume`)
 
 'source → 마크다운 문서' 형태 Agent는 [app/agents/doc_agent.py](app/agents/doc_agent.py)의 `DocAgent`를 상속해 프롬프트명과 출력 경로만 지정하면 됩니다(Portfolio/Resume가 이 방식). source 조립은 [app/agents/context_builder.py](app/agents/context_builder.py)의 `build_source_collector`, 그 밖에 기존 `llm`/`storage`/`notion` 계층을 재사용합니다.
+
+### 검토 중인 연동
+
+- **Obsidian** (입력 소스 + 볼트 안 드래프트 편집) — 설계 제안: [docs/obsidian-integration-proposal.md](docs/obsidian-integration-proposal.md)
