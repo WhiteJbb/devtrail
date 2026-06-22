@@ -8,17 +8,26 @@ from __future__ import annotations
 
 import httpx
 
+from app.llm._http import request_with_retry
 from app.llm.base import LLMError
 
 
 class OpenAICompatibleProvider:
     name = "openai_compatible"
 
-    def __init__(self, base_url: str, model: str, api_key: str = "", timeout: float = 120.0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        api_key: str = "",
+        timeout: float = 120.0,
+        max_retries: int = 2,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
+        self.max_retries = max_retries
 
     def complete(self, prompt: str, system: str = "") -> str:
         messages = []
@@ -32,17 +41,17 @@ class OpenAICompatibleProvider:
 
         payload = {"model": self.model, "messages": messages, "temperature": 0.4}
 
-        try:
-            resp = httpx.post(
+        resp = request_with_retry(
+            lambda: httpx.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,
                 headers=headers,
                 timeout=self.timeout,
-            )
-            resp.raise_for_status()
+            ),
+            attempts=self.max_retries,
+        )
+        try:
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
-        except httpx.HTTPError as e:
-            raise LLMError(f"OpenAI-compatible 호출 실패: {e}") from e
         except (KeyError, IndexError, ValueError) as e:
             raise LLMError(f"OpenAI-compatible 응답 형식 오류: {e}") from e

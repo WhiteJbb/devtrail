@@ -11,7 +11,7 @@ from app.llm.base import LLMProvider
 from app.models import BlogPost
 from app.prompts import render_prompt
 from app.repositories.blog_repository import BlogRepository
-from app.services.json_utils import extract_json_object
+from app.services.json_utils import complete_json
 
 
 class DraftReviser:
@@ -40,8 +40,7 @@ class DraftReviser:
             DRAFT=draft_text,
             CONTEXT=context.as_prompt_text(),
         )
-        raw = self.llm.complete(prompt)
-        data = extract_json_object(raw)
+        data = complete_json(self.llm, prompt)
 
         # 메타데이터는 기존 값을 보존하고, 모델이 준 값이 있을 때만 갱신한다.
         post.title = data.get("title") or post.title

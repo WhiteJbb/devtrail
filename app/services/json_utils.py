@@ -7,7 +7,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.llm.base import LLMProvider
 
 
 class JSONParseError(ValueError):
@@ -64,3 +67,19 @@ def extract_json_object(text: str) -> Any:
                 except json.JSONDecodeError as e:
                     raise JSONParseError(f"JSON 파싱 실패: {e}") from e
     raise JSONParseError("JSON 객체가 닫히지 않았습니다.")
+
+
+_FIX_HINT = "\n\n주의: 반드시 유효한 JSON 객체 하나만 출력하세요. 코드펜스나 설명을 넣지 마세요."
+
+
+def complete_json(llm: "LLMProvider", prompt: str, system: str = "") -> Any:
+    """LLM 호출 후 JSON을 파싱한다. 파싱 실패 시 보정 지시를 붙여 1회 재시도한다.
+
+    LLM이 가끔 깨진/감싼 JSON을 줄 때 한 번 더 기회를 줘서 명령 실패를 줄인다.
+    """
+    raw = llm.complete(prompt, system)
+    try:
+        return extract_json_object(raw)
+    except JSONParseError:
+        raw2 = llm.complete(prompt + _FIX_HINT, system)
+        return extract_json_object(raw2)  # 두 번째도 실패하면 그대로 전파
