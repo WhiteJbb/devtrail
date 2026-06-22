@@ -120,7 +120,28 @@ def preview(target: str = typer.Argument("latest", help="latest 또는 slug")) -
 @app.command("sync-notion")
 def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 반영 없이 계획만 출력")) -> None:
     """로컬 draft 메타데이터를 Notion Blog DB와 동기화한다."""
-    typer.echo("Notion 동기화는 스테이지 5에서 구현됩니다.")
+    agent = BlogAgent()
+    report = agent.sync_notion(dry_run=dry_run)
+
+    mode_note = "mock(JSON 백엔드)" if report.mode == "mock" else "Notion API"
+    if report.mode == "mock":
+        typer.secho(
+            "NOTION_API_KEY가 없어 mock 모드로 동작합니다(로컬 JSON에 기록).",
+            fg=typer.colors.YELLOW,
+        )
+    header = "동기화 계획" if dry_run else "동기화 완료"
+    typer.secho(f"\n{header} [{mode_note}]", fg=typer.colors.CYAN, bold=True)
+
+    if not report.entries:
+        typer.echo("  동기화할 로컬 초안이 없습니다.")
+        return
+
+    for e in report.entries:
+        verb = "생성" if e.action == "create" else "갱신"
+        mark = "(예정)" if dry_run else "완료"
+        typer.echo(f"  - [{verb} {mark}] {e.title}  ({e.slug})")
+
+    typer.echo(f"\n  생성 {len(report.created)}건 · 갱신 {len(report.updated)}건")
 
 
 if __name__ == "__main__":

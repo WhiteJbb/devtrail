@@ -12,11 +12,16 @@ from app.config import Settings, get_settings
 from app.content_sources.collector import SourceCollector
 from app.content_sources.git_source import GitSource
 from app.content_sources.local_doc_source import LocalDocSource
+from app.content_sources.notion_source import NotionSource
 from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
 from app.models import BlogPost, DraftRequest, TopicSuggestion
+from app.notion.client import NotionClient
+from app.notion.factory import get_notion_client
 from app.repositories.blog_repository import BlogRepository
+from app.repositories.notion_blog_repository import NotionBlogRepository
 from app.services.draft_generator import DraftGenerator
+from app.services.notion_sync_service import NotionSyncService, SyncReport
 from app.services.preview_service import PreviewResult, PreviewService
 from app.services.topic_recommender import TopicRecommender
 from app.storage import MarkdownStorage
@@ -29,10 +34,18 @@ class BlogAgent:
         self.repository = BlogRepository(MarkdownStorage(self.settings.drafts_path))
 
     # ----- 내부 조립 -----
+    def _notion_client(self) -> NotionClient:
+        return get_notion_client(self.settings)
+
     def _collector(self) -> SourceCollector:
         sources = [
             LocalDocSource(self.settings.docs_path),
             GitSource(self.repo_dir, limit=self.settings.git_log_limit),
+            NotionSource(
+                self._notion_client(),
+                idea_database_id=self.settings.notion_idea_database_id,
+                worklog_database_id=self.settings.notion_worklog_database_id,
+            ),
         ]
         return SourceCollector(sources, char_budget=self.settings.context_char_budget)
 
@@ -47,7 +60,28 @@ class BlogAgent:
 
     def write_draft(self, request: DraftRequest) -> BlogPost:
         generator = DraftGenerator(self._collector(), self._llm(), self.repository)
-        return generator.generate(request)
+        post = generator.generate(request)
+        if request.sync_notion:
+            # 초안 1건만 Notion Blog DB에 반영(실패해도 초안 생성은 유지).
+            try:
+                notion_repo = NotionBlogRepository(self._notion_client())
+                row = notion_repo.upsert(post)
+                if row.page_id and row.page_id != post.notion_page_id:
+                    post.notion_page_id = row.page_id
+                    self.repository.save_draft(post)
+            except Exception:
+                pass
+        return post
 
     def preview(self, target: str = "latest") -> PreviewResult | None:
         return PreviewService(self.repository).preview(target)
+
+    def sync_notion(self, dry_run: bool = False) -> SyncReport:
+        notion_repo = NotionBlogRepository(self._notion_client())
+        service = NotionSyncService(self.repository, notion_repo)
+        return service.sync(dry_run=dry_run)
+
+    @property
+    def notion_mode(self) -> str:
+        """현재 Notion 동작 모드: 'real' 또는 'mock'."""
+        return "real" if self.settings.notion_enabled else "mock"
