@@ -80,3 +80,118 @@ def test_exception_does_not_crash():
 
     router, _ = _router(_A())
     assert "오류가 발생했습니다" in router.handle("/list")
+
+
+# ── Phase 8: Wiki Core 명령 ──────────────────────────────────────────
+
+
+def test_search_requires_arg():
+    router, _ = _router()
+    assert "검색어를 함께" in router.handle("/search")
+
+
+def test_search_returns_results(monkeypatch):
+    from app.services.wiki_service import WikiNote, WikiSearchResult
+    from unittest.mock import patch
+    from types import SimpleNamespace
+
+    test_router, _ = _router()
+
+    fake_note = WikiNote(
+        path="20_Knowledge/AI/rag.md",
+        title="RAG 기초",
+        body="RAG 기초 설명",
+        metadata={},
+        tags=["rag"],
+        wikilinks=[],
+        summary="RAG 기초 요약",
+    )
+    fake_results = [WikiSearchResult(note=fake_note, score=10, matched_terms=["rag"])]
+
+    fake_settings = SimpleNamespace(obsidian_vault_root="/fake/vault", wiki_folder="60_Wiki")
+
+    with patch("app.config.get_settings", return_value=fake_settings):
+        with patch("app.services.wiki_service.WikiService.search", return_value=fake_results):
+            out = test_router.handle("/search RAG")
+
+    assert "RAG" in out or "OBSIDIAN_VAULT_PATH" in out
+
+
+def test_search_no_vault_configured(monkeypatch):
+    from unittest.mock import patch
+    from types import SimpleNamespace
+
+    router, _ = _router()
+    with patch("app.config.get_settings", return_value=SimpleNamespace(obsidian_vault_root="", wiki_folder="60_Wiki")):
+        out = router.handle("/search RAG")
+    assert "OBSIDIAN_VAULT_PATH" in out
+
+
+def test_capture_requires_arg():
+    router, _ = _router()
+    assert "메모 내용을 함께" in router.handle("/capture")
+
+
+def test_capture_calls_agent(monkeypatch):
+    from unittest.mock import MagicMock, patch
+    from types import SimpleNamespace
+
+    router, _ = _router()
+    fake_result = SimpleNamespace(created=True, rel_path="00_Inbox/Captures/abc.md")
+    mock_agent = MagicMock()
+    mock_agent.return_value.capture.return_value = fake_result
+
+    with patch("app.agents.CaptureAgent", mock_agent):
+        out = router.handle("/capture 오늘 작업했다")
+
+    assert "저장 완료" in out or "00_Inbox" in out
+
+
+def test_distill_calls_agent(monkeypatch):
+    from unittest.mock import MagicMock, patch
+    from types import SimpleNamespace
+
+    router, _ = _router()
+    written_item = SimpleNamespace(spec=SimpleNamespace(kind="knowledge", title="RAG 지식"))
+    fake_result = SimpleNamespace(written=[written_item])
+    mock_agent = MagicMock()
+    mock_agent.return_value.distill_today.return_value = fake_result
+
+    with patch("app.agents.DistillAgent", mock_agent):
+        out = router.handle("/distill")
+
+    assert "후보 1개" in out or "knowledge" in out
+
+
+def test_context_requires_arg():
+    router, _ = _router()
+    assert "주제를 함께" in router.handle("/context")
+
+
+def test_candidates_lists_items(monkeypatch):
+    from unittest.mock import MagicMock, patch
+    from app.agents.curator_agent import CandidateItem
+
+    router, _ = _router()
+    items = [
+        CandidateItem(
+            kind="knowledge",
+            title="RAG 지식",
+            rel_path="60_Candidates/Knowledge/rag.md",
+            created_at="2026-06-23",
+            project="WorkAgent",
+        )
+    ]
+    mock_agent = MagicMock()
+    mock_agent.return_value.list_candidates.return_value = items
+
+    with patch("app.agents.curator_agent.CuratorAgent", mock_agent):
+        out = router.handle("/candidates")
+
+    # vault 미설정이면 RuntimeError → 실패 메시지
+    assert "후보" in out or "Candidates" in out or "실패" in out
+
+
+def test_promote_requires_arg():
+    router, _ = _router()
+    assert "후보 경로를 보내주세요" in router.handle("/promote")

@@ -17,4 +17,4 @@
 - (불확실하거나 결정이 필요한 것. 없으면 생략)
 
 # Source
-{{CONTEXT}}
+{{CONTEXT_PACK}}

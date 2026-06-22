@@ -26,8 +26,10 @@ def test_digest_with_worklog():
     assert "## 한 일" in out
 
 
-def test_push_digest_messenger_not_configured():
-    # 실제 env에 MESSENGER_PROVIDER가 없으면 친화적 안내 후 exit 1
+def test_push_digest_messenger_not_configured(monkeypatch):
+    # MESSENGER_PROVIDER가 비어 있으면 친화적 안내 후 exit 1
+    from app.config import Settings
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(MESSENGER_PROVIDER=""))
     result = runner.invoke(cli.app, ["push-digest"])
     assert result.exit_code == 1
     assert "메신저가 설정되지 않았습니다" in result.output

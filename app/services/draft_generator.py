@@ -7,7 +7,7 @@ from app.llm.base import LLMProvider
 from app.models import BlogPost, BlogStatus, DraftRequest
 from app.prompts import render_prompt
 from app.repositories.blog_repository import BlogRepository
-from app.services.json_utils import complete_json
+from app.services.json_utils import JSONParseError, complete_json, extract_json_object
 
 
 class DraftGenerator:
@@ -42,7 +42,7 @@ class DraftGenerator:
             TOPIC=request.topic,
             CONTEXT=ctx_text,
         )
-        body = self.llm.complete(body_prompt).strip()
+        body = self._coerce_body(self.llm.complete(body_prompt).strip())
 
         post = BlogPost(
             title=data.get("title") or request.topic,
@@ -56,3 +56,15 @@ class DraftGenerator:
         )
         self.repository.save_draft(post)
         return post
+
+    def _coerce_body(self, raw: str) -> str:
+        """Accept legacy JSON-shaped draft responses during the body step."""
+        if not raw.lstrip().startswith(("{", "```")):
+            return raw
+        try:
+            data = extract_json_object(raw)
+        except JSONParseError:
+            return raw
+        if isinstance(data, dict) and data.get("body"):
+            return str(data["body"]).strip()
+        return raw

@@ -35,7 +35,7 @@ def build_source_collector(settings: Settings, repo_dir: Path) -> SourceCollecto
     if settings.obsidian_enabled:
         sources.append(
             ObsidianSource(
-                vault_dir=Path(settings.obsidian_vault_dir),
+                vault_dir=Path(settings.obsidian_vault_root),
                 tags=settings.obsidian_tag_list,
                 folders=settings.obsidian_folder_list,
             )
