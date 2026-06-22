@@ -21,6 +21,7 @@ from app.notion.factory import get_notion_client
 from app.repositories.blog_repository import BlogRepository
 from app.repositories.notion_blog_repository import NotionBlogRepository
 from app.services.draft_generator import DraftGenerator
+from app.services.draft_reviser import DraftReviser
 from app.services.notion_sync_service import NotionSyncService, SyncReport
 from app.services.preview_service import PreviewResult, PreviewService
 from app.services.tistory_exporter import TistoryExporter, TistoryExportResult
@@ -74,6 +75,10 @@ class BlogAgent:
             except Exception:
                 pass
         return post
+
+    def revise(self, target: str = "latest") -> BlogPost | None:
+        reviser = DraftReviser(self._collector(), self._llm(), self.repository)
+        return reviser.revise(target)
 
     def preview(self, target: str = "latest") -> PreviewResult | None:
         return PreviewService(self.repository).preview(target)
