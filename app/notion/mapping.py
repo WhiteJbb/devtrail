@@ -21,6 +21,7 @@ COL_UPDATED_AT = "Updated At"
 COL_SOURCE_REFS = "Source Refs"
 COL_SLUG = "Slug"
 COL_SUMMARY = "Summary"
+COL_PUBLISHED_URL = "Published URL"
 
 
 # ----- 도메인 매핑 -----
@@ -34,6 +35,7 @@ def blog_post_to_row(post: BlogPost) -> NotionBlogRow:
         local_path=post.local_path,
         source_refs=list(post.source_refs),
         summary=post.summary,
+        published_url=post.published_url,
         created_at=post.created_at.isoformat(),
         updated_at=post.updated_at.isoformat(),
         page_id=post.notion_page_id,
@@ -60,6 +62,7 @@ def row_to_properties(row: NotionBlogRow) -> dict[str, Any]:
         COL_SOURCE_REFS: _rich_text(", ".join(row.source_refs)),
         COL_SLUG: _rich_text(row.slug),
         COL_SUMMARY: _rich_text(row.summary),
+        COL_PUBLISHED_URL: {"url": row.published_url or None},
         COL_CREATED_AT: {"date": {"start": row.created_at}} if row.created_at else {"date": None},
         COL_UPDATED_AT: {"date": {"start": row.updated_at}} if row.updated_at else {"date": None},
     }
@@ -121,5 +124,6 @@ def page_to_row(page: dict) -> NotionBlogRow:
         local_path=text(COL_LOCAL_PATH),
         source_refs=[r.strip() for r in refs.split(",") if r.strip()],
         summary=text(COL_SUMMARY),
+        published_url=props.get(COL_PUBLISHED_URL, {}).get("url") or "",
         page_id=page.get("id"),
     )

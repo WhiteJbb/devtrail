@@ -82,6 +82,30 @@ class BlogAgent:
         exporter = TistoryExporter(self.repository, self.settings.blogs_path)
         return exporter.export(target, fmt)
 
+    def publish_done(self, target: str = "latest", url: str = "") -> BlogPost | None:
+        """티스토리 게시 완료를 기록한다. status=published + URL을 로컬·Notion에 반영."""
+        from app.models import BlogStatus
+
+        if target == "latest":
+            post = self.repository.get_latest()
+        else:
+            post = self.repository.get_by_slug(target)
+        if post is None:
+            return None
+
+        post.status = BlogStatus.PUBLISHED
+        if url:
+            post.published_url = url
+        self.repository.save_draft(post)
+
+        # Notion Blog DB(상태 추적)에도 반영. 실패해도 로컬 기록은 유지.
+        try:
+            notion_repo = NotionBlogRepository(self._notion_client())
+            notion_repo.upsert(post)
+        except Exception:
+            pass
+        return post
+
     def sync_notion(self, dry_run: bool = False) -> SyncReport:
         notion_repo = NotionBlogRepository(self._notion_client())
         service = NotionSyncService(self.repository, notion_repo)

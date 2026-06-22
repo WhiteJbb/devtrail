@@ -16,6 +16,7 @@ class NotionBlogRow(BaseModel):
     local_path: str = ""
     source_refs: list[str] = Field(default_factory=list)
     summary: str = ""
+    published_url: str = ""
     created_at: str = ""
     updated_at: str = ""
     page_id: str | None = None
