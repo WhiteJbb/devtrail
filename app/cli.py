@@ -117,6 +117,37 @@ def preview(target: str = typer.Argument("latest", help="latest 또는 slug")) -
     typer.echo(result.excerpt)
 
 
+@app.command("export-tistory")
+def export_tistory(
+    target: str = typer.Argument("latest", help="latest 또는 slug"),
+    fmt: str = typer.Option("html", "--format", help="html 또는 md"),
+) -> None:
+    """초안을 티스토리에 붙여넣을 형식(HTML/MD)으로 변환해 workspace/blogs/에 저장한다."""
+    agent = BlogAgent()
+    try:
+        result = agent.export_tistory(target, fmt)
+    except ValueError as e:
+        _fail(str(e))
+
+    if result is None:
+        if target == "latest":
+            typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
+        else:
+            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
+        return
+
+    post = result.post
+    typer.secho(f"\n티스토리용 변환 완료 ({result.fmt})", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.echo("  → 이 파일 내용을 티스토리 글쓰기 화면에 붙여넣으세요"
+               f" ({'HTML 모드' if result.fmt == 'html' else '마크다운 모드'}).")
+    typer.secho("\n  아래는 티스토리 입력란에 따로 넣을 항목입니다:", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(f"    제목: {post.title}")
+    if post.tags:
+        typer.echo(f"    태그: {', '.join(post.tags)}")
+    typer.echo("  (티스토리 공식 API는 2024년 종료되어 자동 게시는 지원하지 않습니다)")
+
+
 @app.command("sync-notion")
 def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 반영 없이 계획만 출력")) -> None:
     """로컬 draft 메타데이터를 Notion Blog DB와 동기화한다."""

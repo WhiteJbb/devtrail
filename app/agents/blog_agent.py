@@ -23,6 +23,7 @@ from app.repositories.notion_blog_repository import NotionBlogRepository
 from app.services.draft_generator import DraftGenerator
 from app.services.notion_sync_service import NotionSyncService, SyncReport
 from app.services.preview_service import PreviewResult, PreviewService
+from app.services.tistory_exporter import TistoryExporter, TistoryExportResult
 from app.services.topic_recommender import TopicRecommender
 from app.storage import MarkdownStorage
 
@@ -76,6 +77,10 @@ class BlogAgent:
 
     def preview(self, target: str = "latest") -> PreviewResult | None:
         return PreviewService(self.repository).preview(target)
+
+    def export_tistory(self, target: str = "latest", fmt: str = "html") -> TistoryExportResult | None:
+        exporter = TistoryExporter(self.repository, self.settings.blogs_path)
+        return exporter.export(target, fmt)
 
     def sync_notion(self, dry_run: bool = False) -> SyncReport:
         notion_repo = NotionBlogRepository(self._notion_client())
