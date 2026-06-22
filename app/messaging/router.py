@@ -22,6 +22,12 @@ _HELP = (
     "/export [slug] — 티스토리용 변환\n"
     "/publish <url> — 게시 완료 기록(최신 초안)\n"
     "/sync — Notion 동기화\n"
+    "/wiki <질문> — wiki 검색 (예: /wiki vLLM 설정)\n"
+    "/lint — wiki 건강 점검\n"
+    "/worklog — 작업 회고\n"
+    "/todo — 다음 할 일\n"
+    "/portfolio — 포트폴리오 초안\n"
+    "/resume — 이력서 초안\n"
     "/help — 도움말"
 )
 
@@ -108,5 +114,44 @@ class CommandRouter:
         if cmd == "sync":
             report = agent.sync_notion(dry_run=False)
             return f"Notion 동기화({report.mode}): 생성 {len(report.created)} · 갱신 {len(report.updated)}"
+
+        if cmd in ("wiki", "w"):
+            if not arg:
+                return "질문을 함께 보내주세요. 예: /wiki vLLM 설정 방법"
+            try:
+                from app.agents.wiki_agent import build_wiki_agent
+                wiki_agent = build_wiki_agent()
+                return wiki_agent.query(arg)
+            except RuntimeError as e:
+                return f"wiki 검색 실패: {e}"
+
+        if cmd == "lint":
+            try:
+                from app.agents.wiki_agent import build_wiki_agent
+                wiki_agent = build_wiki_agent()
+                result = wiki_agent.lint()
+                return f"wiki 점검 완료\n\n{result[:1500]}"
+            except RuntimeError as e:
+                return f"wiki 점검 실패: {e}"
+
+        if cmd == "worklog":
+            from app.agents import WorklogAgent
+            result = WorklogAgent().generate()
+            return f"작업 회고 완료\n\n{result.text[:1500]}"
+
+        if cmd == "todo":
+            from app.agents import TodoAgent
+            result = TodoAgent().generate()
+            return f"할 일 제안\n\n{result.text[:1500]}"
+
+        if cmd == "portfolio":
+            from app.agents import PortfolioAgent
+            result = PortfolioAgent().generate()
+            return f"포트폴리오 초안\n\n{result.text[:1500]}"
+
+        if cmd == "resume":
+            from app.agents import ResumeAgent
+            result = ResumeAgent().generate()
+            return f"이력서 초안\n\n{result.text[:1500]}"
 
         return f"알 수 없는 명령입니다.\n\n{_HELP}"

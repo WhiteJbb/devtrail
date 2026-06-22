@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     context_char_budget: int = Field(default=12000, alias="CONTEXT_CHAR_BUDGET")
     # LLM HTTP 호출 시도 횟수(1=재시도 없음). 일시적 오류/5xx에 지수 백오프 재시도.
     llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
+    llm_timeout: float = Field(default=300.0, alias="LLM_TIMEOUT")
+
+    # --- Obsidian ---
+    obsidian_vault_dir: str = Field(default="", alias="OBSIDIAN_VAULT_DIR")
+    obsidian_tags: str = Field(default="", alias="OBSIDIAN_TAGS")
+    obsidian_folders: str = Field(default="", alias="OBSIDIAN_FOLDERS")
+    wiki_folder: str = Field(default="60_Wiki", alias="WIKI_FOLDER")
 
     # --- Notion ---
     notion_api_key: str = Field(default="", alias="NOTION_API_KEY")
@@ -47,6 +54,13 @@ class Settings(BaseSettings):
 
     # --- Paths ---
     workspace_dir: str = Field(default="workspace", alias="WORKSPACE_DIR")
+    # 개별 경로 재정의 (비우면 workspace_dir 하위 기본 경로 사용)
+    drafts_dir: str = Field(default="", alias="DRAFTS_DIR")
+    blogs_dir: str = Field(default="", alias="BLOGS_DIR")
+    worklogs_dir: str = Field(default="", alias="WORKLOGS_DIR")
+    todos_dir: str = Field(default="", alias="TODOS_DIR")
+    portfolio_dir: str = Field(default="", alias="PORTFOLIO_DIR")
+    resume_dir: str = Field(default="", alias="RESUME_DIR")
 
     # --- Git ---
     git_log_limit: int = Field(default=20, alias="GIT_LOG_LIMIT")
@@ -72,27 +86,27 @@ class Settings(BaseSettings):
 
     @property
     def drafts_path(self) -> Path:
-        return self.workspace_path / "drafts"
+        return Path(self.drafts_dir).resolve() if self.drafts_dir else self.workspace_path / "drafts"
 
     @property
     def blogs_path(self) -> Path:
-        return self.workspace_path / "blogs"
+        return Path(self.blogs_dir).resolve() if self.blogs_dir else self.workspace_path / "blogs"
 
     @property
     def worklogs_path(self) -> Path:
-        return self.workspace_path / "worklogs"
+        return Path(self.worklogs_dir).resolve() if self.worklogs_dir else self.workspace_path / "worklogs"
 
     @property
     def todos_path(self) -> Path:
-        return self.workspace_path / "todos"
+        return Path(self.todos_dir).resolve() if self.todos_dir else self.workspace_path / "todos"
 
     @property
     def portfolio_path(self) -> Path:
-        return self.workspace_path / "portfolio"
+        return Path(self.portfolio_dir).resolve() if self.portfolio_dir else self.workspace_path / "portfolio"
 
     @property
     def resume_path(self) -> Path:
-        return self.workspace_path / "resume"
+        return Path(self.resume_dir).resolve() if self.resume_dir else self.workspace_path / "resume"
 
     @property
     def notion_mock_path(self) -> Path:
@@ -111,6 +125,28 @@ class Settings(BaseSettings):
     def notion_enabled(self) -> bool:
         """실제 Notion API를 쓸 수 있는지. 아니면 mock으로 동작."""
         return bool(self.notion_api_key and self.notion_blog_database_id)
+
+    @property
+    def wiki_path(self) -> Path | None:
+        if not self.obsidian_vault_dir:
+            return None
+        return Path(self.obsidian_vault_dir) / self.wiki_folder
+
+    @property
+    def wiki_enabled(self) -> bool:
+        return bool(self.obsidian_vault_dir)
+
+    @property
+    def obsidian_enabled(self) -> bool:
+        return bool(self.obsidian_vault_dir)
+
+    @property
+    def obsidian_tag_list(self) -> list[str]:
+        return [t.strip() for t in self.obsidian_tags.split(",") if t.strip()]
+
+    @property
+    def obsidian_folder_list(self) -> list[str]:
+        return [f.strip() for f in self.obsidian_folders.split(",") if f.strip()]
 
 
 @lru_cache

@@ -38,6 +38,7 @@ def get_llm_provider(settings: Settings) -> LLMProvider:
         return OllamaProvider(
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
+            timeout=settings.llm_timeout,
             max_retries=settings.llm_max_retries,
         )
 

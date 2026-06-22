@@ -13,6 +13,7 @@
 - todo — 다음 할 일 제안
 - portfolio — 포트폴리오 초안 생성
 - resume — 이력서/자기소개서 초안 생성
+- wiki-query — wiki에서 기술 내용 검색/질답 (arg = 질문 전체)
 - help — 무엇을 할 수 있는지 안내
 - unknown — 위 어디에도 해당하지 않음
 
