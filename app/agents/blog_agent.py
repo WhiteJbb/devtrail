@@ -80,6 +80,10 @@ class BlogAgent:
         reviser = DraftReviser(self._collector(), self._llm(), self.repository)
         return reviser.revise(target)
 
+    def list_drafts(self) -> list[BlogPost]:
+        """모든 초안을 updated_at 내림차순으로 반환."""
+        return self.repository.list_drafts()
+
     def preview(self, target: str = "latest") -> PreviewResult | None:
         return PreviewService(self.repository).preview(target)
 
