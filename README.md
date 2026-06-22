@@ -302,10 +302,12 @@ CLI는 얇게 유지하고, 로직은 계층으로 분리했습니다.
 app/
 ├─ cli.py                 # 인자 파싱·출력만 (얇게)
 ├─ config.py              # .env 설정
-├─ agents/blog_agent.py   # 요청 단위 흐름 조율(계층 조립)
-├─ services/              # topic_recommender / draft_generator / preview / notion_sync / tistory_exporter
-├─ content_sources/       # local_doc / git / notion(페이지 본문) + collector(예산 trim)
-├─ llm/                   # base / factory / openai_compatible / ollama
+├─ agents/                # blog_agent + 확장 5종(worklog/todo/portfolio/resume)
+│                         #   doc_agent(공통 베이스) · context_builder(source 조립 공용)
+├─ services/              # topic_recommender / draft_generator / draft_reviser / preview
+│                         #   notion_sync / tistory_exporter / doc_summary / digest / json_utils
+├─ content_sources/       # local_doc / git(diff 포함) / notion(페이지 본문) + collector(예산 trim)
+├─ llm/                   # base / factory / openai_compatible / ollama / _http(재시도)
 ├─ notion/                # client(protocol) / mock / real / mapping / factory
 ├─ repositories/          # blog_repository(로컬) / notion_blog_repository
 ├─ storage/markdown_storage.py   # frontmatter ↔ BlogPost
@@ -315,7 +317,10 @@ app/
 └─ prompts/*.md           # LLM 프롬프트(코드 밖으로 분리)
 ```
 
-흐름: `cli(또는 messaging) → blog_agent → services → (content_sources / llm / repositories / storage / notion)`
+흐름: `cli · messaging · assistant → agents → services → (content_sources / llm / repositories / storage / notion)`
+
+- **agents**: 요청 단위 흐름 조율. Blog 외 확장 4종은 [doc_agent.py](app/agents/doc_agent.py)의 `DocAgent`를 상속해 프롬프트명·출력 경로만 지정
+- **진입점 3개**: CLI(`cli`) · 텔레그램(`messaging`) · 자연어(`assistant`)가 모두 같은 agents/services를 호출
 
 자세한 설계 규칙은 [AGENTS.md](AGENTS.md) 참고.
 
