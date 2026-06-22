@@ -16,7 +16,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent
+from app.agents import BlogAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.models import DraftRequest
@@ -244,6 +244,18 @@ def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 �
         typer.echo(f"  - [{verb} {mark}] {e.title}  ({e.slug})")
 
     typer.echo(f"\n  생성 {len(report.created)}건 · 갱신 {len(report.updated)}건")
+
+
+@app.command("worklog")
+def worklog() -> None:
+    """최근 작업(git/worklog/notion)을 자동 회고로 정리해 workspace/worklogs/에 저장한다."""
+    agent = WorklogAgent()
+    result = _handle_llm_errors(lambda: agent.generate())
+
+    typer.secho("\n작업 회고 생성 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 회고 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
 
 
 @app.command("serve-bot")

@@ -6,6 +6,7 @@ from app.services.notion_sync_service import NotionSyncService
 from app.services.preview_service import PreviewService
 from app.services.tistory_exporter import TistoryExporter
 from app.services.topic_recommender import TopicRecommender
+from app.services.worklog_summarizer import WorklogSummarizer
 
 __all__ = [
     "DraftGenerator",
@@ -14,4 +15,5 @@ __all__ = [
     "PreviewService",
     "TistoryExporter",
     "TopicRecommender",
+    "WorklogSummarizer",
 ]

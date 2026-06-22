@@ -8,11 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.agents.context_builder import build_source_collector
 from app.config import Settings, get_settings
 from app.content_sources.collector import SourceCollector
-from app.content_sources.git_source import GitSource
-from app.content_sources.local_doc_source import LocalDocSource
-from app.content_sources.notion_source import NotionSource
 from app.llm.base import LLMProvider
 from app.llm.factory import get_llm_provider
 from app.models import BlogPost, DraftRequest, TopicSuggestion
@@ -40,17 +38,7 @@ class BlogAgent:
         return get_notion_client(self.settings)
 
     def _collector(self) -> SourceCollector:
-        sources = [
-            LocalDocSource(self.settings.docs_path),
-            GitSource(self.repo_dir, limit=self.settings.git_log_limit),
-            NotionSource(
-                self._notion_client(),
-                idea_database_id=self.settings.notion_idea_database_id,
-                worklog_database_id=self.settings.notion_worklog_database_id,
-                source_page_ids=self.settings.source_page_ids,
-            ),
-        ]
-        return SourceCollector(sources, char_budget=self.settings.context_char_budget)
+        return build_source_collector(self.settings, self.repo_dir)
 
     def _llm(self) -> LLMProvider:
         # 미설정이면 LLMNotConfiguredError가 올라가고 CLI가 안내한다.

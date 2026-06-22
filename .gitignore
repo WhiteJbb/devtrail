@@ -21,6 +21,8 @@ workspace/drafts/*
 !workspace/drafts/.gitkeep
 workspace/blogs/*
 !workspace/blogs/.gitkeep
+workspace/worklogs/*
+!workspace/worklogs/.gitkeep
 
 # OS / IDE
 .DS_Store
