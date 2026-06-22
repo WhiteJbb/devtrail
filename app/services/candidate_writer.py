@@ -1,0 +1,131 @@
+"""Candidate note writer for the Obsidian Wiki Core."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import frontmatter
+
+from app.services.wiki_service import WikiService
+
+
+_CANDIDATE_DIRS = {
+    "knowledge": "60_Candidates/Knowledge",
+    "decision": "60_Candidates/Decisions",
+    "memory_patch": "60_Candidates/MemoryPatches",
+    "blog_idea": "60_Candidates/BlogIdeas",
+}
+
+
+@dataclass(frozen=True)
+class CandidateSpec:
+    kind: str
+    title: str
+    body: str
+    summary: str = ""
+    project: str = ""
+    tags: list[str] = field(default_factory=list)
+    source_refs: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CandidateWriteResult:
+    spec: CandidateSpec
+    path: Path
+    rel_path: str
+
+
+class CandidateWriter:
+    """Write generated candidates only under 60_Candidates."""
+
+    def __init__(self, vault_dir: Path, wiki_service: WikiService | None = None, now: datetime | None = None) -> None:
+        self.vault_dir = vault_dir
+        self.wiki_service = wiki_service or WikiService(vault_dir)
+        self.now = now
+
+    def write(self, spec: CandidateSpec) -> CandidateWriteResult:
+        kind = self._normalize_kind(spec.kind)
+        if kind not in _CANDIDATE_DIRS:
+            raise ValueError(f"unsupported candidate kind: {spec.kind}")
+        if not spec.title.strip():
+            raise ValueError("candidate title is empty")
+
+        rel_path = self._unique_rel_path(kind, spec.title)
+        path = self.vault_dir / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        metadata: dict[str, Any] = {
+            "type": "candidate",
+            "candidate_type": kind,
+            "status": "candidate",
+            "created_at": self._now().strftime("%Y-%m-%d"),
+            "project": spec.project,
+            "tags": spec.tags,
+            "source_refs": spec.source_refs,
+        }
+        if spec.summary:
+            metadata["summary"] = spec.summary
+
+        body = self._render_body(spec)
+        post = frontmatter.Post(body, **metadata)
+        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+        result = CandidateWriteResult(spec=spec, path=path, rel_path=rel_path)
+        self.wiki_service.append_vault_log("distill", spec.title, [rel_path])
+        return result
+
+    def write_many(self, specs: list[CandidateSpec]) -> list[CandidateWriteResult]:
+        return [self.write(spec) for spec in specs]
+
+    def _render_body(self, spec: CandidateSpec) -> str:
+        body = spec.body.strip()
+        if not body:
+            body = spec.summary.strip() or "(내용 후보 없음)"
+        if body.startswith("# "):
+            rendered = body
+        else:
+            rendered = f"# {spec.title.strip()}\n\n{body}"
+        if spec.source_refs:
+            refs = "\n".join(f"- {ref}" for ref in spec.source_refs)
+            rendered += f"\n\n## Source Refs\n\n{refs}"
+        return rendered.strip() + "\n"
+
+    def _unique_rel_path(self, kind: str, title: str) -> str:
+        base_dir = _CANDIDATE_DIRS[kind]
+        stamp = self._now().strftime("%Y%m%d-%H%M%S")
+        slug = self._slug(title)
+        rel = f"{base_dir}/{stamp}-{slug}.md"
+        if not (self.vault_dir / rel).exists():
+            return rel
+        idx = 2
+        while True:
+            rel = f"{base_dir}/{stamp}-{slug}-{idx}.md"
+            if not (self.vault_dir / rel).exists():
+                return rel
+            idx += 1
+
+    def _normalize_kind(self, kind: str) -> str:
+        value = kind.strip().lower().replace("-", "_")
+        aliases = {
+            "knowledge_candidate": "knowledge",
+            "decision_candidate": "decision",
+            "decisions": "decision",
+            "memory": "memory_patch",
+            "memory_patches": "memory_patch",
+            "blog": "blog_idea",
+            "blog_ideas": "blog_idea",
+        }
+        return aliases.get(value, value)
+
+    def _slug(self, value: str) -> str:
+        text = value.strip().lower()
+        text = re.sub(r"[^0-9a-z가-힣_-]+", "-", text)
+        text = re.sub(r"-{2,}", "-", text).strip("-_")
+        return text or "candidate"
+
+    def _now(self) -> datetime:
+        return self.now or datetime.now()

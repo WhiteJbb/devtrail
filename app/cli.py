@@ -17,7 +17,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, CaptureAgent, PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
+from app.agents import BlogAgent, CaptureAgent, DistillAgent, PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.models import DraftRequest
@@ -62,11 +62,28 @@ def _capture_agent() -> CaptureAgent:
         _fail(f"Capture를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
 
 
+def _distill_agent() -> DistillAgent:
+    try:
+        return DistillAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Distill을 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
 def _print_capture_result(label: str, result) -> None:
     verb = "생성" if result.created else "기존 파일 유지"
     typer.secho(f"\n{label} {verb} 완료", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {result.path}")
     typer.echo(f"  vault path: {result.rel_path}")
+
+
+def _print_distill_result(label: str, result) -> None:
+    if not result.written:
+        typer.echo(f"{label}: 생성된 후보가 없습니다.")
+        return
+    typer.secho(f"\n{label} 완료: 후보 {len(result.written)}개 생성", fg=typer.colors.GREEN, bold=True)
+    for item in result.written:
+        typer.echo(f"  - [{item.spec.kind}] {item.spec.title}")
+        typer.echo(f"    {item.rel_path}")
 
 
 @app.command("init-vault")
@@ -164,6 +181,34 @@ def daily_log(
     """오늘 daily worklog 파일을 10_Worklog/Daily에 만든다."""
     result = _capture_agent().daily_log(project=project)
     _print_capture_result("daily log", result)
+
+
+@app.command("distill-today")
+def distill_today() -> None:
+    """오늘 raw 기록을 읽어 Knowledge/Decision/Memory/Blog 후보를 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().distill_today())
+    _print_distill_result("distill-today", result)
+
+
+@app.command("suggest-knowledge")
+def suggest_knowledge() -> None:
+    """최근 raw 기록에서 Knowledge 후보를 60_Candidates/Knowledge에 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().suggest_knowledge())
+    _print_distill_result("suggest-knowledge", result)
+
+
+@app.command("suggest-blog-topics")
+def suggest_blog_topics() -> None:
+    """최근 raw 기록에서 BlogIdea 후보를 60_Candidates/BlogIdeas에 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().suggest_blog_topics())
+    _print_distill_result("suggest-blog-topics", result)
+
+
+@app.command("suggest-memory-patch")
+def suggest_memory_patch() -> None:
+    """최근 raw 기록에서 AgentMemory patch 후보를 60_Candidates/MemoryPatches에 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().suggest_memory_patch())
+    _print_distill_result("suggest-memory-patch", result)
 
 
 @app.command("suggest-topics")

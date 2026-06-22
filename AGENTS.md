@@ -20,13 +20,15 @@ BlogAgent = Wiki Core를 사용하는 Output Agent
 - source_refs 없는 블로그 초안 생성을 피한다.
 - `20_Knowledge/`, `40_AgentMemory/Core/`, `30_Projects/*/Context.md`는 직접 덮어쓰지 않고 candidate/patch 흐름을 거친다.
 
-## Phase 1-4 범위
+## Phase 1-5 범위
 
 - `README.md`, `.env.example`, 프로젝트 메타데이터는 Obsidian LLM Wiki Core 중심으로 유지한다.
 - `work-agent init-vault`는 vault 기본 구조, `index.md`, `log.md`, vault용 `AGENTS.md`, AgentMemory 기본 파일, 템플릿을 만든다.
 - `work-agent index-vault`는 Markdown, YAML frontmatter, wiki link, tag를 읽어 root `index.md`를 갱신한다.
 - `work-agent search`는 LLM 없이 동작하는 keyword search를 제공한다.
 - `work-agent capture`, `capture-chat`, `capture-commit`, `daily-log`는 원본 기록을 `00_Inbox/` 또는 `10_Worklog/` 아래에 저장하고 root `log.md`에 append한다.
+- `work-agent distill-today`, `suggest-knowledge`, `suggest-blog-topics`, `suggest-memory-patch`는 raw 기록을 읽어 `60_Candidates/` 아래 후보 노트를 만든다.
+- Distill 단계는 `20_Knowledge/`, `40_AgentMemory/Core/`, `30_Projects/*/Context.md`를 직접 수정하지 않는다.
 
 ## 테스트
 
