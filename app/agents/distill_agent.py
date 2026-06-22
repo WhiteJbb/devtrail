@@ -1,0 +1,163 @@
+"""Distill Agent - turn raw vault traces into reviewable candidates."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from app.config import Settings, get_settings
+from app.llm.base import LLMProvider
+from app.llm.factory import get_llm_provider
+from app.prompts import render_prompt
+from app.services.candidate_writer import CandidateSpec, CandidateWriteResult, CandidateWriter
+from app.services.json_utils import complete_json
+from app.services.wiki_service import WikiNote, WikiService
+
+
+_RAW_PREFIXES = ("00_Inbox/", "10_Worklog/")
+_MAX_NOTE_CHARS = 1800
+
+
+@dataclass(frozen=True)
+class DistillResult:
+    written: list[CandidateWriteResult]
+    source_refs: list[str]
+
+
+class DistillAgent:
+    """Create candidate notes from raw Obsidian vault records."""
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        llm: LLMProvider | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        self.settings = settings or get_settings()
+        self.llm = llm
+        self.now = now
+        if not self.settings.obsidian_vault_root:
+            raise RuntimeError("OBSIDIAN_VAULT_PATH is not configured.")
+        self.vault_dir = Path(self.settings.obsidian_vault_root)
+        self.wiki_service = WikiService(self.vault_dir, wiki_folder=self.settings.wiki_folder)
+        self.writer = CandidateWriter(self.vault_dir, wiki_service=self.wiki_service, now=now)
+
+    def distill_today(self) -> DistillResult:
+        return self._distill(kind="all", today_only=True)
+
+    def suggest_knowledge(self) -> DistillResult:
+        return self._distill(kind="knowledge", today_only=False)
+
+    def suggest_blog_topics(self) -> DistillResult:
+        return self._distill(kind="blog_idea", today_only=False)
+
+    def suggest_memory_patch(self) -> DistillResult:
+        return self._distill(kind="memory_patch", today_only=False)
+
+    def _distill(self, kind: str, today_only: bool) -> DistillResult:
+        notes = self._raw_notes(today_only=today_only)
+        if not notes:
+            return DistillResult(written=[], source_refs=[])
+
+        context = self._render_context(notes)
+        prompt = render_prompt(
+            "distill_candidates",
+            KIND=kind,
+            DATE=self._date(),
+            CONTEXT=context,
+        )
+        data = complete_json(self._llm(), prompt)
+        specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
+        written = self.writer.write_many(specs)
+        return DistillResult(written=written, source_refs=[n.path for n in notes])
+
+    def _llm(self) -> LLMProvider:
+        return self.llm or get_llm_provider(self.settings)
+
+    def _raw_notes(self, today_only: bool) -> list[WikiNote]:
+        today = self._date()
+        notes = [
+            note
+            for note in self.wiki_service.scan_notes()
+            if note.path.startswith(_RAW_PREFIXES) and not note.path.startswith("10_Worklog/GitSummaries/index")
+        ]
+        if today_only:
+            notes = [note for note in notes if self._note_date(note) == today]
+        notes.sort(key=lambda n: n.path, reverse=True)
+        return notes[:20]
+
+    def _note_date(self, note: WikiNote) -> str:
+        value = note.metadata.get("date") or note.metadata.get("created_at") or ""
+        return str(value)[:10]
+
+    def _render_context(self, notes: list[WikiNote]) -> str:
+        parts: list[str] = []
+        for note in notes:
+            meta = []
+            if note.note_type:
+                meta.append(f"type={note.note_type}")
+            if note.metadata.get("project"):
+                meta.append(f"project={note.metadata.get('project')}")
+            date = self._note_date(note)
+            if date:
+                meta.append(f"date={date}")
+            header = f"### {note.path}"
+            if meta:
+                header += f" ({', '.join(meta)})"
+            body = note.body.strip()
+            if len(body) > _MAX_NOTE_CHARS:
+                body = body[:_MAX_NOTE_CHARS].rstrip() + "\n...(일부 생략)"
+            parts.append(f"{header}\n{body}")
+        return "\n\n".join(parts)
+
+    def _parse_specs(self, data: Any, source_refs: list[str], kind_filter: str) -> list[CandidateSpec]:
+        specs: list[CandidateSpec] = []
+        if not isinstance(data, dict):
+            return specs
+
+        mapping = {
+            "knowledge": "knowledge",
+            "decisions": "decision",
+            "memory_patches": "memory_patch",
+            "blog_ideas": "blog_idea",
+        }
+        for key, kind in mapping.items():
+            if kind_filter != "all" and kind != kind_filter:
+                continue
+            items = data.get(key) or []
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                spec = self._spec_from_item(kind, item, source_refs)
+                if spec is not None:
+                    specs.append(spec)
+        return specs
+
+    def _spec_from_item(self, kind: str, item: dict[str, Any], fallback_refs: list[str]) -> CandidateSpec | None:
+        title = str(item.get("title") or "").strip()
+        if not title:
+            return None
+        source_refs = item.get("source_refs") or fallback_refs
+        if isinstance(source_refs, str):
+            source_refs = [source_refs]
+        tags = item.get("tags") or []
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        body = str(item.get("body") or item.get("details") or item.get("outline") or "").strip()
+        summary = str(item.get("summary") or item.get("reason") or "").strip()
+        return CandidateSpec(
+            kind=kind,
+            title=title,
+            summary=summary,
+            body=body,
+            project=str(item.get("project") or ""),
+            tags=[str(t) for t in tags],
+            source_refs=[str(ref) for ref in source_refs],
+        )
+
+    def _date(self) -> str:
+        return (self.now or datetime.now()).strftime("%Y-%m-%d")
