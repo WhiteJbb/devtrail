@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     notion_blog_database_id: str = Field(default="", alias="NOTION_BLOG_DATABASE_ID")
     notion_idea_database_id: str = Field(default="", alias="NOTION_IDEA_DATABASE_ID")
     notion_worklog_database_id: str = Field(default="", alias="NOTION_WORKLOG_DATABASE_ID")
+    # 초안 소스로 본문을 읽어올 Notion 페이지 id들(쉼표 구분). "정리 문서"를 직접 가리킬 때.
+    notion_source_page_ids: str = Field(default="", alias="NOTION_SOURCE_PAGE_IDS")
 
     # --- Paths ---
     workspace_dir: str = Field(default="workspace", alias="WORKSPACE_DIR")
@@ -67,6 +69,10 @@ class Settings(BaseSettings):
     @property
     def notion_mock_path(self) -> Path:
         return self.workspace_path / ".notion_mock.json"
+
+    @property
+    def source_page_ids(self) -> list[str]:
+        return [p.strip() for p in self.notion_source_page_ids.split(",") if p.strip()]
 
     # ----- 편의 판별 -----
     @property

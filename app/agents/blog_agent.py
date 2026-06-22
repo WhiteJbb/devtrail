@@ -45,6 +45,7 @@ class BlogAgent:
                 self._notion_client(),
                 idea_database_id=self.settings.notion_idea_database_id,
                 worklog_database_id=self.settings.notion_worklog_database_id,
+                source_page_ids=self.settings.source_page_ids,
             ),
         ]
         return SourceCollector(sources, char_budget=self.settings.context_char_budget)

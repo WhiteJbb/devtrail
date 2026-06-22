@@ -62,3 +62,24 @@ class RealNotionClient:
                 )
             )
         return records
+
+    def get_page_text(self, page_id: str) -> str:
+        if not page_id:
+            return ""
+        lines: list[str] = []
+        cursor: str | None = None
+        # 블록은 페이지네이션되므로 has_more가 끝날 때까지 순회.
+        while True:
+            kwargs = {"block_id": page_id, "page_size": 100}
+            if cursor:
+                kwargs["start_cursor"] = cursor
+            resp = self._client.blocks.children.list(**kwargs)
+            for block in resp.get("results", []):
+                text = mapping.block_to_text(block)
+                if text:
+                    lines.append(text)
+            if resp.get("has_more"):
+                cursor = resp.get("next_cursor")
+            else:
+                break
+        return "\n".join(lines).strip()
