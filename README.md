@@ -29,6 +29,7 @@ Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   
 | `work-agent write-draft "주제"` | 주제로 초안 생성 → `workspace/drafts/`에 Markdown 저장 + Notion 반영 |
 | `work-agent preview latest` | 최신(또는 slug 지정) 초안의 메타데이터 + 본문 일부 |
 | `work-agent export-tistory latest` | 초안을 티스토리 붙여넣기용(HTML/MD)으로 변환 → `workspace/blogs/` |
+| `work-agent publish-done latest --url <주소>` | 티스토리 게시 완료 기록(status=published + URL → 로컬·Notion) |
 | `work-agent sync-notion` | 로컬 draft 메타데이터를 Notion Blog DB와 동기화(상태 추적) |
 
 설계 원칙:
@@ -108,10 +109,15 @@ work-agent preview 20260622-xcorechat   # slug 지정
 # 4) 티스토리 붙여넣기용 변환 (LLM 불필요). --format html|md
 work-agent export-tistory latest --format html
 
-# 5) Notion 동기화(상태 추적). --dry-run으로 반영 없이 계획만 확인
+# 5) 티스토리에 붙여넣어 게시한 뒤, 완료 기록 (status=published + URL)
+work-agent publish-done latest --url https://yourblog.tistory.com/123
+
+# 6) Notion 동기화(상태 추적). --dry-run으로 반영 없이 계획만 확인
 work-agent sync-notion --dry-run
 work-agent sync-notion
 ```
+
+상태 흐름: `write-draft`(draft) → `export-tistory`(review) → `publish-done`(published). 각 단계가 frontmatter와 Notion Blog DB에 반영됩니다.
 
 `export-tistory`는 `workspace/blogs/<slug>.html`(또는 `.md`)을 만들고, 제목/태그는 티스토리의 별도 입력란에 넣도록 콘솔에 안내합니다. 본문 파일을 티스토리 글쓰기 화면(HTML 모드 또는 마크다운 모드)에 붙여넣으면 됩니다.
 
@@ -179,6 +185,7 @@ updated_at:
 | `Summary` | Text | 요약 |
 | `Created At` | Date | 생성 시각 |
 | `Updated At` | Date | 수정 시각 |
+| `Published URL` | URL | 게시된 티스토리 글 주소(publish-done 시 기록) |
 
 > DB id는 DB를 풀페이지로 연 뒤 URL의 `notion.so/.../<32자리 hex>?v=...`에서 `<32자리 hex>` 부분입니다. (컬럼명을 바꾸고 싶으면 [app/notion/mapping.py](app/notion/mapping.py)의 `COL_*` 상수를 수정하세요.)
 

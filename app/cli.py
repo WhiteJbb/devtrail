@@ -148,6 +148,28 @@ def export_tistory(
     typer.echo("  (티스토리 공식 API는 2024년 종료되어 자동 게시는 지원하지 않습니다)")
 
 
+@app.command("publish-done")
+def publish_done(
+    target: str = typer.Argument("latest", help="latest 또는 slug"),
+    url: str = typer.Option("", "--url", help="게시된 티스토리 글 주소"),
+) -> None:
+    """티스토리 게시 완료를 기록한다(status=published + URL을 로컬·Notion에 반영)."""
+    agent = BlogAgent()
+    post = agent.publish_done(target, url)
+    if post is None:
+        if target == "latest":
+            typer.echo("저장된 초안이 없습니다.")
+        else:
+            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
+        return
+
+    typer.secho(f"\n게시 완료 기록: {post.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  status: {post.status.value}")
+    if post.published_url:
+        typer.echo(f"  URL: {post.published_url}")
+    typer.echo(f"  Notion 반영: {agent.notion_mode}")
+
+
 @app.command("sync-notion")
 def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 반영 없이 계획만 출력")) -> None:
     """로컬 draft 메타데이터를 Notion Blog DB와 동기화한다."""

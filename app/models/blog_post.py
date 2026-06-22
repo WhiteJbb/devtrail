@@ -38,6 +38,7 @@ class BlogPost(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
     local_path: str = ""
     notion_page_id: str | None = None
+    published_url: str = ""
 
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
@@ -57,6 +58,7 @@ class BlogPost(BaseModel):
             "source_refs": list(self.source_refs),
             "local_path": self.local_path,
             "notion_page_id": self.notion_page_id,
+            "published_url": self.published_url,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }

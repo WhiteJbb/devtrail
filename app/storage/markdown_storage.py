@@ -60,6 +60,7 @@ class MarkdownStorage:
             source_refs=list(meta.get("source_refs") or []),
             local_path=meta.get("local_path", str(path)),
             notion_page_id=meta.get("notion_page_id") or None,
+            published_url=meta.get("published_url", ""),
             created_at=_parse_dt(meta["created_at"]) if meta.get("created_at") else datetime.now(),
             updated_at=_parse_dt(meta["updated_at"]) if meta.get("updated_at") else datetime.now(),
         )
