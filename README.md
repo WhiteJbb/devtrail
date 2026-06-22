@@ -4,6 +4,19 @@
 
 "완성형 블로그 자동 발행기"가 아니라, **70~80점짜리 초안을 만들어 5~10분 다듬으면 게시할 수 있게** 하는 것이 목표입니다. LLM은 창작자가 아니라 **작업 기록 정리자**로 동작하며, source에 없는 사실·수치는 만들지 않습니다.
 
+## 흐름
+
+```text
+입력                          처리                       출력
+Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   →   티스토리 붙여넣기용(HTML/MD)
+로컬 docs / Git 로그                (source 기반, 과장 없음)     workspace/blogs/
+                                                            + Notion Blog DB(상태 추적)
+```
+
+- **Notion = 입력**: 정리해 둔 문서(페이지 본문/블록)를 읽어 초안의 근거로 씁니다.
+- **티스토리 = 출력**: 글쓰기 화면에 바로 붙여넣을 HTML/마크다운으로 변환합니다. (티스토리 공식 API는 2024년 종료되어 자동 게시는 지원하지 않습니다.)
+- **Notion Blog DB**는 초안 상태(idea→draft→review→published) 추적용으로 함께 씁니다.
+
 이 프로젝트는 개인 생산성 Agent의 첫 모듈이며, 이후 Portfolio / Resume / Todo / Worklog Agent로 확장 가능한 계층 구조로 설계되었습니다.
 
 ---
@@ -15,7 +28,8 @@
 | `work-agent suggest-topics` | 최근 작업 기록·Git 로그·Notion 메모로 블로그 주제 추천 |
 | `work-agent write-draft "주제"` | 주제로 초안 생성 → `workspace/drafts/`에 Markdown 저장 + Notion 반영 |
 | `work-agent preview latest` | 최신(또는 slug 지정) 초안의 메타데이터 + 본문 일부 |
-| `work-agent sync-notion` | 로컬 draft 메타데이터를 Notion Blog DB와 동기화 |
+| `work-agent export-tistory latest` | 초안을 티스토리 붙여넣기용(HTML/MD)으로 변환 → `workspace/blogs/` |
+| `work-agent sync-notion` | 로컬 draft 메타데이터를 Notion Blog DB와 동기화(상태 추적) |
 
 설계 원칙:
 
@@ -61,9 +75,10 @@ CONTEXT_CHAR_BUDGET=12000          # LLM 컨텍스트 문자 예산
 
 # Notion: 비우면 mock(JSON). 채우면 실제 API.
 NOTION_API_KEY=
-NOTION_BLOG_DATABASE_ID=
-NOTION_IDEA_DATABASE_ID=
-NOTION_WORKLOG_DATABASE_ID=
+NOTION_BLOG_DATABASE_ID=          # 초안 상태 추적용 출력 DB
+NOTION_IDEA_DATABASE_ID=          # (입력) 아이디어 DB — 각 페이지 본문을 읽음
+NOTION_WORKLOG_DATABASE_ID=       # (입력) 작업 메모 DB — 각 페이지 본문을 읽음
+NOTION_SOURCE_PAGE_IDS=           # (입력) 정리 문서 페이지 id들(쉼표 구분)
 
 WORKSPACE_DIR=workspace
 GIT_LOG_LIMIT=20                   # suggest/draft가 참고할 최근 커밋 수
@@ -90,10 +105,15 @@ work-agent write-draft "XCoreChat 개발환경 분리" --project XCoreChat
 work-agent preview latest
 work-agent preview 20260622-xcorechat   # slug 지정
 
-# 4) Notion 동기화. --dry-run으로 반영 없이 계획만 확인
+# 4) 티스토리 붙여넣기용 변환 (LLM 불필요). --format html|md
+work-agent export-tistory latest --format html
+
+# 5) Notion 동기화(상태 추적). --dry-run으로 반영 없이 계획만 확인
 work-agent sync-notion --dry-run
 work-agent sync-notion
 ```
+
+`export-tistory`는 `workspace/blogs/<slug>.html`(또는 `.md`)을 만들고, 제목/태그는 티스토리의 별도 입력란에 넣도록 콘솔에 안내합니다. 본문 파일을 티스토리 글쓰기 화면(HTML 모드 또는 마크다운 모드)에 붙여넣으면 됩니다.
 
 LLM이 설정되지 않은 상태에서 `suggest-topics`/`write-draft`를 실행하면 초안을 지어내지 않고 안내 후 종료합니다.
 
@@ -162,9 +182,14 @@ updated_at:
 
 > DB id는 DB를 풀페이지로 연 뒤 URL의 `notion.so/.../<32자리 hex>?v=...`에서 `<32자리 hex>` 부분입니다. (컬럼명을 바꾸고 싶으면 [app/notion/mapping.py](app/notion/mapping.py)의 `COL_*` 상수를 수정하세요.)
 
-### 6-3. Idea / Worklog DB 붙이기
+### 6-3. 입력으로 쓸 Notion 문서 붙이기
 
-블로그 아이디어/작업 메모를 Notion에서 읽어 추천에 쓰고 싶으면 `NOTION_IDEA_DATABASE_ID` / `NOTION_WORKLOG_DATABASE_ID`를 설정합니다. 각 DB도 6-1의 Connections에 integration을 추가해야 합니다. 레코드의 제목/요약 텍스트가 `suggest-topics`의 근거로 합쳐집니다.
+정리해 둔 Notion 문서를 초안 소스로 읽는 방법은 두 가지입니다(둘 다 6-1의 Connections에 integration 추가 필요).
+
+- **DB 단위**: `NOTION_IDEA_DATABASE_ID` / `NOTION_WORKLOG_DATABASE_ID`를 설정하면 해당 DB 안 **각 페이지의 본문(블록)**을 읽어 근거로 씁니다.
+- **페이지 단위**: 특정 문서만 가리키려면 `NOTION_SOURCE_PAGE_IDS`에 페이지 id를 쉼표로 나열합니다(페이지 URL 끝의 32자리 hex).
+
+읽어온 본문은 `suggest-topics`/`write-draft`의 근거(`source_refs`)로 합쳐집니다. 본문이 비어 있으면 DB 행의 제목/요약으로 폴백합니다.
 
 ---
 
@@ -177,8 +202,8 @@ app/
 ├─ cli.py                 # 인자 파싱·출력만 (얇게)
 ├─ config.py              # .env 설정
 ├─ agents/blog_agent.py   # 요청 단위 흐름 조율(계층 조립)
-├─ services/              # topic_recommender / draft_generator / preview / notion_sync
-├─ content_sources/       # local_doc / git / notion + collector(예산 trim)
+├─ services/              # topic_recommender / draft_generator / preview / notion_sync / tistory_exporter
+├─ content_sources/       # local_doc / git / notion(페이지 본문) + collector(예산 trim)
 ├─ llm/                   # base / factory / openai_compatible / ollama
 ├─ notion/                # client(protocol) / mock / real / mapping / factory
 ├─ repositories/          # blog_repository(로컬) / notion_blog_repository
