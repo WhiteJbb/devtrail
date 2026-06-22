@@ -35,6 +35,7 @@ Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   
 | `work-agent sync-notion` | 로컬 draft 메타데이터를 Notion Blog DB와 동기화(상태 추적) |
 | `work-agent worklog` | 최근 작업(git/worklog/notion)을 자동 회고로 정리 → `workspace/worklogs/` |
 | `work-agent serve-bot` | 텔레그램 봇 실행(양방향: 폰에서 명령/알림) |
+| `work-agent push-digest` | 주제 추천(+선택 회고)을 메신저로 푸시(스케줄러로 정기 실행) |
 
 설계 원칙:
 
@@ -245,6 +246,26 @@ work-agent serve-bot     # Ctrl+C로 종료
 ```
 
 > 봇은 CLI와 같은 `BlogAgent`를 호출하는 얇은 어댑터입니다. provider를 교체하면(예: Mattermost) 같은 라우터를 재사용할 수 있습니다.
+
+### 7-4. 정기 푸시 (pull → push)
+
+`push-digest`는 주제 추천(+`--worklog` 시 작업 회고)을 메신저로 **먼저 보내주는** 일회성 명령입니다. `TELEGRAM_CHAT_ID`(대상)와 LLM 설정이 필요합니다.
+
+```bash
+work-agent push-digest            # 주제 추천만
+work-agent push-digest --worklog  # 회고도 함께
+```
+
+OS 스케줄러로 정기 실행하면 "오늘의 주제"가 매일 폰에 도착합니다.
+
+- **Windows (작업 스케줄러)** — 매주 월요일 오전 9시:
+  ```powershell
+  schtasks /create /tn "work-agent-digest" /tr "C:\path\to\.venv\Scripts\work-agent.exe push-digest --worklog" /sc weekly /d MON /st 09:00
+  ```
+- **cron (Linux/macOS)**:
+  ```cron
+  0 9 * * 1 /path/to/.venv/bin/work-agent push-digest --worklog
+  ```
 
 ---
 
