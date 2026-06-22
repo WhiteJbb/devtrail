@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import typer
 
@@ -20,6 +21,7 @@ from app.agents import BlogAgent, PortfolioAgent, ResumeAgent, TodoAgent, Worklo
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.models import DraftRequest
+from app.services.wiki_service import WikiService
 
 app = typer.Typer(
     add_completion=False,
@@ -44,6 +46,59 @@ def _handle_llm_errors(func):
         )
     except LLMError as e:
         _fail(f"LLM 호출에 실패했습니다.\n  {e}")
+
+
+def _wiki_service_from_settings() -> WikiService:
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
+    return WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
+
+
+@app.command("init-vault")
+def init_vault() -> None:
+    """Obsidian LLM Wiki Core 기본 폴더와 루트 파일을 만든다."""
+    service = _wiki_service_from_settings()
+    result = service.init_vault()
+
+    typer.secho("\nVault 초기화 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  vault: {result.vault_dir}")
+    typer.echo(f"  생성 폴더: {len(result.created_dirs)}개")
+    typer.echo(f"  생성 파일: {len(result.created_files)}개")
+    if result.existing_files:
+        typer.echo(f"  기존 파일 유지: {len(result.existing_files)}개")
+
+
+@app.command("index-vault")
+def index_vault() -> None:
+    """Obsidian Vault의 Markdown 노트를 읽고 root index.md를 갱신한다."""
+    service = _wiki_service_from_settings()
+    result = service.index_vault()
+
+    typer.secho("\nVault index 갱신 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  notes: {len(result.notes)}")
+    typer.echo(f"  index: {result.index_path}")
+
+
+@app.command("search")
+def search_vault(
+    query: str = typer.Argument(..., help="검색어"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50, help="최대 결과 수"),
+) -> None:
+    """Obsidian Vault 노트를 간단한 keyword 검색으로 찾는다."""
+    service = _wiki_service_from_settings()
+    results = service.search(query, limit=limit)
+    if not results:
+        typer.echo("검색 결과가 없습니다.")
+        return
+
+    for i, result in enumerate(results, 1):
+        note = result.note
+        typer.secho(f"\n[{i}] {note.title}", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"  path: {note.path}")
+        typer.echo(f"  score: {result.score}  matched: {', '.join(result.matched_terms)}")
+        if note.summary:
+            typer.echo(f"  {note.summary}")
 
 
 @app.command("suggest-topics")
@@ -364,9 +419,9 @@ def wiki_ingest(
 
     settings = get_settings()
     if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
 
-    label = f"폴더: {folder}" if folder else f"전체 볼트: {settings.obsidian_vault_dir}"
+    label = f"폴더: {folder}" if folder else f"전체 볼트: {settings.obsidian_vault_root}"
     typer.echo(f"wiki 생성 중... ({label})")
     agent = build_wiki_agent(char_budget=settings.context_char_budget)
     result = _handle_llm_errors(lambda: agent.ingest(folder_filter=folder))
@@ -383,7 +438,7 @@ def wiki_query(
 
     settings = get_settings()
     if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
 
     agent = build_wiki_agent(char_budget=settings.context_char_budget)
     answer = _handle_llm_errors(lambda: agent.query(question))
@@ -400,7 +455,7 @@ def wiki_lint() -> None:
 
     settings = get_settings()
     if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
 
     typer.echo("wiki 점검 중...")
     agent = build_wiki_agent(char_budget=settings.context_char_budget)

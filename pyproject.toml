@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "work-agent"
 version = "0.1.0"
-description = "개인 작업 기록 기반 기술 블로그 초안 생성 CLI (Work Agent - Blog Agent MVP)"
+description = "Obsidian 기반 LLM Wiki와 개인 지식 OS CLI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }

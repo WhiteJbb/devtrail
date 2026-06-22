@@ -33,12 +33,20 @@ class Settings(BaseSettings):
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="qwen2.5:14b-instruct-q4_K_M", alias="OLLAMA_MODEL")
 
+    local_llm_provider: str = Field(default="", alias="LOCAL_LLM_PROVIDER")
+    writer_provider: str = Field(default="", alias="WRITER_PROVIDER")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    gemini_flash_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_FLASH_MODEL")
+    gemini_pro_model: str = Field(default="gemini-2.5-pro", alias="GEMINI_PRO_MODEL")
+
     context_char_budget: int = Field(default=12000, alias="CONTEXT_CHAR_BUDGET")
     # LLM HTTP 호출 시도 횟수(1=재시도 없음). 일시적 오류/5xx에 지수 백오프 재시도.
     llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
     llm_timeout: float = Field(default=300.0, alias="LLM_TIMEOUT")
 
     # --- Obsidian ---
+    obsidian_vault_path: str = Field(default="", alias="OBSIDIAN_VAULT_PATH")
+    # Legacy name kept for compatibility with the first Obsidian source implementation.
     obsidian_vault_dir: str = Field(default="", alias="OBSIDIAN_VAULT_DIR")
     obsidian_tags: str = Field(default="", alias="OBSIDIAN_TAGS")
     obsidian_folders: str = Field(default="", alias="OBSIDIAN_FOLDERS")
@@ -51,6 +59,7 @@ class Settings(BaseSettings):
     notion_worklog_database_id: str = Field(default="", alias="NOTION_WORKLOG_DATABASE_ID")
     # 초안 소스로 본문을 읽어올 Notion 페이지 id들(쉼표 구분). "정리 문서"를 직접 가리킬 때.
     notion_source_page_ids: str = Field(default="", alias="NOTION_SOURCE_PAGE_IDS")
+    legacy_notion_enabled: bool = Field(default=True, alias="LEGACY_NOTION_ENABLED")
 
     # --- Paths ---
     workspace_dir: str = Field(default="workspace", alias="WORKSPACE_DIR")
@@ -74,6 +83,7 @@ class Settings(BaseSettings):
     telegram_allowed_chat_ids: str = Field(default="", alias="TELEGRAM_ALLOWED_CHAT_IDS")
     # 알림(outbound)을 보낼 기본 chat id.
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    default_timezone: str = Field(default="Asia/Seoul", alias="DEFAULT_TIMEZONE")
 
     # ----- 파생 경로 -----
     @property
@@ -124,21 +134,26 @@ class Settings(BaseSettings):
     @property
     def notion_enabled(self) -> bool:
         """실제 Notion API를 쓸 수 있는지. 아니면 mock으로 동작."""
-        return bool(self.notion_api_key and self.notion_blog_database_id)
+        return bool(self.legacy_notion_enabled and self.notion_api_key and self.notion_blog_database_id)
+
+    @property
+    def obsidian_vault_root(self) -> str:
+        """Current vault setting, preferring the new OBSIDIAN_VAULT_PATH name."""
+        return self.obsidian_vault_path or self.obsidian_vault_dir
 
     @property
     def wiki_path(self) -> Path | None:
-        if not self.obsidian_vault_dir:
+        if not self.obsidian_vault_root:
             return None
-        return Path(self.obsidian_vault_dir) / self.wiki_folder
+        return Path(self.obsidian_vault_root) / self.wiki_folder
 
     @property
     def wiki_enabled(self) -> bool:
-        return bool(self.obsidian_vault_dir)
+        return bool(self.obsidian_vault_root)
 
     @property
     def obsidian_enabled(self) -> bool:
-        return bool(self.obsidian_vault_dir)
+        return bool(self.obsidian_vault_root)
 
     @property
     def obsidian_tag_list(self) -> list[str]:
