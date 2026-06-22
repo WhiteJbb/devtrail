@@ -29,6 +29,7 @@ def get_llm_provider(settings: Settings) -> LLMProvider:
             base_url=settings.openai_base_url,
             model=settings.openai_model,
             api_key=settings.openai_api_key,
+            max_retries=settings.llm_max_retries,
         )
 
     if provider == "ollama":
@@ -37,6 +38,7 @@ def get_llm_provider(settings: Settings) -> LLMProvider:
         return OllamaProvider(
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
+            max_retries=settings.llm_max_retries,
         )
 
     raise LLMNotConfiguredError(

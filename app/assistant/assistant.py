@@ -13,7 +13,7 @@ from app.agents import PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
 from app.llm.base import LLMProvider
 from app.messaging.router import CommandRouter
 from app.prompts import render_prompt
-from app.services.json_utils import extract_json_object
+from app.services.json_utils import complete_json
 from app.assistant.intent import Intent
 
 # command → 사람이 읽을 설명(확인 메시지용)
@@ -76,8 +76,7 @@ class Assistant:
     # ----- 1) 의도 분류 -----
     def interpret(self, text: str) -> Intent:
         prompt = render_prompt("intent_route", TEXT=text)
-        raw = self.llm.complete(prompt)
-        data = extract_json_object(raw)
+        data = complete_json(self.llm, prompt)
         return Intent(
             command=str(data.get("command", "unknown")),
             arg=str(data.get("arg", "")),

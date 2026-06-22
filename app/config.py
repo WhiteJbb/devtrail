@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     ollama_model: str = Field(default="qwen2.5:14b-instruct-q4_K_M", alias="OLLAMA_MODEL")
 
     context_char_budget: int = Field(default=12000, alias="CONTEXT_CHAR_BUDGET")
+    # LLM HTTP 호출 시도 횟수(1=재시도 없음). 일시적 오류/5xx에 지수 백오프 재시도.
+    llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")
 
     # --- Notion ---
     notion_api_key: str = Field(default="", alias="NOTION_API_KEY")

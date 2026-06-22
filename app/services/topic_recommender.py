@@ -6,7 +6,7 @@ from app.content_sources.collector import SourceCollector
 from app.llm.base import LLMProvider
 from app.models import TopicSuggestion
 from app.prompts import render_prompt
-from app.services.json_utils import extract_json_object
+from app.services.json_utils import complete_json
 
 
 class TopicRecommender:
@@ -27,8 +27,7 @@ class TopicRecommender:
             CONTEXT=context.as_prompt_text(),
             EXISTING=existing,
         )
-        raw = self.llm.complete(prompt)
-        data = extract_json_object(raw)
+        data = complete_json(self.llm, prompt)
 
         suggestions: list[TopicSuggestion] = []
         for item in data.get("topics", []):

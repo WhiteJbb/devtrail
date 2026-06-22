@@ -7,7 +7,7 @@ from app.llm.base import LLMProvider
 from app.models import BlogPost, BlogStatus, DraftRequest
 from app.prompts import render_prompt
 from app.repositories.blog_repository import BlogRepository
-from app.services.json_utils import extract_json_object
+from app.services.json_utils import complete_json
 
 
 class DraftGenerator:
@@ -30,8 +30,7 @@ class DraftGenerator:
             TOPIC=request.topic,
             CONTEXT=context.as_prompt_text(),
         )
-        raw = self.llm.complete(prompt)
-        data = extract_json_object(raw)
+        data = complete_json(self.llm, prompt)
 
         # LLM이 제시한 source_refs가 없으면 수집 컨텍스트의 refs로 대체.
         source_refs = data.get("source_refs") or context.refs

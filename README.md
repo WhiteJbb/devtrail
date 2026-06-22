@@ -82,6 +82,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:14b-instruct-q4_K_M
 
 CONTEXT_CHAR_BUDGET=12000          # LLM 컨텍스트 문자 예산
+LLM_MAX_RETRIES=2                  # LLM HTTP 시도 횟수(일시 오류/5xx 백오프 재시도)
 
 # Notion: 비우면 mock(JSON). 채우면 실제 API.
 NOTION_API_KEY=
