@@ -85,6 +85,14 @@ class Settings(BaseSettings):
         return self.workspace_path / "todos"
 
     @property
+    def portfolio_path(self) -> Path:
+        return self.workspace_path / "portfolio"
+
+    @property
+    def resume_path(self) -> Path:
+        return self.workspace_path / "resume"
+
+    @property
     def notion_mock_path(self) -> Path:
         return self.workspace_path / ".notion_mock.json"
 

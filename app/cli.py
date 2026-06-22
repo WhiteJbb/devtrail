@@ -16,7 +16,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, TodoAgent, WorklogAgent
+from app.agents import BlogAgent, PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.models import DraftRequest
@@ -298,6 +298,26 @@ def todo() -> None:
     typer.secho("\n다음 할 일 제안 완료", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {result.path}")
     typer.secho("\n--- 할 일 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
+@app.command("portfolio")
+def portfolio() -> None:
+    """프로젝트 기록을 바탕으로 포트폴리오 설명 초안을 만들어 workspace/portfolio/에 저장한다."""
+    result = _handle_llm_errors(lambda: PortfolioAgent().generate())
+    typer.secho("\n포트폴리오 초안 생성 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 초안 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
+@app.command("resume")
+def resume() -> None:
+    """작업 기록을 바탕으로 이력서 bullet/자기소개서 초안을 만들어 workspace/resume/에 저장한다."""
+    result = _handle_llm_errors(lambda: ResumeAgent().generate())
+    typer.secho("\n이력서/자기소개서 초안 생성 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 초안 ---", fg=typer.colors.BRIGHT_BLACK)
     typer.echo(result.text)
 
 

@@ -25,6 +25,10 @@ workspace/worklogs/*
 !workspace/worklogs/.gitkeep
 workspace/todos/*
 !workspace/todos/.gitkeep
+workspace/portfolio/*
+!workspace/portfolio/.gitkeep
+workspace/resume/*
+!workspace/resume/.gitkeep
 
 # OS / IDE
 .DS_Store
