@@ -34,6 +34,7 @@ Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   
 | `work-agent publish-done latest --url <주소>` | 티스토리 게시 완료 기록(status=published + URL → 로컬·Notion) |
 | `work-agent sync-notion` | 로컬 draft 메타데이터를 Notion Blog DB와 동기화(상태 추적) |
 | `work-agent worklog` | 최근 작업(git/worklog/notion)을 자동 회고로 정리 → `workspace/worklogs/` |
+| `work-agent todo` | 최근 작업 기반 다음 할 일 제안 → `workspace/todos/` |
 | `work-agent serve-bot` | 텔레그램 봇 실행(양방향: 폰에서 명령/알림) |
 | `work-agent push-digest` | 주제 추천(+선택 회고)을 메신저로 푸시(스케줄러로 정기 실행) |
 
@@ -310,8 +311,8 @@ app/
 Blog Agent를 시작으로, 같은 계층 구조 위에 Agent를 추가합니다.
 
 - **Worklog Agent** — 커밋/메모/Notion 기반 자동 회고 ✅ 구현됨 (`work-agent worklog`)
+- **Todo Agent** — 최근 작업 기반 다음 할 일 제안 ✅ 구현됨 (`work-agent todo`)
 - **Portfolio Agent** — 프로젝트 기록 기반 포트폴리오 설명 초안
 - **Resume / Cover Letter Agent** — 이력서 bullet / 자기소개서 초안
-- **Todo Agent** — 최근 작업 기반 다음 할 일 제안
 
 새 Agent는 `app/agents/`에 추가하고 source 조립은 [app/agents/context_builder.py](app/agents/context_builder.py)의 `build_source_collector`를, 그 밖에 기존 `llm`/`storage`/`notion` 계층을 재사용하면 됩니다.

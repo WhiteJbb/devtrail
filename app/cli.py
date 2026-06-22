@@ -16,7 +16,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, WorklogAgent
+from app.agents import BlogAgent, TodoAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.models import DraftRequest
@@ -287,6 +287,18 @@ def push_digest(
     provider.send(settings.telegram_chat_id, text)
     typer.secho("푸시 전송 완료", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  대상 chat: {settings.telegram_chat_id}  ·  주제 {len(suggestions)}건")
+
+
+@app.command("todo")
+def todo() -> None:
+    """최근 작업(git/worklog/todo/notion)을 바탕으로 다음 할 일을 제안해 workspace/todos/에 저장한다."""
+    agent = TodoAgent()
+    result = _handle_llm_errors(lambda: agent.generate())
+
+    typer.secho("\n다음 할 일 제안 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 할 일 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
 
 
 @app.command("serve-bot")

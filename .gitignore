@@ -23,6 +23,8 @@ workspace/blogs/*
 !workspace/blogs/.gitkeep
 workspace/worklogs/*
 !workspace/worklogs/.gitkeep
+workspace/todos/*
+!workspace/todos/.gitkeep
 
 # OS / IDE
 .DS_Store
