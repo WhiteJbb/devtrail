@@ -157,6 +157,25 @@ class WikiService:
         self.append_vault_log("index", f"{len(notes)} notes", ["index.md"])
         return VaultIndex(notes=notes, index_path=self.vault_dir / "index.md")
 
+    def related_notes(self, rel_path: str, limit: int = 10) -> list[WikiSearchResult]:
+        """주어진 노트와 관련된 노트를 태그·위키링크·제목 기반으로 찾는다."""
+        target = None
+        for note in self.scan_notes():
+            if note.path == rel_path:
+                target = note
+                break
+        if target is None:
+            return []
+
+        # 태그 + wikilinks + 제목 단어로 쿼리 조합
+        query_parts = list(target.tags) + target.wikilinks + self._tokenize(target.title)
+        query = " ".join(dict.fromkeys(query_parts))  # 중복 제거, 순서 유지
+        if not query.strip():
+            return []
+
+        results = [r for r in self.search(query, limit=limit + 1) if r.note.path != rel_path]
+        return results[:limit]
+
     def search(self, query: str, limit: int = 10) -> list[WikiSearchResult]:
         """Simple keyword search over parsed vault notes."""
         terms = self._tokenize(query)

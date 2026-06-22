@@ -17,7 +17,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, CaptureAgent, CuratorAgent, DistillAgent, PortfolioAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
+from app.agents import BlogAgent, CaptureAgent, CuratorAgent, DistillAgent, PortfolioAgent, ProjectAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.memory import ContextPackBuilder
@@ -110,6 +110,26 @@ def index_vault() -> None:
     typer.secho("\nVault index 갱신 완료", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  notes: {len(result.notes)}")
     typer.echo(f"  index: {result.index_path}")
+
+
+@app.command("related")
+def related_notes(
+    rel_path: str = typer.Argument(..., help="기준 노트 경로 (vault 기준 상대경로)"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """주어진 노트와 관련된 노트를 태그·wikilink 기반으로 찾는다."""
+    service = _wiki_service_from_settings()
+    results = service.related_notes(rel_path, limit=limit)
+    if not results:
+        typer.echo("관련 노트를 찾지 못했습니다.")
+        return
+    for i, result in enumerate(results, 1):
+        note = result.note
+        typer.secho(f"\n[{i}] {note.title}", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"  path: {note.path}")
+        typer.echo(f"  score: {result.score}  matched: {', '.join(result.matched_terms)}")
+        if note.summary:
+            typer.echo(f"  {note.summary}")
 
 
 @app.command("search")
@@ -326,6 +346,50 @@ def write_blog(
         typer.echo(f"  태그: {', '.join(draft.tags)}")
     if draft.source_refs:
         typer.echo(f"  source_refs: {len(draft.source_refs)}개")
+
+
+@app.command("revise-blog")
+def revise_blog(
+    vault_path: str = typer.Argument(..., help="수정할 초안 경로 (vault 기준, 예: 50_Outputs/Blog/Drafts/abc.md)"),
+) -> None:
+    """Vault 블로그 초안을 읽어 문장·구조를 다듬고 status를 review로 변경한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = WikiBlogAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+    try:
+        draft = _handle_llm_errors(lambda: agent.revise_blog(vault_path))
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho(f"\n초안 다듬기 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {draft.path}")
+    typer.echo(f"  status: review")
+
+
+@app.command("publish-ready")
+def publish_ready(
+    vault_path: str = typer.Argument(..., help="게시 준비 완료할 초안 경로 (vault 기준)"),
+) -> None:
+    """Vault 블로그 초안의 status를 review로 변경해 게시 준비 완료를 기록한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = WikiBlogAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+    try:
+        draft = agent.publish_ready(vault_path)
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho(f"\n게시 준비 완료 기록: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {draft.path}")
+    typer.echo(f"  status: review")
 
 
 @app.command("suggest-topics")
@@ -590,6 +654,49 @@ def portfolio() -> None:
     typer.secho("\n포트폴리오 초안 생성 완료", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {result.path}")
     typer.secho("\n--- 초안 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
+def _project_agent() -> ProjectAgent:
+    try:
+        return ProjectAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"ProjectAgent를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
+@app.command("summarize-project")
+def summarize_project(
+    project: str = typer.Argument(..., help="프로젝트명 (예: XCoreChat)"),
+) -> None:
+    """프로젝트 Context Pack을 읽어 800자 이내 요약을 50_Outputs/Portfolio/에 저장한다."""
+    result = _handle_llm_errors(lambda: _project_agent().summarize_project(project))
+    typer.secho(f"\n프로젝트 요약 완료: {project}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 요약 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
+@app.command("portfolio-draft")
+def portfolio_draft(
+    project: str = typer.Argument(..., help="프로젝트명 (예: XCoreChat)"),
+) -> None:
+    """프로젝트별 포트폴리오 설명 초안을 50_Outputs/Portfolio/에 저장한다."""
+    result = _handle_llm_errors(lambda: _project_agent().portfolio_draft(project))
+    typer.secho(f"\n포트폴리오 초안 완료: {project}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 초안 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
+@app.command("interview-questions")
+def interview_questions(
+    project: str = typer.Argument(..., help="프로젝트명 (예: XCoreChat)"),
+) -> None:
+    """프로젝트별 면접 예상 질문·답변 초안을 50_Outputs/Interview/에 저장한다."""
+    result = _handle_llm_errors(lambda: _project_agent().interview_questions(project))
+    typer.secho(f"\n면접 질문 초안 완료: {project}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 면접 질문 ---", fg=typer.colors.BRIGHT_BLACK)
     typer.echo(result.text)
 
 
