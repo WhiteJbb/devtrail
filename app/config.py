@@ -75,6 +75,10 @@ class Settings(BaseSettings):
         return self.workspace_path / "blogs"
 
     @property
+    def worklogs_path(self) -> Path:
+        return self.workspace_path / "worklogs"
+
+    @property
     def notion_mock_path(self) -> Path:
         return self.workspace_path / ".notion_mock.json"
 
