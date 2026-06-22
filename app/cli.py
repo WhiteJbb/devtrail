@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import typer
 
@@ -16,10 +17,11 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, PortfolioAgent, ResumeAgent, TodoAgent, WorklogAgent
+from app.agents import BlogAgent, CaptureAgent, CuratorAgent, DistillAgent, PortfolioAgent, ProjectAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
-from app.models import DraftRequest
+from app.memory import ContextPackBuilder
+from app.services.wiki_service import WikiService
 
 app = typer.Typer(
     add_completion=False,
@@ -46,50 +48,439 @@ def _handle_llm_errors(func):
         _fail(f"LLM 호출에 실패했습니다.\n  {e}")
 
 
-@app.command("suggest-topics")
-def suggest_topics() -> None:
-    """최근 작업 기록을 바탕으로 블로그 주제를 추천한다."""
-    agent = BlogAgent()
-    suggestions = _handle_llm_errors(agent.suggest_topics)
+def _wiki_service_from_settings() -> WikiService:
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
+    return WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
 
-    if not suggestions:
-        typer.echo("추천할 주제를 찾지 못했습니다. 작업 기록을 더 채운 뒤 다시 시도하세요.")
+
+def _capture_agent() -> CaptureAgent:
+    try:
+        return CaptureAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Capture를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
+def _distill_agent() -> DistillAgent:
+    try:
+        return DistillAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Distill을 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
+def _print_capture_result(label: str, result) -> None:
+    verb = "생성" if result.created else "기존 파일 유지"
+    typer.secho(f"\n{label} {verb} 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.echo(f"  vault path: {result.rel_path}")
+
+
+def _print_distill_result(label: str, result) -> None:
+    if not result.written:
+        typer.echo(f"{label}: 생성된 후보가 없습니다.")
+        return
+    typer.secho(f"\n{label} 완료: 후보 {len(result.written)}개 생성", fg=typer.colors.GREEN, bold=True)
+    for item in result.written:
+        typer.echo(f"  - [{item.spec.kind}] {item.spec.title}")
+        typer.echo(f"    {item.rel_path}")
+
+
+@app.command("init-vault")
+def init_vault() -> None:
+    """Obsidian LLM Wiki Core 기본 폴더와 루트 파일을 만든다."""
+    service = _wiki_service_from_settings()
+    result = service.init_vault()
+
+    typer.secho("\nVault 초기화 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  vault: {result.vault_dir}")
+    typer.echo(f"  생성 폴더: {len(result.created_dirs)}개")
+    typer.echo(f"  생성 파일: {len(result.created_files)}개")
+    if result.existing_files:
+        typer.echo(f"  기존 파일 유지: {len(result.existing_files)}개")
+
+
+@app.command("install-hooks")
+def install_hooks(
+    repo: Path = typer.Argument(..., help="대상 git 레포지토리 경로"),
+    project: str = typer.Option("", "--project", "-p", help="프로젝트 이름 (기본: 레포 폴더명)"),
+    force: bool = typer.Option(False, "--force", "-f", help="기존 hook 덮어쓰기"),
+) -> None:
+    """대상 git 레포지토리에 work-agent post-commit hook을 설치한다.
+
+    커밋할 때마다 자동으로 10_Worklog/GitSummaries/에 캡처된다.
+    """
+    import shutil
+    import stat
+    import subprocess
+    import sys
+
+    repo_path = repo.resolve()
+    if not (repo_path / ".git").exists():
+        _fail(f"{repo_path} 는 git 레포지토리가 아닙니다.")
+
+    hooks_dir = repo_path / ".git" / "hooks"
+    hook_dst = hooks_dir / "post-commit"
+
+    if hook_dst.exists() and not force:
+        typer.secho(f"이미 hook이 설치되어 있습니다: {hook_dst}", fg=typer.colors.YELLOW)
+        typer.echo("덮어쓰려면 --force 옵션을 사용하세요.")
+        raise typer.Exit(1)
+
+    hook_src = Path(__file__).parent.parent / "scripts" / "hooks" / "post-commit"
+    if not hook_src.exists():
+        _fail(f"hook 스크립트를 찾을 수 없습니다: {hook_src}")
+
+    # LF 줄 끝 강제 (Windows CRLF 환경에서도 Git Bash가 실행 가능하도록)
+    content = hook_src.read_bytes().replace(b"\r\n", b"\n")
+    hook_dst.write_bytes(content)
+    current_mode = hook_dst.stat().st_mode
+    hook_dst.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    work_agent_home = str(Path(__file__).parent.parent.resolve())
+    python_exe = sys.executable
+    project_name = project or repo_path.name
+
+    for key, val in [
+        ("work-agent.home", work_agent_home),
+        ("work-agent.python", python_exe),
+        ("work-agent.project", project_name),
+    ]:
+        subprocess.run(
+            ["git", "config", "--local", key, val],
+            cwd=str(repo_path),
+            check=True,
+            capture_output=True,
+        )
+
+    typer.secho("\npost-commit hook 설치 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  repo:    {repo_path}")
+    typer.echo(f"  project: {project_name}")
+    typer.echo(f"  python:  {python_exe}")
+    typer.echo(f"  home:    {work_agent_home}")
+    typer.echo("\n커밋할 때마다 자동으로 vault에 캡처됩니다.")
+
+
+@app.command("index-vault")
+def index_vault() -> None:
+    """Obsidian Vault의 Markdown 노트를 읽고 root index.md를 갱신한다."""
+    service = _wiki_service_from_settings()
+    result = service.index_vault()
+
+    typer.secho("\nVault index 갱신 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  notes: {len(result.notes)}")
+    typer.echo(f"  index: {result.index_path}")
+
+
+@app.command("related")
+def related_notes(
+    rel_path: str = typer.Argument(..., help="기준 노트 경로 (vault 기준 상대경로)"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50),
+) -> None:
+    """주어진 노트와 관련된 노트를 태그·wikilink 기반으로 찾는다."""
+    service = _wiki_service_from_settings()
+    results = service.related_notes(rel_path, limit=limit)
+    if not results:
+        typer.echo("관련 노트를 찾지 못했습니다.")
+        return
+    for i, result in enumerate(results, 1):
+        note = result.note
+        typer.secho(f"\n[{i}] {note.title}", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"  path: {note.path}")
+        typer.echo(f"  score: {result.score}  matched: {', '.join(result.matched_terms)}")
+        if note.summary:
+            typer.echo(f"  {note.summary}")
+
+
+@app.command("search")
+def search_vault(
+    query: str = typer.Argument(..., help="검색어"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=50, help="최대 결과 수"),
+) -> None:
+    """Obsidian Vault 노트를 간단한 keyword 검색으로 찾는다."""
+    service = _wiki_service_from_settings()
+    results = service.search(query, limit=limit)
+    if not results:
+        typer.echo("검색 결과가 없습니다.")
         return
 
-    for i, s in enumerate(suggestions, 1):
-        title = s.title_candidates[0] if s.title_candidates else "(제목 후보 없음)"
-        typer.secho(f"\n[{i}] {title}", fg=typer.colors.CYAN, bold=True)
-        for alt in s.title_candidates[1:]:
-            typer.echo(f"    · {alt}")
-        if s.reason:
-            typer.echo(f"  이유: {s.reason}")
-        if s.outline:
-            typer.echo("  예상 목차:")
-            for item in s.outline:
-                typer.echo(f"    - {item}")
-        if s.source_refs:
-            typer.echo(f"  source: {', '.join(s.source_refs)}")
+    for i, result in enumerate(results, 1):
+        note = result.note
+        typer.secho(f"\n[{i}] {note.title}", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"  path: {note.path}")
+        typer.echo(f"  score: {result.score}  matched: {', '.join(result.matched_terms)}")
+        if note.summary:
+            typer.echo(f"  {note.summary}")
+
+
+@app.command("capture")
+def capture_note(
+    text: str = typer.Argument(..., help="저장할 메모 내용"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+    source: str = typer.Option("manual", "--source", help="원본 출처"),
+) -> None:
+    """메모를 00_Inbox/Captures에 raw Markdown으로 저장한다."""
+    try:
+        result = _capture_agent().capture(text=text, project=project, source=source)
+    except ValueError as e:
+        _fail(str(e))
+    _print_capture_result("capture", result)
+
+
+@app.command("capture-chat")
+def capture_chat(
+    file: Path = typer.Option(..., "--file", "-f", help="저장할 대화 Markdown/text 파일"),
+    source: str = typer.Option(..., "--source", "-s", help="chatgpt, codex, claude 등 출처"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+) -> None:
+    """대화 파일을 00_Inbox/Chats에 raw Markdown으로 저장한다."""
+    try:
+        result = _capture_agent().capture_chat(file_path=file, source=source, project=project)
+    except (FileNotFoundError, ValueError) as e:
+        _fail(str(e))
+    _print_capture_result("chat capture", result)
+
+
+@app.command("capture-commit")
+def capture_commit(
+    repo: Path = typer.Option(Path.cwd(), "--repo", "-r", help="커밋을 읽을 git 저장소"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+    ref: str = typer.Option("HEAD", "--ref", help="캡처할 commit/ref"),
+) -> None:
+    """git commit을 10_Worklog/GitSummaries에 raw Markdown으로 저장한다."""
+    try:
+        result = _capture_agent().capture_commit(repo_dir=repo, project=project, ref=ref)
+    except ValueError as e:
+        _fail(str(e))
+    _print_capture_result("commit capture", result)
+
+
+@app.command("daily-log")
+def daily_log(
+    project: str = typer.Option("", "--project", "-p", help="프로젝트별 daily log가 필요할 때 지정"),
+) -> None:
+    """오늘 daily worklog 파일을 10_Worklog/Daily에 만든다."""
+    result = _capture_agent().daily_log(project=project)
+    _print_capture_result("daily log", result)
+
+
+@app.command("distill-today")
+def distill_today() -> None:
+    """오늘 raw 기록을 읽어 Knowledge/Decision/Memory/Blog 후보를 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().distill_today())
+    _print_distill_result("distill-today", result)
+
+
+@app.command("suggest-knowledge")
+def suggest_knowledge() -> None:
+    """최근 raw 기록에서 Knowledge 후보를 60_Candidates/Knowledge에 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().suggest_knowledge())
+    _print_distill_result("suggest-knowledge", result)
+
+
+@app.command("suggest-blog-topics")
+def suggest_blog_topics() -> None:
+    """최근 raw 기록에서 BlogIdea 후보를 60_Candidates/BlogIdeas에 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().suggest_blog_topics())
+    _print_distill_result("suggest-blog-topics", result)
+
+
+@app.command("suggest-memory-patch")
+def suggest_memory_patch() -> None:
+    """최근 raw 기록에서 AgentMemory patch 후보를 60_Candidates/MemoryPatches에 만든다."""
+    result = _handle_llm_errors(lambda: _distill_agent().suggest_memory_patch())
+    _print_distill_result("suggest-memory-patch", result)
+
+
+@app.command("build-context")
+def build_context(
+    topic: str = typer.Argument(..., help="문맥을 수집할 주제"),
+    show_refs: bool = typer.Option(False, "--refs", "-r", help="source_refs 목록 출력"),
+) -> None:
+    """주제 관련 AgentMemory / Project Context / 관련 노트를 묶어 Context Pack을 만든다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    from pathlib import Path
+    vault_dir = Path(settings.obsidian_vault_root)
+    builder = ContextPackBuilder(vault_dir)
+    pack = builder.build(topic)
+
+    typer.secho(f"\nContext Pack: {topic}", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  source_refs: {len(pack.source_refs)}개")
+    typer.secho("\n--- Context Pack ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(pack.render())
+    if show_refs:
+        typer.secho("\n--- Source Refs ---", fg=typer.colors.BRIGHT_BLACK)
+        for ref in pack.source_refs:
+            typer.echo(f"  {ref}")
+
+
+def _curator_agent() -> CuratorAgent:
+    try:
+        return CuratorAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Curator를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
+@app.command("list-candidates")
+def list_candidates() -> None:
+    """60_Candidates/ 하위 후보 노트 목록을 보여준다."""
+    items = _curator_agent().list_candidates()
+    if not items:
+        typer.echo("60_Candidates/ 에 후보가 없습니다.")
+        return
+
+    typer.secho(f"\n후보 {len(items)}개", fg=typer.colors.CYAN, bold=True)
+    for item in items:
+        typer.echo(
+            f"  [{item.kind}] {item.title}"
+            + (f"  ({item.project})" if item.project else "")
+        )
+        typer.echo(f"    {item.rel_path}")
+
+
+@app.command("preview-candidate")
+def preview_candidate(
+    rel_path: str = typer.Argument(..., help="60_Candidates/ 기준 상대 경로"),
+) -> None:
+    """후보 노트의 내용을 미리 본다."""
+    try:
+        content = _curator_agent().preview_candidate(rel_path)
+    except ValueError as e:
+        _fail(str(e))
+    typer.secho(f"\n--- {rel_path} ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(content)
+
+
+@app.command("promote-candidate")
+def promote_candidate(
+    rel_path: str = typer.Argument(..., help="승격할 후보 노트 경로 (vault 기준)"),
+) -> None:
+    """후보 노트를 공식 Knowledge/Decision/Memory 영역으로 승격한다."""
+    try:
+        result = _curator_agent().promote_candidate(rel_path)
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho("\n승격 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  후보: {result.candidate_path}")
+    typer.echo(f"  승격됨: {result.promoted_path}")
+    typer.echo(f"  종류: {result.kind}")
+
+
+@app.command("apply-memory-patch")
+def apply_memory_patch(
+    rel_path: str = typer.Argument(..., help="적용할 MemoryPatch 후보 경로 (vault 기준)"),
+) -> None:
+    """MemoryPatch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다."""
+    try:
+        result = _curator_agent().apply_memory_patch(rel_path)
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho("\n메모리 패치 반영 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  후보: {result.candidate_path}")
+    typer.echo(f"  반영됨: {result.promoted_path}")
+
+
+@app.command("write-blog")
+def write_blog(
+    topic: str = typer.Argument(..., help="블로그 주제"),
+    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+) -> None:
+    """Context Pack을 기반으로 블로그 초안을 생성해 50_Outputs/Blog/Drafts/에 저장한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. write-draft로 기존 흐름을 사용하거나 .env에서 경로를 설정하세요.")
+    try:
+        agent = WikiBlogAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+
+    draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=project))
+    typer.secho(f"\n블로그 초안 생성 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {draft.path}")
+    typer.echo(f"  vault path: {draft.rel_path}")
+    if draft.tags:
+        typer.echo(f"  태그: {', '.join(draft.tags)}")
+    if draft.source_refs:
+        typer.echo(f"  source_refs: {len(draft.source_refs)}개")
+
+
+@app.command("revise-blog")
+def revise_blog(
+    vault_path: str = typer.Argument(..., help="수정할 초안 경로 (vault 기준, 예: 50_Outputs/Blog/Drafts/abc.md)"),
+) -> None:
+    """Vault 블로그 초안을 읽어 문장·구조를 다듬고 status를 review로 변경한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = WikiBlogAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+    try:
+        draft = _handle_llm_errors(lambda: agent.revise_blog(vault_path))
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho(f"\n초안 다듬기 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {draft.path}")
+    typer.echo(f"  status: review")
+
+
+@app.command("publish-ready")
+def publish_ready(
+    vault_path: str = typer.Argument(..., help="게시 준비 완료할 초안 경로 (vault 기준)"),
+) -> None:
+    """Vault 블로그 초안의 status를 review로 변경해 게시 준비 완료를 기록한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = WikiBlogAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+    try:
+        draft = agent.publish_ready(vault_path)
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho(f"\n게시 준비 완료 기록: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {draft.path}")
+    typer.echo(f"  status: review")
+
+
+@app.command("suggest-topics")
+def suggest_topics() -> None:
+    """vault raw 기록에서 BlogIdea 후보를 만든다 (suggest-blog-topics와 동일)."""
+    result = _handle_llm_errors(lambda: _distill_agent().suggest_blog_topics())
+    _print_distill_result("suggest-topics", result)
 
 
 @app.command("write-draft")
 def write_draft(
     topic: str = typer.Argument(..., help="블로그 주제"),
     source_project: str = typer.Option("", "--project", help="관련 프로젝트명"),
-    no_notion: bool = typer.Option(False, "--no-notion", help="Notion 동기화 건너뛰기"),
 ) -> None:
-    """특정 주제로 블로그 초안을 생성해 workspace/drafts/에 저장한다."""
-    agent = BlogAgent()
-    request = DraftRequest(topic=topic, source_project=source_project, sync_notion=not no_notion)
-    post = _handle_llm_errors(lambda: agent.write_draft(request))
+    """블로그 초안을 50_Outputs/Blog/Drafts/에 저장한다 (write-blog와 동일)."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 경로를 설정하세요.")
+    try:
+        agent = WikiBlogAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
 
-    typer.secho(f"\n초안 생성 완료: {post.title}", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  파일: {post.local_path}")
-    typer.echo(f"  slug: {post.slug}")
-    if post.tags:
-        typer.echo(f"  태그: {', '.join(post.tags)}")
-    if post.source_refs:
-        typer.echo(f"  source: {', '.join(post.source_refs)}")
-    typer.echo("  (preview latest 로 확인할 수 있습니다)")
+    draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=source_project))
+    typer.secho(f"\n블로그 초안 생성 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {draft.path}")
+    typer.echo(f"  vault path: {draft.rel_path}")
+    if draft.tags:
+        typer.echo(f"  태그: {', '.join(draft.tags)}")
+    if draft.source_refs:
+        typer.echo(f"  source_refs: {len(draft.source_refs)}개")
 
 
 @app.command("revise")
@@ -248,8 +639,11 @@ def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 �
 
 @app.command("worklog")
 def worklog() -> None:
-    """최근 작업(git/worklog/notion)을 자동 회고로 정리해 workspace/worklogs/에 저장한다."""
-    agent = WorklogAgent()
+    """최근 raw 기록(00_Inbox, 10_Worklog)을 읽어 작업 회고를 10_Worklog/Summaries/에 저장한다."""
+    try:
+        agent = WorklogAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Worklog를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
     result = _handle_llm_errors(lambda: agent.generate())
 
     typer.secho("\n작업 회고 생성 완료", fg=typer.colors.GREEN, bold=True)
@@ -260,12 +654,11 @@ def worklog() -> None:
 
 @app.command("push-digest")
 def push_digest(
-    worklog: bool = typer.Option(False, "--worklog", help="작업 회고도 함께 보냄"),
+    include_worklog: bool = typer.Option(False, "--worklog", help="작업 회고도 함께 보냄"),
 ) -> None:
-    """주제 추천(+선택 작업 회고)을 메신저로 보낸다. 스케줄러로 정기 실행하면 알림처럼 동작."""
+    """vault BlogIdea 후보 목록(+선택 작업 회고)을 메신저로 보낸다."""
     from app.messaging import get_messenger_provider
     from app.messaging.base import MessengerNotConfiguredError
-    from app.services import build_digest
 
     settings = get_settings()
     try:
@@ -278,21 +671,43 @@ def push_digest(
     if not settings.telegram_chat_id:
         _fail("보낼 대상이 없습니다. .env에서 TELEGRAM_CHAT_ID를 설정하세요.")
 
-    suggestions = _handle_llm_errors(BlogAgent().suggest_topics)
-    worklog_text = ""
-    if worklog:
-        worklog_text = _handle_llm_errors(lambda: WorklogAgent().generate(save=False).text)
+    # 60_Candidates/BlogIdeas/ 후보에서 주제 수집
+    blog_ideas = []
+    try:
+        all_candidates = _curator_agent().list_candidates()
+        blog_ideas = [c for c in all_candidates if c.kind == "blog_idea"]
+    except Exception:
+        pass
 
-    text = build_digest(suggestions, worklog_text)
+    lines = ["**블로그 주제 후보**"]
+    if blog_ideas:
+        for i, c in enumerate(blog_ideas[:5], 1):
+            lines.append(f"{i}. {c.title}" + (f"  ({c.project})" if c.project else ""))
+    else:
+        lines.append("후보 없음 — `distill-today` 실행 권장")
+    text = "\n".join(lines)
+
+    if include_worklog:
+        try:
+            worklog_agent = WorklogAgent(settings=settings)
+            wlog = _handle_llm_errors(lambda: worklog_agent.generate(save=False))
+            if wlog:
+                text += f"\n\n**작업 회고**\n{wlog.text[:1500]}"
+        except RuntimeError:
+            pass
+
     provider.send(settings.telegram_chat_id, text)
     typer.secho("푸시 전송 완료", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  대상 chat: {settings.telegram_chat_id}  ·  주제 {len(suggestions)}건")
+    typer.echo(f"  대상 chat: {settings.telegram_chat_id}  ·  후보 {len(blog_ideas)}건")
 
 
 @app.command("todo")
 def todo() -> None:
-    """최근 작업(git/worklog/todo/notion)을 바탕으로 다음 할 일을 제안해 workspace/todos/에 저장한다."""
-    agent = TodoAgent()
+    """최근 raw 기록을 읽어 다음 할 일을 제안해 50_Outputs/Todo/에 저장한다."""
+    try:
+        agent = TodoAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Todo를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
     result = _handle_llm_errors(lambda: agent.generate())
 
     typer.secho("\n다음 할 일 제안 완료", fg=typer.colors.GREEN, bold=True)
@@ -303,18 +718,69 @@ def todo() -> None:
 
 @app.command("portfolio")
 def portfolio() -> None:
-    """프로젝트 기록을 바탕으로 포트폴리오 설명 초안을 만들어 workspace/portfolio/에 저장한다."""
-    result = _handle_llm_errors(lambda: PortfolioAgent().generate())
+    """전체 프로젝트 기록을 바탕으로 포트폴리오 초안을 50_Outputs/Portfolio/에 저장한다."""
+    try:
+        agent = PortfolioAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Portfolio를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+    result = _handle_llm_errors(lambda: agent.generate())
     typer.secho("\n포트폴리오 초안 생성 완료", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {result.path}")
     typer.secho("\n--- 초안 ---", fg=typer.colors.BRIGHT_BLACK)
     typer.echo(result.text)
 
 
+def _project_agent() -> ProjectAgent:
+    try:
+        return ProjectAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"ProjectAgent를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+
+
+@app.command("summarize-project")
+def summarize_project(
+    project: str = typer.Argument(..., help="프로젝트명 (예: XCoreChat)"),
+) -> None:
+    """프로젝트 Context Pack을 읽어 800자 이내 요약을 50_Outputs/Portfolio/에 저장한다."""
+    result = _handle_llm_errors(lambda: _project_agent().summarize_project(project))
+    typer.secho(f"\n프로젝트 요약 완료: {project}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 요약 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
+@app.command("portfolio-draft")
+def portfolio_draft(
+    project: str = typer.Argument(..., help="프로젝트명 (예: XCoreChat)"),
+) -> None:
+    """프로젝트별 포트폴리오 설명 초안을 50_Outputs/Portfolio/에 저장한다."""
+    result = _handle_llm_errors(lambda: _project_agent().portfolio_draft(project))
+    typer.secho(f"\n포트폴리오 초안 완료: {project}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 초안 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
+@app.command("interview-questions")
+def interview_questions(
+    project: str = typer.Argument(..., help="프로젝트명 (예: XCoreChat)"),
+) -> None:
+    """프로젝트별 면접 예상 질문·답변 초안을 50_Outputs/Interview/에 저장한다."""
+    result = _handle_llm_errors(lambda: _project_agent().interview_questions(project))
+    typer.secho(f"\n면접 질문 초안 완료: {project}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.secho("\n--- 면접 질문 ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.echo(result.text)
+
+
 @app.command("resume")
 def resume() -> None:
-    """작업 기록을 바탕으로 이력서 bullet/자기소개서 초안을 만들어 workspace/resume/에 저장한다."""
-    result = _handle_llm_errors(lambda: ResumeAgent().generate())
+    """CareerContext + 전체 프로젝트를 읽어 이력서/자기소개서 초안을 50_Outputs/Resume/에 저장한다."""
+    try:
+        agent = ResumeAgent(settings=get_settings())
+    except RuntimeError as e:
+        _fail(f"Resume를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
+    result = _handle_llm_errors(lambda: agent.generate())
     typer.secho("\n이력서/자기소개서 초안 생성 완료", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {result.path}")
     typer.secho("\n--- 초안 ---", fg=typer.colors.BRIGHT_BLACK)
@@ -364,9 +830,9 @@ def wiki_ingest(
 
     settings = get_settings()
     if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
 
-    label = f"폴더: {folder}" if folder else f"전체 볼트: {settings.obsidian_vault_dir}"
+    label = f"폴더: {folder}" if folder else f"전체 볼트: {settings.obsidian_vault_root}"
     typer.echo(f"wiki 생성 중... ({label})")
     agent = build_wiki_agent(char_budget=settings.context_char_budget)
     result = _handle_llm_errors(lambda: agent.ingest(folder_filter=folder))
@@ -383,7 +849,7 @@ def wiki_query(
 
     settings = get_settings()
     if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
 
     agent = build_wiki_agent(char_budget=settings.context_char_budget)
     answer = _handle_llm_errors(lambda: agent.query(question))
@@ -400,7 +866,7 @@ def wiki_lint() -> None:
 
     settings = get_settings()
     if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다. .env를 확인하세요.")
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
 
     typer.echo("wiki 점검 중...")
     agent = build_wiki_agent(char_budget=settings.context_char_budget)

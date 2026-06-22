@@ -6,12 +6,65 @@
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from app.messaging.base import IncomingMessage
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 _MAX_LEN = 4000  # 텔레그램 메시지 길이 한도(4096) 여유
+
+
+def _escape_html(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _md_to_html(text: str) -> str:
+    """Markdown을 Telegram HTML로 변환한다.
+
+    코드 블록/인라인 코드 안의 내용은 변환하지 않고 HTML 엔티티만 이스케이프한다.
+    """
+    # 코드 블록/인라인 코드를 먼저 분리해 저장 (내부 변환 방지)
+    placeholders: dict[str, str] = {}
+    counter = [0]
+
+    def save(html: str) -> str:
+        key = f"\x00PLACEHOLDER{counter[0]}\x00"
+        placeholders[key] = html
+        counter[0] += 1
+        return key
+
+    # ``` 코드 블록
+    def replace_code_block(m: re.Match) -> str:
+        inner = _escape_html(m.group(2).strip("\n"))
+        return save(f"<pre><code>{inner}</code></pre>")
+
+    text = re.sub(r"```[^\n]*\n?([\s\S]*?)```", replace_code_block, text)
+
+    # `인라인 코드`
+    def replace_inline(m: re.Match) -> str:
+        return save(f"<code>{_escape_html(m.group(1))}</code>")
+
+    text = re.sub(r"`([^`\n]+)`", replace_inline, text)
+
+    # 나머지 텍스트 HTML 이스케이프
+    text = _escape_html(text)
+
+    # ## 헤더 → <b>
+    text = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    # **bold**
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text, flags=re.DOTALL)
+    # *italic* (단독 *)
+    text = re.sub(r"(?<![*\w])\*([^*\n]+)\*(?![*\w])", r"<i>\1</i>", text)
+    # _italic_
+    text = re.sub(r"(?<![_\w])_([^_\n]+)_(?![_\w])", r"<i>\1</i>", text)
+
+    # 플레이스홀더 복원
+    for key, val in placeholders.items():
+        text = text.replace(key, val)
+
+    return text
 
 
 class TelegramProvider:
@@ -25,15 +78,16 @@ class TelegramProvider:
         return _API.format(token=self.token, method=method)
 
     def send(self, chat_id: str, text: str) -> None:
+        html = _md_to_html(text)
         # 길이 한도를 넘으면 잘라서 여러 번 보낸다.
-        for i in range(0, len(text) or 1, _MAX_LEN):
-            chunk = text[i : i + _MAX_LEN] or text
+        for i in range(0, len(html) or 1, _MAX_LEN):
+            chunk = html[i : i + _MAX_LEN] or html
             httpx.post(
                 self._url("sendMessage"),
-                json={"chat_id": chat_id, "text": chunk},
+                json={"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"},
                 timeout=30.0,
             ).raise_for_status()
-            if not text:
+            if not html:
                 break
 
     def get_updates(self, offset: int | None = None) -> tuple[list[IncomingMessage], int]:

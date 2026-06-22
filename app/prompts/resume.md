@@ -16,4 +16,4 @@
 (문제 상황 → 한 일 → 배운 점 흐름의 짧은 단락 1~2개. source에 근거한 경험만)
 
 # Source
-{{CONTEXT}}
+{{CONTEXT_PACK}}

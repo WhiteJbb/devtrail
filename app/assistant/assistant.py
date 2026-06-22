@@ -69,10 +69,10 @@ class Assistant:
         self.llm = llm
         self.command_router = command_router or CommandRouter()
         self.doc_agents: dict[str, DocFactory] = doc_agents or {
-            "worklog": lambda: WorklogAgent(),
-            "todo": lambda: TodoAgent(),
-            "portfolio": lambda: PortfolioAgent(),
-            "resume": lambda: ResumeAgent(),
+            "worklog": WorklogAgent,
+            "todo": TodoAgent,
+            "portfolio": PortfolioAgent,
+            "resume": ResumeAgent,
         }
 
     # ----- 1) 의도 분류 -----
@@ -106,8 +106,11 @@ class Assistant:
                 return f"wiki 검색 실패: {e}"
 
         if cmd in self.doc_agents:
-            agent = self.doc_agents[cmd]()
-            result = agent.generate()
+            try:
+                agent = self.doc_agents[cmd]()
+                result = agent.generate()
+            except RuntimeError as e:
+                return f"실행 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
             head = DESCRIPTIONS.get(cmd, cmd)
             return f"{head} 완료: {result.path.name}\n\n{result.text[:1500]}"
 
