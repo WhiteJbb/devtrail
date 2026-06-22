@@ -321,9 +321,46 @@ def resume() -> None:
     typer.echo(result.text)
 
 
+@app.command("ask")
+def ask(
+    text: str = typer.Argument(..., help="자연어 지시. 예: \"오늘 작업 회고 정리해줘\""),
+    yes: bool = typer.Option(False, "--yes", "-y", help="확인 없이 바로 실행"),
+) -> None:
+    """자연어 문장을 해석해 알맞은 명령을 실행한다(실행 전 확인)."""
+    from app.assistant import Assistant
+    from app.llm.factory import get_llm_provider
+
+    settings = get_settings()
+    try:
+        llm = get_llm_provider(settings)
+    except LLMNotConfiguredError as e:
+        _fail(
+            f"LLM이 연결되어 있지 않습니다.\n  {e}\n"
+            "  → 자연어 해석에는 LLM이 필요합니다. .env의 LLM_PROVIDER를 설정하세요."
+        )
+
+    assistant = Assistant(llm=llm)
+    intent = _handle_llm_errors(lambda: assistant.interpret(text))
+
+    if intent.command in ("unknown", "help", ""):
+        typer.echo(assistant.help_text())
+        return
+
+    typer.secho(f"해석: {assistant.describe(intent)}", fg=typer.colors.CYAN)
+    if not yes and not typer.confirm("실행할까요?"):
+        typer.echo("취소했습니다.")
+        return
+
+    reply = _handle_llm_errors(lambda: assistant.execute(intent))
+    typer.echo(reply)
+
+
 @app.command("serve-bot")
 def serve_bot() -> None:
-    """메신저 봇(텔레그램)을 long-polling으로 실행한다. 명령+알림 양방향."""
+    """메신저 봇(텔레그램)을 long-polling으로 실행한다. 자연어/명령 + 알림 양방향."""
+    from app.assistant import Assistant
+    from app.llm.base import LLMNotConfiguredError as _LLMNC
+    from app.llm.factory import get_llm_provider
     from app.messaging import CommandRouter, MessengerBot, get_messenger_provider
     from app.messaging.base import MessengerNotConfiguredError
 
@@ -343,11 +380,22 @@ def serve_bot() -> None:
             fg=typer.colors.YELLOW,
         )
 
+    # LLM이 설정돼 있으면 자연어 의도 라우팅 활성화. 아니면 슬래시 명령만.
+    assistant = None
+    try:
+        assistant = Assistant(llm=get_llm_provider(settings))
+    except _LLMNC:
+        typer.secho(
+            "참고: LLM 미설정이라 자연어 명령은 비활성입니다(슬래시 명령만 동작).",
+            fg=typer.colors.YELLOW,
+        )
+
     bot = MessengerBot(
         provider=provider,
         router=CommandRouter(),
         allowed_chat_ids=settings.allowed_chat_ids,
         default_chat_id=settings.telegram_chat_id,
+        assistant=assistant,
     )
     typer.secho(f"봇 실행 중({provider.name}). Ctrl+C로 종료.", fg=typer.colors.GREEN)
     try:

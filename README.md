@@ -25,6 +25,7 @@ Notion 정리 문서(페이지 본문)   →   기술 블로그 초안 생성   
 
 | 명령 | 설명 |
 | --- | --- |
+| `work-agent ask "..."` | 자연어 문장을 해석해 알맞은 명령을 실행(실행 전 확인) |
 | `work-agent suggest-topics` | 최근 작업 기록·Git 로그·Notion 메모로 블로그 주제 추천 |
 | `work-agent list` | 저장된 초안을 상태/수정일과 함께 목록 출력 |
 | `work-agent write-draft "주제"` | 주제로 초안 생성 → `workspace/drafts/`에 Markdown 저장 + Notion 반영 |
@@ -106,6 +107,20 @@ GIT_DIFF_MAX_CHARS=800             # 커밋당 diff 최대 문자 수
 ---
 
 ## 4. 사용법
+
+### 자연어로 지시 (개인 비서처럼)
+
+명령어를 외우지 않고 자유 문장으로 지시할 수 있습니다. LLM이 의도를 분류하고 **실행 전에 확인**을 받습니다.
+
+```bash
+work-agent ask "XCoreChat 개발환경 분리로 초안 써줘"
+work-agent ask "오늘 작업 회고 정리해줘"
+work-agent ask "쓸만한 주제 추천해줘"        # -y 로 확인 생략
+```
+
+텔레그램 봇(`serve-bot`)에서도 슬래시 명령 대신 그냥 문장을 보내면 "해석: … 실행할까요? (예/아니오)"로 되묻고 실행합니다. (LLM이 설정돼 있어야 자연어가 동작하며, 미설정 시 슬래시 명령만 됩니다.)
+
+### 개별 명령
 
 ```bash
 # 1) 주제 추천 (LLM 필요)
@@ -252,6 +267,8 @@ work-agent serve-bot     # Ctrl+C로 종료
 /help              도움말
 ```
 
+슬래시 없이 **자유 문장**을 보내면 의도를 해석해 "실행할까요? (예/아니오)"로 확인 후 실행합니다(LLM 필요).
+
 > 봇은 CLI와 같은 `BlogAgent`를 호출하는 얇은 어댑터입니다. provider를 교체하면(예: Mattermost) 같은 라우터를 재사용할 수 있습니다.
 
 ### 7-4. 정기 푸시 (pull → push)
@@ -292,6 +309,7 @@ app/
 ├─ repositories/          # blog_repository(로컬) / notion_blog_repository
 ├─ storage/markdown_storage.py   # frontmatter ↔ BlogPost
 ├─ messaging/             # base / telegram / factory / router / bot (메신저 어댑터)
+├─ assistant/             # intent / assistant (자연어 의도 라우팅)
 ├─ models/                # BlogPost, SourceChunk, ...
 └─ prompts/*.md           # LLM 프롬프트(코드 밖으로 분리)
 ```
