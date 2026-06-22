@@ -48,6 +48,8 @@ class Settings(BaseSettings):
 
     # --- Git ---
     git_log_limit: int = Field(default=20, alias="GIT_LOG_LIMIT")
+    git_include_diff: bool = Field(default=True, alias="GIT_INCLUDE_DIFF")
+    git_diff_max_chars: int = Field(default=800, alias="GIT_DIFF_MAX_CHARS")
 
     # --- Messenger ---
     messenger_provider: str = Field(default="", alias="MESSENGER_PROVIDER")

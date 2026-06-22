@@ -18,7 +18,12 @@ from app.notion.factory import get_notion_client
 def build_source_collector(settings: Settings, repo_dir: Path) -> SourceCollector:
     sources = [
         LocalDocSource(settings.docs_path),
-        GitSource(repo_dir, limit=settings.git_log_limit),
+        GitSource(
+            repo_dir,
+            limit=settings.git_log_limit,
+            include_diff=settings.git_include_diff,
+            diff_max_chars=settings.git_diff_max_chars,
+        ),
         NotionSource(
             get_notion_client(settings),
             idea_database_id=settings.notion_idea_database_id,

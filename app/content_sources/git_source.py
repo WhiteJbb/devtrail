@@ -21,9 +21,17 @@ class GitSource:
 
     name = "git"
 
-    def __init__(self, repo_dir: Path, limit: int = 20):
+    def __init__(
+        self,
+        repo_dir: Path,
+        limit: int = 20,
+        include_diff: bool = True,
+        diff_max_chars: int = 800,
+    ):
         self.repo_dir = repo_dir
         self.limit = limit
+        self.include_diff = include_diff
+        self.diff_max_chars = diff_max_chars
 
     def _run(self, args: list[str]) -> str | None:
         try:
@@ -60,11 +68,22 @@ class GitSource:
                 continue
             sha, author, date, subject = parts[0], parts[1], parts[2], parts[3]
 
-            files = self._run(["show", "--name-only", "--pretty=format:", sha]) or ""
-            file_list = [f for f in files.splitlines() if f.strip()]
-            files_text = "\n".join(f"  - {f}" for f in file_list) if file_list else "  (변경 파일 없음)"
+            # 변경 파일 + 통계(추가/삭제 라인 수)
+            stat = self._run(["show", sha, "--stat", "--format="]) or ""
+            stat_lines = [s for s in stat.splitlines() if s.strip()]
+            stat_text = "\n".join(stat_lines) if stat_lines else "(변경 파일 없음)"
 
-            text = f"[{date}] {subject} ({author})\n변경 파일:\n{files_text}"
+            text = f"[{date}] {subject} ({author})\n변경 요약:\n{stat_text}"
+
+            # 실제 변경 일부(diff)를 근거로 포함. 토큰 예산을 위해 잘라 넣는다.
+            if self.include_diff and self.diff_max_chars > 0:
+                diff = self._run(["show", sha, "--format=", "--unified=1"]) or ""
+                diff = diff.strip()
+                if diff:
+                    if len(diff) > self.diff_max_chars:
+                        diff = diff[: self.diff_max_chars].rstrip() + "\n…(diff 일부 생략)"
+                    text += f"\n변경 내용(일부):\n{diff}"
+
             chunks.append(
                 SourceChunk(
                     source_type="git",

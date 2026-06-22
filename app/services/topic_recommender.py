@@ -16,9 +16,17 @@ class TopicRecommender:
         self.collector = collector
         self.llm = llm
 
-    def recommend(self) -> list[TopicSuggestion]:
+    def recommend(self, exclude_titles: list[str] | None = None) -> list[TopicSuggestion]:
         context = self.collector.collect()
-        prompt = render_prompt("recommend_topics", CONTEXT=context.as_prompt_text())
+        if exclude_titles:
+            existing = "\n".join(f"- {t}" for t in exclude_titles)
+        else:
+            existing = "(없음)"
+        prompt = render_prompt(
+            "recommend_topics",
+            CONTEXT=context.as_prompt_text(),
+            EXISTING=existing,
+        )
         raw = self.llm.complete(prompt)
         data = extract_json_object(raw)
 
