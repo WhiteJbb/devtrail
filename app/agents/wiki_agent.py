@@ -223,7 +223,7 @@ def build_wiki_agent(char_budget: int = 12_000) -> WikiAgent:
     if not settings.wiki_enabled:
         raise RuntimeError("OBSIDIAN_VAULT_DIR이 설정되지 않았습니다.")
 
-    vault_dir = Path(settings.obsidian_vault_dir)
+    vault_dir = Path(settings.obsidian_vault_root)
     svc = WikiService(vault_dir, wiki_folder=settings.wiki_folder)
     llm = get_llm_provider(settings)
     return WikiAgent(llm=llm, wiki_service=svc, char_budget=char_budget)
