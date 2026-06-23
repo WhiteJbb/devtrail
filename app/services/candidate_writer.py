@@ -18,6 +18,7 @@ _CANDIDATE_DIRS = {
     "decision": "60_Candidates/Decisions",
     "memory_patch": "60_Candidates/MemoryPatches",
     "blog_idea": "60_Candidates/BlogIdeas",
+    "career_bullet": "60_Candidates/CareerBullets",
 }
 
 
@@ -118,6 +119,8 @@ class CandidateWriter:
             "memory_patches": "memory_patch",
             "blog": "blog_idea",
             "blog_ideas": "blog_idea",
+            "career_bullets": "career_bullet",
+            "career": "career_bullet",
         }
         return aliases.get(value, value)
 

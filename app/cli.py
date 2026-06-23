@@ -17,7 +17,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import CaptureAgent, CuratorAgent, DistillAgent, PortfolioAgent, ProjectAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
+from app.agents import CareerBulletAgent, CaptureAgent, CuratorAgent, DistillAgent, NightlyDistillAgent, OpenLoopsAgent, PortfolioAgent, ProjectAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.memory import ContextPackBuilder
@@ -630,11 +630,138 @@ def worklog() -> None:
     typer.echo(result.text)
 
 
+@app.command("nightly-distill")
+def nightly_distill() -> None:
+    """하루 raw 기록을 종합 정제하고 daily digest를 생성한다.
+
+    distill-today + suggest-career-bullets를 순서대로 실행하고
+    60_Candidates/ 전 카테고리에 후보를 쌓는다.
+    MESSENGER_PROVIDER=telegram이면 digest를 자동 전송한다.
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = NightlyDistillAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+
+    result = _handle_llm_errors(lambda: agent.run())
+
+    total = len(result.distill.written) + len(result.career.written)
+    typer.secho(f"\nnightly-distill 완료: 후보 {total}개 생성", fg=typer.colors.GREEN, bold=True)
+    for w in result.distill.written:
+        typer.echo(f"  [{w.spec.kind}] {w.spec.title}")
+    for w in result.career.written:
+        typer.echo(f"  [career_bullet] {w.spec.title}")
+    typer.echo(f"\n  digest: {result.digest_rel_path}")
+    if result.sent_telegram:
+        typer.secho("  → Telegram 전송 완료", fg=typer.colors.CYAN)
+
+
+@app.command("suggest-career-bullets")
+def suggest_career_bullets(
+    project: str = typer.Option("", "--project", "-p", help="특정 프로젝트 필터 (기본: 전체)"),
+) -> None:
+    """작업 기록에서 이력서/포트폴리오 bullet 후보를 60_Candidates/CareerBullets/에 저장한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = CareerBulletAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+
+    result = _handle_llm_errors(lambda: agent.suggest(project=project))
+
+    if not result.written:
+        typer.echo("이력서/포폴 후보가 생성되지 않았습니다.")
+        return
+    typer.secho(f"\ncareer bullet 후보 {len(result.written)}개 생성", fg=typer.colors.GREEN, bold=True)
+    for w in result.written:
+        typer.echo(f"  {w.spec.title}" + (f"  ({w.spec.project})" if w.spec.project else ""))
+        typer.echo(f"    {w.rel_path}")
+
+
+@app.command("update-open-loops")
+def update_open_loops() -> None:
+    """미해결 이슈·다음 할 일을 분석해 Open Loops MemoryPatch 후보를 만든다.
+
+    40_AgentMemory/05_OpenLoops.md를 직접 수정하지 않고
+    60_Candidates/MemoryPatches/에 후보를 생성한다.
+    반영은 apply-memory-patch 명령으로 한다.
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = OpenLoopsAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+
+    result = _handle_llm_errors(lambda: agent.suggest())
+
+    if not result.written:
+        typer.echo("Open Loops 패치 후보가 생성되지 않았습니다.")
+        return
+    typer.secho("\nOpen Loops 패치 후보 생성 완료", fg=typer.colors.GREEN, bold=True)
+    for w in result.written:
+        typer.echo(f"  {w.rel_path}")
+    typer.secho(
+        "\n  → apply-memory-patch <path>로 40_AgentMemory/05_OpenLoops.md에 반영하세요.",
+        fg=typer.colors.YELLOW,
+    )
+
+
+@app.command("print-schedule")
+def print_schedule(
+    windows: bool = typer.Option(False, "--windows", help="Windows schtasks 형식 출력"),
+    cron: bool = typer.Option(False, "--cron", help="Linux/Mac cron 형식 출력"),
+) -> None:
+    """OS 스케줄러에 nightly-distill / push-digest를 등록하는 명령을 출력한다."""
+    import sys
+
+    exe = sys.executable
+
+    if not windows and not cron:
+        typer.echo("--windows 또는 --cron 옵션을 지정하세요.")
+        raise typer.Exit(1)
+
+    if windows:
+        agent_exe = str(Path(exe).parent / "work-agent.exe")
+        typer.secho("# Windows Task Scheduler (PowerShell에서 실행)", fg=typer.colors.CYAN, bold=True)
+        typer.echo(
+            f'schtasks /create /tn "work-agent-nightly" '
+            f'/tr "{agent_exe} nightly-distill" '
+            f"/sc daily /st 23:30 /f"
+        )
+        typer.echo(
+            f'schtasks /create /tn "work-agent-digest" '
+            f'/tr "{agent_exe} push-digest --daily" '
+            f"/sc daily /st 08:30 /f"
+        )
+
+    if cron:
+        venv_bin = str(Path(exe).parent / "work-agent")
+        typer.secho("# crontab -e 에 추가", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"30 23 * * * {venv_bin} nightly-distill")
+        typer.echo(f"30 8  * * * {venv_bin} push-digest --daily")
+
+
 @app.command("push-digest")
 def push_digest(
     include_worklog: bool = typer.Option(False, "--worklog", help="작업 회고도 함께 보냄"),
+    daily: bool = typer.Option(False, "--daily", help="오늘 생성된 모든 후보 카테고리를 digest 형식으로 보냄"),
+    weekly: bool = typer.Option(False, "--weekly", help="최근 7일 후보를 주간 요약으로 보냄"),
 ) -> None:
-    """vault BlogIdea 후보 목록(+선택 작업 회고)을 메신저로 보낸다."""
+    """vault 후보 요약을 메신저로 보낸다.
+
+    기본: BlogIdea 후보 목록
+    --daily: 오늘 전 카테고리 요약 (daily digest 형식)
+    --weekly: 최근 7일 전 카테고리 요약
+    """
+    from datetime import datetime, timedelta
+
     from app.messaging import get_messenger_provider
     from app.messaging.base import MessengerNotConfiguredError
 
@@ -649,20 +776,50 @@ def push_digest(
     if not settings.telegram_chat_id:
         _fail("보낼 대상이 없습니다. .env에서 TELEGRAM_CHAT_ID를 설정하세요.")
 
-    # 60_Candidates/BlogIdeas/ 후보에서 주제 수집
-    blog_ideas = []
     try:
         all_candidates = _curator_agent().list_candidates()
-        blog_ideas = [c for c in all_candidates if c.kind == "blog_idea"]
     except Exception:
-        pass
+        all_candidates = []
 
-    lines = ["**블로그 주제 후보**"]
-    if blog_ideas:
-        for i, c in enumerate(blog_ideas[:5], 1):
-            lines.append(f"{i}. {c.title}" + (f"  ({c.project})" if c.project else ""))
+    if daily or weekly:
+        cutoff = (datetime.now() - timedelta(days=7 if weekly else 0)).strftime("%Y-%m-%d")
+        if daily:
+            today = datetime.now().strftime("%Y-%m-%d")
+            filtered = [c for c in all_candidates if c.created_at[:10] == today]
+            header = f"**Daily Digest — {today}**"
+        else:
+            filtered = [c for c in all_candidates if c.created_at[:10] >= cutoff]
+            header = f"**Weekly Summary (최근 7일)**"
+
+        by_kind: dict[str, list] = {}
+        for c in filtered:
+            by_kind.setdefault(c.kind, []).append(c)
+
+        lines = [header, ""]
+        for kind, items in by_kind.items():
+            kind_label = {
+                "knowledge": "정리된 지식",
+                "decision": "결정 사항",
+                "blog_idea": "블로그 후보",
+                "memory_patch": "메모리 패치",
+                "career_bullet": "이력서/포폴 소재",
+            }.get(kind, kind)
+            lines.append(f"**{kind_label}** ({len(items)}개)")
+            for item in items[:3]:
+                lines.append(f"  · {item.title}" + (f" ({item.project})" if item.project else ""))
+            if len(items) > 3:
+                lines.append(f"  · ... +{len(items) - 3}개")
+            lines.append("")
     else:
-        lines.append("후보 없음 — `distill-today` 실행 권장")
+        # 기본 동작: BlogIdea 목록
+        blog_ideas = [c for c in all_candidates if c.kind == "blog_idea"]
+        lines = ["**블로그 주제 후보**"]
+        if blog_ideas:
+            for i, c in enumerate(blog_ideas[:5], 1):
+                lines.append(f"{i}. {c.title}" + (f"  ({c.project})" if c.project else ""))
+        else:
+            lines.append("후보 없음 — `distill-today` 실행 권장")
+
     text = "\n".join(lines)
 
     if include_worklog:
@@ -676,7 +833,7 @@ def push_digest(
 
     provider.send(settings.telegram_chat_id, text)
     typer.secho("푸시 전송 완료", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  대상 chat: {settings.telegram_chat_id}  ·  후보 {len(blog_ideas)}건")
+    typer.echo(f"  대상 chat: {settings.telegram_chat_id}  ·  후보 {len(all_candidates)}건")
 
 
 @app.command("todo")
@@ -887,12 +1044,31 @@ def serve_bot() -> None:
             fg=typer.colors.YELLOW,
         )
 
+    # Vault가 설정돼 있으면 미디어(voice/image/URL) 처리 활성화
+    media_handler = None
+    if settings.obsidian_vault_root:
+        from app.llm.stt import get_stt_provider
+        from app.messaging.media_handler import TelegramMediaHandler
+        from pathlib import Path as _Path
+        try:
+            _capture = CaptureAgent(settings=settings)
+            media_handler = TelegramMediaHandler(
+                provider=provider,
+                capture_agent=_capture,
+                vault_dir=_Path(settings.obsidian_vault_root),
+                stt=get_stt_provider(),
+            )
+            typer.secho("미디어 처리 활성 (voice/image/URL capture).", fg=typer.colors.CYAN)
+        except Exception:
+            pass
+
     bot = MessengerBot(
         provider=provider,
         router=CommandRouter(),
         allowed_chat_ids=settings.allowed_chat_ids,
         default_chat_id=settings.telegram_chat_id,
         assistant=assistant,
+        media_handler=media_handler,
     )
     typer.secho(f"봇 실행 중({provider.name}). Ctrl+C로 종료.", fg=typer.colors.GREEN)
     try:
