@@ -20,6 +20,7 @@ _RAW_PREFIXES = ("00_Inbox/", "10_Worklog/")
 _KNOWLEDGE_PREFIXES = ("20_Knowledge/", "30_Projects/")
 _MAX_NOTE_CHARS = 3000
 _MAX_RELATED = 8
+_CHARS_PER_TOKEN = 3  # 한국어 혼용 기준 보수적 추정
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,10 @@ class DistillAgent:
         return "\n".join(lines)
 
     def _render_context(self, notes: list[WikiNote]) -> str:
+        # 전체 컨텍스트를 settings.context_char_budget 이하로 유지한다.
+        budget = self.settings.context_char_budget
         parts: list[str] = []
+        used = 0
         for note in notes:
             meta = []
             if note.note_type:
@@ -147,7 +151,15 @@ class DistillAgent:
             body = note.body.strip()
             if len(body) > _MAX_NOTE_CHARS:
                 body = body[:_MAX_NOTE_CHARS].rstrip() + "\n...(일부 생략)"
-            parts.append(f"{header}\n{body}")
+            chunk = f"{header}\n{body}"
+            if used + len(chunk) > budget:
+                remaining = budget - used
+                if remaining > len(header) + 80:
+                    chunk = chunk[:remaining].rstrip() + "\n...(예산 초과로 생략)"
+                    parts.append(chunk)
+                break
+            parts.append(chunk)
+            used += len(chunk) + 2  # 구분자 "\n\n"
         return "\n\n".join(parts)
 
     def _parse_specs(self, data: Any, source_refs: list[str], kind_filter: str) -> list[CandidateSpec]:

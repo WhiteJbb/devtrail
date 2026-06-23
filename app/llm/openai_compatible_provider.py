@@ -22,14 +22,30 @@ class OpenAICompatibleProvider:
         api_key: str = "",
         timeout: float = 120.0,
         max_retries: int = 2,
+        max_tokens: int = 1024,
+        context_window: int = 0,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
         self.max_retries = max_retries
+        self.max_tokens = max_tokens
+        self.context_window = context_window  # 0 = 제한 없음
+
+    def _truncate_to_window(self, prompt: str, system: str) -> str:
+        """context_window가 설정된 경우 프롬프트를 잘라 토큰 초과를 방지한다."""
+        if not self.context_window:
+            return prompt
+        # 3 chars/token 보수적 추정. system + 여유분(200토큰) + max_tokens 제외.
+        overhead_chars = (len(system) + (200 + self.max_tokens) * 3)
+        char_limit = self.context_window * 3 - overhead_chars
+        if len(prompt) > char_limit > 0:
+            prompt = prompt[:char_limit].rstrip() + "\n...(컨텍스트 초과로 생략)"
+        return prompt
 
     def complete(self, prompt: str, system: str = "") -> str:
+        prompt = self._truncate_to_window(prompt, system)
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -39,7 +55,7 @@ class OpenAICompatibleProvider:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        payload = {"model": self.model, "messages": messages, "temperature": 0.4}
+        payload = {"model": self.model, "messages": messages, "temperature": 0.4, "max_tokens": self.max_tokens}
 
         resp = request_with_retry(
             lambda: httpx.post(

@@ -111,6 +111,8 @@ def _make_provider(provider_name: str, settings: Settings, prefer_flash: bool = 
             model=settings.openai_model,
             api_key=settings.openai_api_key,
             max_retries=settings.llm_max_retries,
+            max_tokens=settings.openai_max_tokens,
+            context_window=settings.openai_context_window,
         )
 
     if provider == "ollama":
