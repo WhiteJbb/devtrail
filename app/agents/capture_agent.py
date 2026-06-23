@@ -249,17 +249,8 @@ class CaptureAgent:
         lines = [f"# {title}", ""]
 
         if summary_text:
-            # summary-file 내용을 섹션에 매핑
-            lines += [
-                "## 1. 오늘 작업", summary_text, "",
-                "## 2. 변경한 파일 / 모듈", "- ", "",
-                "## 3. 해결한 문제", "- ", "",
-                "## 4. 설계 결정 / 이유", "- ", "",
-                "## 5. 남은 문제", "- ", "",
-                "## 6. 다음 할 일", "- ", "",
-                "## 7. 블로그 / 포트폴리오 소재", "- ", "",
-                "## 8. Git / Source Refs", "- ", "",
-            ]
+            # summary-file 제공 시 템플릿 섹션 없이 내용을 그대로 사용
+            lines += [summary_text, ""]
         else:
             lines += [
                 "## 1. 오늘 작업", "- ", "",
