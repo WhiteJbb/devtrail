@@ -25,12 +25,12 @@ DESCRIPTIONS = {
     "preview": "초안 미리보기",
     "export-tistory": "티스토리용 변환",
     "publish-done": "게시 완료 기록",
-    "sync-notion": "Notion 동기화",
     "worklog": "작업 회고 생성",
     "todo": "다음 할 일 제안",
     "portfolio": "포트폴리오 초안 생성",
     "resume": "이력서/자기소개서 초안 생성",
     "wiki-query": "wiki 검색",
+    "capture-session": "작업 세션 노트 저장",
 }
 
 # command → CommandRouter 슬래시 토큰(블로그 명령)
@@ -42,7 +42,6 @@ _ROUTER_CMD = {
     "preview": "preview",
     "export-tistory": "export",
     "publish-done": "publish",
-    "sync-notion": "sync",
 }
 
 _HELP = (
@@ -51,6 +50,7 @@ _HELP = (
     "· \"프로젝트 기반으로 초안 써줘\"\n"
     "· \"방금 초안 다듬어줘\"\n"
     "· \"오늘 작업 회고 정리해줘\"\n"
+    "· \"오늘 작업 세션 정리해줘\" (세션 노트 저장)\n"
     "· \"다음 할 일 알려줘\" / \"포트폴리오 초안\" / \"이력서 초안\"\n"
     "· \"wiki에서 RAG 구축 방법 알려줘\" (wiki 검색)"
 )
@@ -104,6 +104,21 @@ class Assistant:
                 return agent.query(intent.arg or "")
             except RuntimeError as e:
                 return f"wiki 검색 실패: {e}"
+
+        if cmd == "capture-session":
+            from app.agents import CaptureAgent
+            project = intent.arg or None
+            try:
+                agent = CaptureAgent()
+                result = agent.capture_session(project=project, from_agent=True)
+            except RuntimeError as e:
+                return f"실행 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
+            proj_label = f" ({project})" if project else ""
+            return (
+                f"작업 세션 노트 저장 완료{proj_label}\n"
+                f"vault: {result.rel_path}\n\n"
+                "현재 세션 작업 내용을 --summary-file로 전달하면 노트에 자동 포함됩니다."
+            )
 
         if cmd in self.doc_agents:
             try:

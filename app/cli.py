@@ -1,6 +1,6 @@
 """work-agent CLI 진입점.
 
-얇게 유지한다 — 인자 파싱과 출력만 담당하고, 실제 로직은 BlogAgent에 위임한다.
+얇게 유지한다 — 인자 파싱과 출력만 담당하고, 실제 로직은 각 Agent에 위임한다.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-from app.agents import BlogAgent, CaptureAgent, CuratorAgent, DistillAgent, PortfolioAgent, ProjectAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
+from app.agents import CaptureAgent, CuratorAgent, DistillAgent, PortfolioAgent, ProjectAgent, ResumeAgent, TodoAgent, WikiBlogAgent, WorklogAgent
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.memory import ContextPackBuilder
@@ -264,6 +264,47 @@ def daily_log(
     _print_capture_result("daily log", result)
 
 
+@app.command("capture-session")
+def capture_session(
+    project: str = typer.Option("", "--project", "-p", help="프로젝트명"),
+    repo: str = typer.Option(".", "--repo", "-r", help="Git repo 경로 (기본: 현재 디렉토리)"),
+    from_repo: bool = typer.Option(False, "--from-repo", help="git diff, 변경 파일, 최근 커밋 수집"),
+    from_agent: bool = typer.Option(False, "--from-agent", help="AI 세션 요약 포함 여부 (워크플로우 신호)"),
+    summary_file: str = typer.Option("", "--summary-file", help="AI가 작성한 세션 요약 파일 경로"),
+    source: str = typer.Option("agent_session", "--source", help="소스 식별자"),
+    title: str = typer.Option("", "--title", help="세션 노트 제목 수동 지정"),
+) -> None:
+    """작업 세션을 구조화된 노트로 10_Worklog/Daily에 저장한다.
+
+    --from-agent 플래그는 Claude Code / Codex가 실행할 때 현재 세션을 요약해야 한다는
+    워크플로우 신호다. --summary-file로 요약 파일을 전달하는 것을 권장한다.
+    """
+    try:
+        result = _capture_agent().capture_session(
+            project=project or None,
+            repo=repo or None,
+            from_repo=from_repo,
+            from_agent=from_agent,
+            summary_file=summary_file or None,
+            source=source,
+            title=title or None,
+        )
+    except (ValueError, RuntimeError) as e:
+        _fail(str(e))
+
+    verb = "생성" if result.created else "기존 파일 유지"
+    typer.secho(f"\ncapture-session {verb} 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.echo(f"  vault path: {result.rel_path}")
+    if from_agent:
+        typer.secho(
+            "\n  💡 --from-agent 플래그 감지됨.\n"
+            "  AI는 현재 세션에서 수행한 작업을 요약해 이 노트를 채워야 합니다.\n"
+            "  --summary-file <path>로 요약 파일을 전달하면 자동으로 포함됩니다.",
+            fg=typer.colors.YELLOW,
+        )
+
+
 @app.command("distill-today")
 def distill_today() -> None:
     """오늘 raw 기록을 읽어 Knowledge/Decision/Memory/Blog 후보를 만든다."""
@@ -483,24 +524,6 @@ def write_draft(
         typer.echo(f"  source_refs: {len(draft.source_refs)}개")
 
 
-@app.command("revise")
-def revise(target: str = typer.Argument("latest", help="latest 또는 slug")) -> None:
-    """기존 초안을 source 범위 안에서 문장/구조만 다듬는다(새 사실 추가 없음)."""
-    agent = BlogAgent()
-    post = _handle_llm_errors(lambda: agent.revise(target))
-
-    if post is None:
-        if target == "latest":
-            typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
-        else:
-            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
-        return
-
-    typer.secho(f"\n초안 다듬기 완료: {post.title}", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  파일: {post.local_path}")
-    typer.echo("  (preview latest 로 확인할 수 있습니다)")
-
-
 _STATUS_COLOR = {
     "idea": typer.colors.BRIGHT_BLACK,
     "draft": typer.colors.YELLOW,
@@ -511,130 +534,99 @@ _STATUS_COLOR = {
 
 @app.command("list")
 def list_drafts() -> None:
-    """저장된 초안을 상태/수정일과 함께 목록으로 보여준다."""
-    agent = BlogAgent()
-    posts = agent.list_drafts()
-    if not posts:
-        typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
+    """Vault 블로그 초안 목록을 상태/날짜와 함께 보여준다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    agent = WikiBlogAgent(settings=settings)
+    drafts = agent.list_drafts()
+    if not drafts:
+        typer.echo("저장된 초안이 없습니다. write-blog 로 먼저 생성하세요.")
         return
 
-    for post in posts:
-        status = post.status.value
-        color = _STATUS_COLOR.get(status, typer.colors.WHITE)
-        date = post.updated_at.strftime("%Y-%m-%d")
+    for draft in drafts:
+        color = _STATUS_COLOR.get(draft.status, typer.colors.WHITE)
         typer.echo(
-            f"  {date}  "
-            + typer.style(f"{status:<9}", fg=color)
-            + f"{post.title}  "
-            + typer.style(f"({post.slug})", fg=typer.colors.BRIGHT_BLACK)
+            f"  {draft.created_at or '----'  }  "
+            + typer.style(f"{draft.status:<9}", fg=color)
+            + f"{draft.title}  "
+            + typer.style(f"({draft.rel_path})", fg=typer.colors.BRIGHT_BLACK)
         )
-    typer.echo(f"\n  총 {len(posts)}건")
+    typer.echo(f"\n  총 {len(drafts)}건")
 
 
 @app.command("preview")
-def preview(target: str = typer.Argument("latest", help="latest 또는 slug")) -> None:
-    """최신(또는 지정) 초안의 메타데이터와 본문 일부를 보여준다."""
-    agent = BlogAgent()
-    result = agent.preview(target)
+def preview(target: str = typer.Argument("latest", help="latest 또는 vault rel_path")) -> None:
+    """최신(또는 지정) Vault 초안의 메타데이터와 본문 일부를 보여준다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    agent = WikiBlogAgent(settings=settings)
+    result = agent.preview_draft(target)
     if result is None:
-        if target == "latest":
-            typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
-        else:
-            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
+        typer.echo("초안을 찾지 못했습니다." if target != "latest" else "저장된 초안이 없습니다. write-blog 로 먼저 생성하세요.")
         return
 
-    post = result.post
-    typer.secho(f"\n{post.title}", fg=typer.colors.CYAN, bold=True)
-    typer.echo(f"  status: {post.status.value}  |  slug: {post.slug}")
-    if post.tags:
-        typer.echo(f"  태그: {', '.join(post.tags)}")
-    if post.source_project:
-        typer.echo(f"  프로젝트: {post.source_project}")
-    if post.source_refs:
-        typer.echo(f"  source: {', '.join(post.source_refs)}")
-    typer.echo(f"  파일: {post.local_path}")
+    draft, excerpt = result
+    typer.secho(f"\n{draft.title}", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  status: {draft.status}  |  created: {draft.created_at}")
+    if draft.tags:
+        typer.echo(f"  태그: {', '.join(draft.tags)}")
+    if draft.source_refs:
+        typer.echo(f"  source_refs: {len(draft.source_refs)}개")
+    typer.echo(f"  파일: {draft.rel_path}")
     typer.secho("\n--- 본문 일부 ---", fg=typer.colors.BRIGHT_BLACK)
-    typer.echo(result.excerpt)
+    typer.echo(excerpt)
 
 
 @app.command("export-tistory")
 def export_tistory(
-    target: str = typer.Argument("latest", help="latest 또는 slug"),
+    target: str = typer.Argument("latest", help="latest 또는 vault rel_path"),
     fmt: str = typer.Option("html", "--format", help="html 또는 md"),
 ) -> None:
-    """초안을 티스토리에 붙여넣을 형식(HTML/MD)으로 변환해 workspace/blogs/에 저장한다."""
-    agent = BlogAgent()
+    """Vault 초안을 티스토리에 붙여넣을 형식(HTML/MD)으로 변환해 50_Outputs/Blog/Export/에 저장한다."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    agent = WikiBlogAgent(settings=settings)
     try:
         result = agent.export_tistory(target, fmt)
     except ValueError as e:
         _fail(str(e))
 
     if result is None:
-        if target == "latest":
-            typer.echo("저장된 초안이 없습니다. write-draft 로 먼저 생성하세요.")
-        else:
-            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
+        typer.echo("초안을 찾지 못했습니다." if target != "latest" else "저장된 초안이 없습니다. write-blog 로 먼저 생성하세요.")
         return
 
-    post = result.post
     typer.secho(f"\n티스토리용 변환 완료 ({result.fmt})", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {result.path}")
-    typer.echo("  → 이 파일 내용을 티스토리 글쓰기 화면에 붙여넣으세요"
-               f" ({'HTML 모드' if result.fmt == 'html' else '마크다운 모드'}).")
+    typer.echo(f"  → 이 파일 내용을 티스토리 글쓰기 화면에 붙여넣으세요 ({'HTML 모드' if result.fmt == 'html' else '마크다운 모드'}).")
     typer.secho("\n  아래는 티스토리 입력란에 따로 넣을 항목입니다:", fg=typer.colors.BRIGHT_BLACK)
-    typer.echo(f"    제목: {post.title}")
-    if post.tags:
-        typer.echo(f"    태그: {', '.join(post.tags)}")
+    typer.echo(f"    제목: {result.draft.title}")
+    if result.draft.tags:
+        typer.echo(f"    태그: {', '.join(result.draft.tags)}")
     typer.echo("  (티스토리 공식 API는 2024년 종료되어 자동 게시는 지원하지 않습니다)")
 
 
 @app.command("publish-done")
 def publish_done(
-    target: str = typer.Argument("latest", help="latest 또는 slug"),
+    target: str = typer.Argument("latest", help="latest 또는 vault rel_path"),
     url: str = typer.Option("", "--url", help="게시된 티스토리 글 주소"),
 ) -> None:
-    """티스토리 게시 완료를 기록한다(status=published + URL을 로컬·Notion에 반영)."""
-    agent = BlogAgent()
-    post = agent.publish_done(target, url)
-    if post is None:
-        if target == "latest":
-            typer.echo("저장된 초안이 없습니다.")
-        else:
-            typer.echo(f"'{target}' 초안을 찾지 못했습니다.")
+    """Vault 초안에 게시 완료를 기록한다 (status=published + URL 저장)."""
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    agent = WikiBlogAgent(settings=settings)
+    draft = agent.publish_done(target, url)
+    if draft is None:
+        typer.echo("초안을 찾지 못했습니다." if target != "latest" else "저장된 초안이 없습니다.")
         return
 
-    typer.secho(f"\n게시 완료 기록: {post.title}", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  status: {post.status.value}")
-    if post.published_url:
-        typer.echo(f"  URL: {post.published_url}")
-    typer.echo(f"  Notion 반영: {agent.notion_mode}")
-
-
-@app.command("sync-notion")
-def sync_notion(dry_run: bool = typer.Option(False, "--dry-run", help="실제 반영 없이 계획만 출력")) -> None:
-    """로컬 draft 메타데이터를 Notion Blog DB와 동기화한다."""
-    agent = BlogAgent()
-    report = agent.sync_notion(dry_run=dry_run)
-
-    mode_note = "mock(JSON 백엔드)" if report.mode == "mock" else "Notion API"
-    if report.mode == "mock":
-        typer.secho(
-            "NOTION_API_KEY가 없어 mock 모드로 동작합니다(로컬 JSON에 기록).",
-            fg=typer.colors.YELLOW,
-        )
-    header = "동기화 계획" if dry_run else "동기화 완료"
-    typer.secho(f"\n{header} [{mode_note}]", fg=typer.colors.CYAN, bold=True)
-
-    if not report.entries:
-        typer.echo("  동기화할 로컬 초안이 없습니다.")
-        return
-
-    for e in report.entries:
-        verb = "생성" if e.action == "create" else "갱신"
-        mark = "(예정)" if dry_run else "완료"
-        typer.echo(f"  - [{verb} {mark}] {e.title}  ({e.slug})")
-
-    typer.echo(f"\n  생성 {len(report.created)}건 · 갱신 {len(report.updated)}건")
+    typer.secho(f"\n게시 완료 기록: {draft.title}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  status: {draft.status}")
+    if draft.published_url:
+        typer.echo(f"  URL: {draft.published_url}")
 
 
 @app.command("worklog")

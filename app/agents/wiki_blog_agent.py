@@ -1,4 +1,4 @@
-"""WikiBlogAgent — ContextPack 기반 블로그 초안 생성·수정 에이전트.
+"""WikiBlogAgent — ContextPack 기반 블로그 초안 생성·수정·관리 에이전트.
 
 50_Outputs/Blog/Drafts/ 에 저장하며, 모든 초안에 source_refs frontmatter를 포함한다.
 """
@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import frontmatter
+import markdown as md
 
 from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
@@ -36,6 +37,16 @@ class WikiBlogDraft:
     rel_path: str
     path: Path
     body: str
+    status: str = "draft"
+    created_at: str = ""
+    published_url: str = ""
+
+
+@dataclass(frozen=True)
+class WikiBlogExportResult:
+    draft: WikiBlogDraft
+    path: Path
+    fmt: str
 
 
 class WikiBlogAgent:
@@ -104,6 +115,8 @@ class WikiBlogAgent:
             rel_path=rel_path,
             path=path,
             body=full_body,
+            status="draft",
+            created_at=today,
         )
 
     # ── 초안 수정 ─────────────────────────────────────────────────────
@@ -143,6 +156,8 @@ class WikiBlogAgent:
             rel_path=vault_rel_path,
             path=path,
             body=revised_body,
+            status="review",
+            created_at=str(metadata.get("created_at") or ""),
         )
 
     # ── 게시 준비 ─────────────────────────────────────────────────────
@@ -171,7 +186,121 @@ class WikiBlogAgent:
             rel_path=vault_rel_path,
             path=path,
             body=post.content,
+            status="review",
+            created_at=str(metadata.get("created_at") or ""),
         )
+
+    # ── 목록 / 조회 ───────────────────────────────────────────────────
+
+    def list_drafts(self) -> list[WikiBlogDraft]:
+        """50_Outputs/Blog/Drafts/ 아래 초안을 최신순으로 반환한다."""
+        drafts_dir = self.vault_dir / _DRAFTS_REL
+        if not drafts_dir.exists():
+            return []
+        files = sorted(drafts_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return [self._read_draft(f) for f in files]
+
+    def preview_draft(self, target: str = "latest") -> tuple[WikiBlogDraft, str] | None:
+        """초안 메타데이터와 본문 일부(800자)를 반환한다."""
+        draft = self._resolve_target(target)
+        if draft is None:
+            return None
+        excerpt = draft.body[:800].rstrip()
+        if len(draft.body) > 800:
+            excerpt += "\n..."
+        return draft, excerpt
+
+    # ── 내보내기 / 게시 ───────────────────────────────────────────────
+
+    def export_tistory(self, target: str = "latest", fmt: str = "html") -> WikiBlogExportResult | None:
+        """Vault 초안을 티스토리용 HTML/MD로 변환해 50_Outputs/Blog/Export/에 저장한다."""
+        fmt = fmt.lower()
+        if fmt not in ("html", "md"):
+            raise ValueError("format은 'html' 또는 'md'여야 합니다.")
+
+        draft = self._resolve_target(target)
+        if draft is None:
+            return None
+
+        export_dir = self.vault_dir / "50_Outputs/Blog/Export"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        ext = "html" if fmt == "html" else "md"
+        out_path = export_dir / f"{draft.slug}.{ext}"
+
+        if fmt == "html":
+            content = md.markdown(draft.body, extensions=["fenced_code", "tables", "nl2br", "sane_lists"])
+        else:
+            content = draft.body.strip() + "\n"
+        out_path.write_text(content, encoding="utf-8")
+
+        if draft.status in ("draft", "idea"):
+            self._update_status(draft.path, "review")
+
+        self.wiki_service.append_vault_log("export-tistory", draft.title, [draft.rel_path])
+        return WikiBlogExportResult(draft=draft, path=out_path, fmt=fmt)
+
+    def publish_done(self, target: str = "latest", url: str = "") -> WikiBlogDraft | None:
+        """게시 완료를 기록한다 (status=published, published_url 저장)."""
+        draft = self._resolve_target(target)
+        if draft is None:
+            return None
+
+        raw = draft.path.read_text(encoding="utf-8")
+        post = frontmatter.loads(raw)
+        metadata = dict(post.metadata)
+        metadata["status"] = "published"
+        if url:
+            metadata["published_url"] = url
+        draft.path.write_text(frontmatter.dumps(frontmatter.Post(post.content, **metadata)), encoding="utf-8")
+
+        self.wiki_service.append_vault_log("publish-done", draft.title, [draft.rel_path])
+        return WikiBlogDraft(
+            title=draft.title,
+            slug=draft.slug,
+            tags=draft.tags,
+            source_refs=draft.source_refs,
+            rel_path=draft.rel_path,
+            path=draft.path,
+            body=draft.body,
+            status="published",
+            created_at=draft.created_at,
+            published_url=url or draft.published_url,
+        )
+
+    # ── 내부 헬퍼 ────────────────────────────────────────────────────
+
+    def _resolve_target(self, target: str) -> WikiBlogDraft | None:
+        """'latest' 또는 vault rel_path로 초안을 찾아 반환한다."""
+        if target == "latest":
+            drafts = self.list_drafts()
+            return drafts[0] if drafts else None
+        path = self.vault_dir / target
+        return self._read_draft(path) if path.exists() else None
+
+    def _read_draft(self, path: Path) -> WikiBlogDraft:
+        raw = path.read_text(encoding="utf-8")
+        post = frontmatter.loads(raw)
+        meta = dict(post.metadata)
+        title = str(meta.get("title") or path.stem)
+        return WikiBlogDraft(
+            title=title,
+            slug=self._slug(title),
+            tags=meta.get("tags") or [],
+            source_refs=meta.get("source_refs") or [],
+            rel_path=str(path.relative_to(self.vault_dir)),
+            path=path,
+            body=post.content,
+            status=str(meta.get("status") or "draft"),
+            created_at=str(meta.get("created_at") or ""),
+            published_url=str(meta.get("published_url") or ""),
+        )
+
+    def _update_status(self, path: Path, status: str) -> None:
+        raw = path.read_text(encoding="utf-8")
+        post = frontmatter.loads(raw)
+        meta = dict(post.metadata)
+        meta["status"] = status
+        path.write_text(frontmatter.dumps(frontmatter.Post(post.content, **meta)), encoding="utf-8")
 
     def _llm(self) -> LLMProvider:
         return self.llm or get_writer_llm_provider(self.settings)

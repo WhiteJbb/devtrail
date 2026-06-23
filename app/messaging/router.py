@@ -1,4 +1,4 @@
-"""명령 라우터 — 메시지 텍스트를 BlogAgent 호출로 해석한다(네트워크 무관).
+"""명령 라우터 — 메시지 텍스트를 명령으로 해석한다(네트워크 무관).
 
 메신저로 받은 한 줄 텍스트를 명령으로 파싱해 실행하고, 답장 문자열을 반환한다.
 어떤 명령도 예외로 봇을 죽이지 않도록 친화적 문자열로 변환한다.
@@ -6,24 +6,18 @@
 
 from __future__ import annotations
 
-from typing import Callable
-
-from app.agents.blog_agent import BlogAgent
 from app.llm.base import LLMError, LLMNotConfiguredError
-from app.models import DraftRequest
 
 _HELP = (
     "사용 가능한 명령:\n"
     "/list — 초안 목록\n"
-    "/topics — 주제 추천\n"
-    "/draft <주제> — 초안 생성\n"
-    "/write <주제> — Wiki Core 기반 블로그 초안 생성\n"
-    "/revise [slug] — 초안 다듬기\n"
-    "/preview [slug] — 초안 미리보기\n"
-    "/export [slug] — 티스토리용 변환\n"
+    "/write <주제> — 블로그 초안 생성\n"
+    "/revise [vault_path] — 초안 다듬기\n"
+    "/preview [vault_path] — 초안 미리보기\n"
+    "/export [vault_path] — 티스토리용 변환\n"
     "/publish <url> — 게시 완료 기록(최신 초안)\n"
-    "/sync — Notion 동기화\n"
     "/search <검색어> — Vault 노트 검색\n"
+    "/session [project] — 작업 세션 노트 생성\n"
     "/capture <메모> — 메모를 Inbox에 저장\n"
     "/distill — 오늘 기록에서 후보 생성\n"
     "/context <주제> — Context Pack 조회\n"
@@ -40,9 +34,6 @@ _HELP = (
 
 
 class CommandRouter:
-    def __init__(self, make_agent: Callable[[], BlogAgent] | None = None):
-        self.make_agent = make_agent or (lambda: BlogAgent())
-
     def handle(self, text: str) -> str:
         text = (text or "").strip()
         if not text:
@@ -58,216 +49,172 @@ class CommandRouter:
             return "LLM이 연결되어 있지 않습니다. 서버의 .env에서 LLM_PROVIDER를 설정하세요."
         except LLMError as e:
             return f"LLM 호출 실패: {e}"
-        except Exception as e:  # 봇이 죽지 않도록 모든 예외를 답장으로
+        except Exception as e:
             return f"오류가 발생했습니다: {e}"
 
-    # ----- 개별 명령 -----
     def _dispatch(self, cmd: str, arg: str) -> str:
-        agent = self.make_agent()
-
         if cmd in ("help", "start", ""):
             return _HELP
 
+        # ── 블로그 (WikiBlogAgent) ────────────────────────────────────
         if cmd == "list":
-            posts = agent.list_drafts()
-            if not posts:
+            from app.agents.wiki_blog_agent import WikiBlogAgent
+            drafts = WikiBlogAgent().list_drafts()
+            if not drafts:
                 return "저장된 초안이 없습니다."
-            lines = [f"· [{p.status.value}] {p.title} ({p.slug})" for p in posts]
+            lines = [f"· [{d.status}] {d.title} ({d.rel_path})" for d in drafts]
             return "초안 목록:\n" + "\n".join(lines)
 
-        if cmd in ("topics", "suggest"):
-            suggestions = agent.suggest_topics()
-            if not suggestions:
-                return "추천할 주제를 찾지 못했습니다."
-            blocks = []
-            for i, s in enumerate(suggestions, 1):
-                title = s.title_candidates[0] if s.title_candidates else "(제목 없음)"
-                blocks.append(f"{i}. {title}\n   {s.reason}")
-            return "추천 주제:\n" + "\n".join(blocks)
-
-        if cmd in ("draft", "write"):
+        if cmd in ("write", "draft", "wb"):
             if not arg:
-                return "주제를 함께 보내주세요. 예: /draft XCoreChat 개발환경 분리"
-            post = agent.write_draft(DraftRequest(topic=arg))
-            return f"초안 생성 완료: {post.title}\nslug: {post.slug}"
+                return "주제를 함께 보내주세요. 예: /write XCoreChat 개발환경 분리"
+            from app.agents.wiki_blog_agent import WikiBlogAgent
+            draft = WikiBlogAgent().write_blog(arg)
+            return f"블로그 초안 생성 완료: {draft.title}\nvault: {draft.rel_path}"
 
         if cmd == "revise":
-            post = agent.revise(arg or "latest")
-            if post is None:
-                return "다듬을 초안이 없습니다."
-            return f"다듬기 완료: {post.title}"
+            from app.agents.wiki_blog_agent import WikiBlogAgent
+            draft = WikiBlogAgent().revise_blog(arg or "latest")
+            return f"다듬기 완료: {draft.title}"
 
         if cmd == "preview":
-            result = agent.preview(arg or "latest")
+            from app.agents.wiki_blog_agent import WikiBlogAgent
+            result = WikiBlogAgent().preview_draft(arg or "latest")
             if result is None:
                 return "초안을 찾지 못했습니다."
-            p = result.post
-            return f"{p.title} [{p.status.value}]\n\n{result.excerpt}"
+            draft, excerpt = result
+            return f"{draft.title} [{draft.status}]\n\n{excerpt}"
 
         if cmd == "export":
-            result = agent.export_tistory(arg or "latest", "html")
+            from app.agents.wiki_blog_agent import WikiBlogAgent
+            result = WikiBlogAgent().export_tistory(arg or "latest", "html")
             if result is None:
                 return "변환할 초안이 없습니다."
-            return f"티스토리용 변환 완료: {result.path.name}\n제목: {result.post.title}"
+            return f"티스토리용 변환 완료: {result.path.name}\n제목: {result.draft.title}"
 
         if cmd == "publish":
             if not arg:
                 return "게시한 글 주소를 함께 보내주세요. 예: /publish https://blog.tistory.com/1"
-            post = agent.publish_done("latest", url=arg)
-            if post is None:
+            from app.agents.wiki_blog_agent import WikiBlogAgent
+            draft = WikiBlogAgent().publish_done("latest", url=arg)
+            if draft is None:
                 return "게시 기록할 초안이 없습니다."
-            return f"게시 완료 기록: {post.title}\n{post.published_url}"
+            return f"게시 완료 기록: {draft.title}\n{draft.published_url}"
 
-        if cmd == "sync":
-            report = agent.sync_notion(dry_run=False)
-            return f"Notion 동기화({report.mode}): 생성 {len(report.created)} · 갱신 {len(report.updated)}"
-
+        # ── Wiki / 검색 ──────────────────────────────────────────────
         if cmd in ("wiki", "w"):
             if not arg:
                 return "질문을 함께 보내주세요. 예: /wiki vLLM 설정 방법"
-            try:
-                from app.agents.wiki_agent import build_wiki_agent
-                wiki_agent = build_wiki_agent()
-                return wiki_agent.query(arg)
-            except RuntimeError as e:
-                return f"wiki 검색 실패: {e}"
+            from app.agents.wiki_agent import build_wiki_agent
+            wiki_agent = build_wiki_agent()
+            return wiki_agent.query(arg)
 
         if cmd == "lint":
-            try:
-                from app.agents.wiki_agent import build_wiki_agent
-                wiki_agent = build_wiki_agent()
-                result = wiki_agent.lint()
-                return f"wiki 점검 완료\n\n{result[:1500]}"
-            except RuntimeError as e:
-                return f"wiki 점검 실패: {e}"
-
-        if cmd == "worklog":
-            from app.agents import WorklogAgent
-            try:
-                result = WorklogAgent().generate()
-            except RuntimeError as e:
-                return f"실행 실패: {e}"
-            return f"작업 회고 완료\n\n{result.text[:1500]}"
-
-        if cmd == "todo":
-            from app.agents import TodoAgent
-            try:
-                result = TodoAgent().generate()
-            except RuntimeError as e:
-                return f"실행 실패: {e}"
-            return f"할 일 제안\n\n{result.text[:1500]}"
-
-        if cmd == "portfolio":
-            from app.agents import PortfolioAgent
-            try:
-                result = PortfolioAgent().generate()
-            except RuntimeError as e:
-                return f"실행 실패: {e}"
-            return f"포트폴리오 초안\n\n{result.text[:1500]}"
-
-        if cmd == "resume":
-            from app.agents import ResumeAgent
-            try:
-                result = ResumeAgent().generate()
-            except RuntimeError as e:
-                return f"실행 실패: {e}"
-            return f"이력서 초안\n\n{result.text[:1500]}"
-
-        if cmd in ("write", "wb"):
-            if not arg:
-                return "주제를 함께 보내주세요. 예: /write XCoreChat 개발환경 분리"
-            try:
-                from app.agents.wiki_blog_agent import WikiBlogAgent
-                draft = WikiBlogAgent().write_blog(arg)
-                return f"블로그 초안 생성 완료: {draft.title}\nvault: {draft.rel_path}"
-            except RuntimeError as e:
-                return f"Wiki Core 미설정: {e}\n/draft 명령으로 기존 흐름을 사용하세요."
+            from app.agents.wiki_agent import build_wiki_agent
+            wiki_agent = build_wiki_agent()
+            result = wiki_agent.lint()
+            return f"wiki 점검 완료\n\n{result[:1500]}"
 
         if cmd == "search":
             if not arg:
                 return "검색어를 함께 보내주세요. 예: /search RAG"
-            try:
-                from app.config import get_settings
-                from app.services.wiki_service import WikiService
-                from pathlib import Path
-                settings = get_settings()
-                if not settings.obsidian_vault_root:
-                    return "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다."
-                service = WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
-                results = service.search(arg, limit=5)
-                if not results:
-                    return "검색 결과가 없습니다."
-                lines = [f"검색 결과 ({len(results)}건):"]
-                for r in results:
-                    lines.append(f"· {r.note.title} ({r.note.path})")
-                return "\n".join(lines)
-            except Exception as e:
-                return f"검색 실패: {e}"
+            from app.config import get_settings
+            from app.services.wiki_service import WikiService
+            from pathlib import Path
+            settings = get_settings()
+            if not settings.obsidian_vault_root:
+                return "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다."
+            service = WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
+            results = service.search(arg, limit=5)
+            if not results:
+                return "검색 결과가 없습니다."
+            lines = [f"검색 결과 ({len(results)}건):"]
+            for r in results:
+                lines.append(f"· {r.note.title} ({r.note.path})")
+            return "\n".join(lines)
 
+        # ── Session ───────────────────────────────────────────────────
+        if cmd == "session":
+            from app.agents import CaptureAgent
+            try:
+                agent = CaptureAgent()
+            except RuntimeError as e:
+                return f"Session 저장 실패: {e}"
+            result = agent.capture_session(project=arg or None, from_agent=False, from_repo=False)
+            proj_label = f" ({arg})" if arg else ""
+            return (
+                f"작업 세션 노트 생성 완료{proj_label}\n"
+                f"vault: {result.rel_path}\n\n"
+                "더 자세히 남기려면 이어서 문제/해결/다음 할 일을 보내줘."
+            )
+
+        # ── Capture / Distill ─────────────────────────────────────────
         if cmd == "capture":
             if not arg:
                 return "메모 내용을 함께 보내주세요. 예: /capture 오늘 RAG 작업함"
-            try:
-                from app.agents import CaptureAgent
-                result = CaptureAgent().capture(text=arg)
-                verb = "저장" if result.created else "기존 파일 유지"
-                return f"메모 {verb} 완료\n{result.rel_path}"
-            except RuntimeError as e:
-                return f"Capture 실패: {e}"
+            from app.agents import CaptureAgent
+            result = CaptureAgent().capture(text=arg)
+            verb = "저장" if result.created else "기존 파일 유지"
+            return f"메모 {verb} 완료\n{result.rel_path}"
 
         if cmd == "distill":
-            try:
-                from app.agents import DistillAgent
-                result = DistillAgent().distill_today()
-                if not result.written:
-                    return "오늘 생성된 후보가 없습니다."
-                lines = [f"후보 {len(result.written)}개 생성:"]
-                for item in result.written:
-                    lines.append(f"· [{item.spec.kind}] {item.spec.title}")
-                return "\n".join(lines)
-            except RuntimeError as e:
-                return f"Distill 실패: {e}"
+            from app.agents import DistillAgent
+            result = DistillAgent().distill_today()
+            if not result.written:
+                return "오늘 생성된 후보가 없습니다."
+            lines = [f"후보 {len(result.written)}개 생성:"]
+            for item in result.written:
+                lines.append(f"· [{item.spec.kind}] {item.spec.title}")
+            return "\n".join(lines)
 
         if cmd in ("context", "ctx"):
             if not arg:
                 return "주제를 함께 보내주세요. 예: /context XCoreChat RAG"
-            try:
-                from app.config import get_settings
-                from app.memory.context_pack_builder import ContextPackBuilder
-                from pathlib import Path
-                settings = get_settings()
-                if not settings.obsidian_vault_root:
-                    return "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다."
-                builder = ContextPackBuilder(Path(settings.obsidian_vault_root))
-                pack = builder.build(arg)
-                preview = pack.render()[:1500]
-                return f"Context Pack ({len(pack.source_refs)}개 source)\n\n{preview}"
-            except Exception as e:
-                return f"Context Pack 실패: {e}"
+            from app.config import get_settings
+            from app.memory.context_pack_builder import ContextPackBuilder
+            from pathlib import Path
+            settings = get_settings()
+            if not settings.obsidian_vault_root:
+                return "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다."
+            builder = ContextPackBuilder(Path(settings.obsidian_vault_root))
+            pack = builder.build(arg)
+            preview = pack.render()[:1500]
+            return f"Context Pack ({len(pack.source_refs)}개 source)\n\n{preview}"
 
         if cmd == "candidates":
-            try:
-                from app.agents.curator_agent import CuratorAgent
-                items = CuratorAgent().list_candidates()
-                if not items:
-                    return "60_Candidates/ 에 후보가 없습니다."
-                lines = [f"후보 {len(items)}개:"]
-                for item in items[:10]:
-                    lines.append(f"· [{item.kind}] {item.title}")
-                if len(items) > 10:
-                    lines.append(f"  ... 외 {len(items) - 10}개")
-                return "\n".join(lines)
-            except RuntimeError as e:
-                return f"Candidates 조회 실패: {e}"
+            from app.agents.curator_agent import CuratorAgent
+            items = CuratorAgent().list_candidates()
+            if not items:
+                return "60_Candidates/ 에 후보가 없습니다."
+            lines = [f"· [{i.kind}] {i.title}" for i in items[:10]]
+            return f"후보 목록 ({len(items)}건):\n" + "\n".join(lines)
 
         if cmd == "promote":
             if not arg:
-                return "승격할 후보 경로를 보내주세요. 예: /promote 60_Candidates/Knowledge/abc.md"
-            try:
-                from app.agents.curator_agent import CuratorAgent
-                result = CuratorAgent().promote_candidate(arg)
-                return f"승격 완료: {result.promoted_path}"
-            except (RuntimeError, ValueError) as e:
-                return f"승격 실패: {e}"
+                return "승격할 후보 경로를 보내주세요. 예: /promote 60_Candidates/Knowledge/foo.md"
+            from app.agents.curator_agent import CuratorAgent
+            result = CuratorAgent().promote_candidate(arg)
+            return f"승격 완료: {result.promoted_path}"
 
-        return f"알 수 없는 명령입니다.\n\n{_HELP}"
+        # ── 개인 문서 ─────────────────────────────────────────────────
+        if cmd == "worklog":
+            from app.agents import WorklogAgent
+            result = WorklogAgent().generate()
+            return f"작업 회고 완료\n\n{result.text[:1500]}"
+
+        if cmd == "todo":
+            from app.agents import TodoAgent
+            result = TodoAgent().generate()
+            return f"할 일 제안\n\n{result.text[:1500]}"
+
+        if cmd == "portfolio":
+            from app.agents import PortfolioAgent
+            result = PortfolioAgent().generate()
+            return f"포트폴리오 초안\n\n{result.text[:1500]}"
+
+        if cmd == "resume":
+            from app.agents import ResumeAgent
+            result = ResumeAgent().generate()
+            return f"이력서 초안\n\n{result.text[:1500]}"
+
+        return f"알 수 없는 명령: /{cmd}\n\n{_HELP}"

@@ -13,6 +13,10 @@ venv/
 .env.*
 !.env.example
 
+# Claude Code settings (토큰 포함)
+.claude/
+!.claude/global.md
+
 # Notion mock store
 workspace/.notion_mock.json
 

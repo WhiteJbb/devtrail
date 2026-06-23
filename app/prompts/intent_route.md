@@ -9,6 +9,7 @@
 - export-tistory — 초안을 티스토리용으로 변환 (arg = slug, 비우면 최신)
 - publish-done — 게시 완료 기록 (arg = 게시된 글 URL)
 - sync-notion — Notion 동기화
+- capture-session — 현재 작업 세션을 구조화된 노트로 저장 (arg = 프로젝트명, 없으면 빈 문자열)
 - worklog — 최근 작업 회고 생성
 - todo — 다음 할 일 제안
 - portfolio — 포트폴리오 초안 생성
@@ -16,6 +17,10 @@
 - wiki-query — wiki에서 기술 내용 검색/질답 (arg = 질문 전체)
 - help — 무엇을 할 수 있는지 안내
 - unknown — 위 어디에도 해당하지 않음
+
+# 라우팅 힌트
+- "세션 정리", "세션 노트", "세션 캡처", "현재 작업 기록", "작업 회고 노트 만들어줘" → capture-session
+- "작업 회고", "오늘 회고" → worklog
 
 # 규칙
 - 요청에 가장 잘 맞는 명령 하나를 고른다. 애매하거나 해당 없음이면 unknown.
