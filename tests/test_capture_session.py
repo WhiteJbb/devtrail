@@ -23,10 +23,7 @@ def _settings(tmp_path: Path):
 
 
 def _agent(tmp_path: Path) -> CaptureAgent:
-    with patch("app.agents.capture_agent.get_settings", return_value=_settings(tmp_path)):
-        with patch("app.services.wiki_service.get_settings", return_value=_settings(tmp_path)):
-            agent = CaptureAgent(settings=_settings(tmp_path))
-    return agent
+    return CaptureAgent(settings=_settings(tmp_path))
 
 
 # ── 기본 동작 ─────────────────────────────────────────────────────────────────
@@ -319,13 +316,10 @@ def test_distill_session_notes_priority(tmp_path):
         summary="",
     )
 
-    with patch("app.agents.distill_agent.get_settings", return_value=settings):
-        with patch("app.services.wiki_service.get_settings", return_value=settings):
-            from app.llm.base import LLMProvider
-            agent = DistillAgent(settings=settings, llm=None)
-            # _raw_notes 직접 테스트
-            with patch.object(agent.wiki_service, "scan_notes", return_value=[capture_note, session_note]):
-                notes = agent._raw_notes(today_only=True)
+    from app.llm.base import LLMProvider
+    agent = DistillAgent(settings=settings, llm=None)
+    with patch.object(agent.wiki_service, "scan_notes", return_value=[capture_note, session_note]):
+        notes = agent._raw_notes(today_only=True)
 
     # session 노트가 첫 번째여야 한다
     assert notes[0].path == session_note.path

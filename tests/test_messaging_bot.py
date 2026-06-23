@@ -21,12 +21,7 @@ class FakeProvider:
 
 
 def _router_echo():
-    # 라우터는 고정 응답만 내도록 stub agent 사용
-    class _Agent:
-        def list_drafts(self):
-            return []
-
-    return CommandRouter(make_agent=lambda: _Agent())
+    return CommandRouter()
 
 
 def test_replies_to_allowed_chat():

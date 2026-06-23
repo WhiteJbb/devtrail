@@ -227,8 +227,6 @@ Capture → Distill → Promote
 
 ```bash
 work-agent capture "오늘 XCoreChat 개발환경 분리 작업함" --project XCoreChat
-work-agent capture-chat --source chatgpt --project WorkAgent --file chat.md
-work-agent capture-chat --source codex --project WorkAgent --file codex.md
 work-agent capture-commit --repo ./xcorechat --project XCoreChat
 work-agent daily-log
 ```
@@ -383,7 +381,6 @@ topic: obsidian-memory-architecture
 status: accepted
 date: 2026-06-22
 source_refs:
-  - 00_Inbox/Chats/2026-06-22-llm-wiki-plan.md
 ---
 ```
 
@@ -816,8 +813,6 @@ work-agent related "30_Projects/XCoreChat/Context.md"
 
 ```bash
 work-agent capture "메모 내용" --project XCoreChat
-work-agent capture-chat --source chatgpt --project WorkAgent --file chat.md
-work-agent capture-chat --source codex --project WorkAgent --file codex.md
 work-agent capture-commit --repo ./xcorechat --project XCoreChat
 work-agent daily-log
 ```
@@ -1027,7 +1022,6 @@ work-agent search "RAG"
 구현:
 
 * `capture`
-* `capture-chat`
 * `capture-commit`
 * `daily-log`
 * log.md append

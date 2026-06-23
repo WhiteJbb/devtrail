@@ -55,35 +55,6 @@ class CaptureAgent:
         self._log("capture", project or "manual memo", result.rel_path)
         return result
 
-    def capture_chat(self, file_path: Path, source: str, project: str = "") -> CaptureResult:
-        if not source.strip():
-            raise ValueError("chat source is empty.")
-        if not file_path.exists():
-            raise FileNotFoundError(str(file_path))
-
-        text = file_path.read_text(encoding="utf-8", errors="replace").strip()
-        if not text:
-            raise ValueError("chat file is empty.")
-
-        stamp = self._timestamp()
-        rel_path = f"00_Inbox/Chats/{stamp}-{self._slug(source)}-{self._slug(project or 'chat')}.md"
-        title = f"Chat Capture - {source}"
-        if project:
-            title += f" / {project}"
-        metadata = {
-            "type": "chat_capture",
-            "date": self._date(),
-            "project": project,
-            "source": source,
-            "source_file": str(file_path),
-            "status": "raw",
-            "tags": [],
-        }
-        body = f"# {title}\n\n_source file: {file_path}_\n\n{text}\n"
-        result = self._write_note(rel_path, metadata, body, kind="chat_capture")
-        self._log("capture", f"{source} chat", result.rel_path)
-        return result
-
     def capture_commit(self, repo_dir: Path, project: str = "", ref: str = "HEAD") -> CaptureResult:
         repo_dir = repo_dir.resolve()
         if self._git(repo_dir, ["rev-parse", "--is-inside-work-tree"]) is None:

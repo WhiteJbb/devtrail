@@ -80,7 +80,6 @@ TELEGRAM_CHAT_ID=
 | --- | --- |
 | `capture "메모"` | `00_Inbox/Captures/`에 raw 메모 저장 |
 | `capture-commit --repo <path>` | git commit을 `10_Worklog/GitSummaries/`에 저장 |
-| `capture-chat --file chat.md` | 대화 파일을 `00_Inbox/Chats/`에 저장 |
 | `capture-session --project <name>` | 작업 세션 요약 노트를 `10_Worklog/Daily/`에 저장 |
 | `daily-log` | 오늘 날짜 데일리 로그 노트 생성 |
 
@@ -163,8 +162,7 @@ post-commit hook을 설치하면 커밋할 때마다 `capture-commit`이 자동 
 ```text
 <vault>/
 ├─ 00_Inbox/         # capture로 쌓이는 원시 기록 (에이전트 쓰기 가능)
-│  ├─ Captures/      #   capture 메모
-│  └─ Chats/         #   capture-chat 대화 파일
+│  └─ Captures/      #   capture 메모
 ├─ 10_Worklog/       # 작업 흔적 정리
 │  ├─ Daily/         #   capture-session, daily-log
 │  ├─ GitSummaries/  #   capture-commit (hook 자동)
