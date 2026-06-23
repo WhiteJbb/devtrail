@@ -5,12 +5,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
 import frontmatter
 
 from app.services.wiki_service import WikiService
+
+_DEDUP_THRESHOLD = 0.85  # 제목 유사도 임계값
+_DEDUP_LOOKBACK_DAYS = 14  # 최근 N일 이내 후보만 dedup 대상
 
 
 _CANDIDATE_DIRS = {
@@ -48,12 +52,56 @@ class CandidateWriter:
         self.wiki_service = wiki_service or WikiService(vault_dir)
         self.now = now
 
-    def write(self, spec: CandidateSpec) -> CandidateWriteResult:
+    def find_duplicate(self, spec: CandidateSpec) -> str | None:
+        """같은 kind 폴더에서 유사 제목의 기존 후보를 찾아 rel_path를 반환한다. 없으면 None."""
+        kind = self._normalize_kind(spec.kind)
+        if kind not in _CANDIDATE_DIRS:
+            return None
+        cand_dir = self.vault_dir / _CANDIDATE_DIRS[kind]
+        if not cand_dir.exists():
+            return None
+
+        today = self._now()
+        norm_new = self._norm_title(spec.title)
+
+        for md_path in cand_dir.glob("*.md"):
+            # 파일명에서 날짜 파싱 (20250623-... 형식)
+            stem = md_path.stem
+            try:
+                file_date = datetime.strptime(stem[:8], "%Y%m%d")
+                if (today - file_date).days > _DEDUP_LOOKBACK_DAYS:
+                    continue
+            except ValueError:
+                pass
+
+            try:
+                existing = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+                existing_title = str(existing.metadata.get("title") or "").strip()
+            except Exception:
+                continue
+
+            if not existing_title:
+                continue
+
+            ratio = SequenceMatcher(None, norm_new, self._norm_title(existing_title)).ratio()
+            if ratio >= _DEDUP_THRESHOLD:
+                return str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
+
+        return None
+
+    def write(self, spec: CandidateSpec, dedup: bool = True) -> CandidateWriteResult:
         kind = self._normalize_kind(spec.kind)
         if kind not in _CANDIDATE_DIRS:
             raise ValueError(f"unsupported candidate kind: {spec.kind}")
         if not spec.title.strip():
             raise ValueError("candidate title is empty")
+
+        if dedup:
+            existing = self.find_duplicate(spec)
+            if existing:
+                # 기존 후보 경로를 반환 (새로 쓰지 않음)
+                existing_path = self.vault_dir / existing
+                return CandidateWriteResult(spec=spec, path=existing_path, rel_path=existing)
 
         rel_path = self._unique_rel_path(kind, spec.title)
         path = self.vault_dir / rel_path
@@ -62,6 +110,7 @@ class CandidateWriter:
         metadata: dict[str, Any] = {
             "type": "candidate",
             "candidate_type": kind,
+            "title": spec.title.strip(),
             "status": "candidate",
             "created_at": self._now().strftime("%Y-%m-%d"),
             "project": spec.project,
@@ -123,6 +172,13 @@ class CandidateWriter:
             "career": "career_bullet",
         }
         return aliases.get(value, value)
+
+    @staticmethod
+    def _norm_title(title: str) -> str:
+        """dedup 비교용 정규화: 소문자, 특수문자 제거, 공백 정리."""
+        t = title.lower().strip()
+        t = re.sub(r"[^0-9a-z가-힣\s]", " ", t)
+        return re.sub(r"\s+", " ", t).strip()
 
     def _slug(self, value: str) -> str:
         text = value.strip().lower()

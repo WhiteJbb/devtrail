@@ -50,6 +50,10 @@ class DistillAgent:
     def distill_today(self) -> DistillResult:
         return self._distill(kind="all", today_only=True)
 
+    def distill_range(self, days: int = 7) -> DistillResult:
+        """최근 days일치 raw 기록을 정제한다 (weekly-distill용)."""
+        return self._distill(kind="all", today_only=False, days=days)
+
     def suggest_knowledge(self) -> DistillResult:
         return self._distill(kind="knowledge", today_only=False)
 
@@ -59,8 +63,8 @@ class DistillAgent:
     def suggest_memory_patch(self) -> DistillResult:
         return self._distill(kind="memory_patch", today_only=False)
 
-    def _distill(self, kind: str, today_only: bool) -> DistillResult:
-        notes = self._raw_notes(today_only=today_only)
+    def _distill(self, kind: str, today_only: bool, days: int = 0) -> DistillResult:
+        notes = self._raw_notes(today_only=today_only, days=days)
         if not notes:
             return DistillResult(written=[], source_refs=[])
 
@@ -82,7 +86,8 @@ class DistillAgent:
     def _llm(self) -> LLMProvider:
         return self.llm or get_llm_provider(self.settings)
 
-    def _raw_notes(self, today_only: bool) -> list[WikiNote]:
+    def _raw_notes(self, today_only: bool, days: int = 0) -> list[WikiNote]:
+        from datetime import timedelta
         today = self._date()
         notes = [
             note
@@ -91,6 +96,9 @@ class DistillAgent:
         ]
         if today_only:
             notes = [note for note in notes if self._note_date(note) == today]
+        elif days > 0:
+            cutoff = ((self.now or datetime.now()) - timedelta(days=days)).strftime("%Y-%m-%d")
+            notes = [note for note in notes if self._note_date(note) >= cutoff]
 
         # session 노트를 가장 먼저 배치 (10_Worklog/Daily/*session*.md)
         session_notes = [n for n in notes if "session" in Path(n.path).name.lower()
@@ -98,7 +106,8 @@ class DistillAgent:
         other_notes = [n for n in notes if n not in session_notes]
         session_notes.sort(key=lambda n: n.path, reverse=True)
         other_notes.sort(key=lambda n: n.path, reverse=True)
-        return (session_notes + other_notes)[:20]
+        limit = 40 if days > 1 else 20  # 주간은 더 많은 노트 허용
+        return (session_notes + other_notes)[:limit]
 
     def _note_date(self, note: WikiNote) -> str:
         value = note.metadata.get("date") or note.metadata.get("created_at") or ""

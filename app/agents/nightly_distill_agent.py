@@ -17,6 +17,8 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.services.wiki_service import WikiNote, WikiService
 
+_WEEKLY_LOOKBACK_DAYS = 7
+
 
 @dataclass(frozen=True)
 class NightlyDistillResult:
@@ -45,22 +47,20 @@ class NightlyDistillAgent:
         self.vault_dir = Path(self.settings.obsidian_vault_root)
         self.wiki_service = WikiService(self.vault_dir, wiki_folder=self.settings.wiki_folder)
 
-    def run(self) -> NightlyDistillResult:
-        # 1. distill-today (knowledge / decisions / mempatches / blogideas)
+    def run(self, weekly: bool = False) -> NightlyDistillResult:
+        """daily(기본) 또는 weekly 모드로 정제 + digest를 생성한다."""
         distill_agent = DistillAgent(settings=self.settings, llm=self.llm, now=self.now)
-        distill_result = distill_agent.distill_today()
 
-        # 2. career bullets
+        if weekly:
+            distill_result = distill_agent.distill_range(days=_WEEKLY_LOOKBACK_DAYS)
+        else:
+            distill_result = distill_agent.distill_today()
+
         career_agent = CareerBulletAgent(settings=self.settings, llm=self.llm, now=self.now)
         career_result = career_agent.suggest()
 
-        # 3. digest 생성 (LLM 추가 호출 없이 결과 정리)
-        digest_text = self._build_digest(distill_result, career_result)
-
-        # 4. digest 저장
-        digest_path, digest_rel = self._save_digest(digest_text)
-
-        # 5. Telegram 전송 시도
+        digest_text = self._build_digest(distill_result, career_result, weekly=weekly)
+        digest_path, digest_rel = self._save_digest(digest_text, weekly=weekly)
         sent = self._try_send_telegram(digest_text)
 
         return NightlyDistillResult(
@@ -78,9 +78,11 @@ class NightlyDistillAgent:
         self,
         distill: DistillResult,
         career: CareerBulletResult,
+        weekly: bool = False,
     ) -> str:
         date = self._date()
-        lines = [f"# Daily Digest — {date}", ""]
+        label = "Weekly Digest" if weekly else "Daily Digest"
+        lines = [f"# {label} — {date}", ""]
 
         # 오늘 한 일: session 노트 제목 수집
         sessions = self._today_sessions()
@@ -156,16 +158,17 @@ class NightlyDistillAgent:
             and str(n.metadata.get("created_at") or n.metadata.get("date") or "")[:10] == today
         ]
 
-    def _save_digest(self, digest_text: str) -> tuple[Path | None, str]:
+    def _save_digest(self, digest_text: str, weekly: bool = False) -> tuple[Path | None, str]:
         date = self._date()
-        rel_path = f"50_Outputs/Digest/{date}-daily-digest.md"
+        kind = "weekly" if weekly else "daily"
+        rel_path = f"50_Outputs/Digest/{date}-{kind}-digest.md"
         path = self.vault_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         metadata = {
             "type": "digest",
             "date": date,
             "status": "generated",
-            "tags": ["digest", "daily"],
+            "tags": ["digest", kind],
         }
         post = frontmatter.Post(digest_text.strip() + "\n", **metadata)
         path.write_text(frontmatter.dumps(post), encoding="utf-8")

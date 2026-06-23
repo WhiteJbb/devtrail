@@ -383,8 +383,14 @@ def preview_candidate(
 @app.command("promote-candidate")
 def promote_candidate(
     rel_path: str = typer.Argument(..., help="승격할 후보 노트 경로 (vault 기준)"),
+    no_wiki: bool = typer.Option(False, "--no-wiki", help="wiki-ingest 자동 실행 안 함"),
 ) -> None:
-    """후보 노트를 공식 Knowledge/Decision/Memory 영역으로 승격한다."""
+    """후보 노트를 공식 Knowledge/Decision/Memory 영역으로 승격한다.
+
+    knowledge 후보를 승격하면 wiki-ingest를 자동으로 실행해 순환을 완성한다.
+    --no-wiki 플래그로 비활성화할 수 있다.
+    """
+    settings = get_settings()
     try:
         result = _curator_agent().promote_candidate(rel_path)
     except ValueError as e:
@@ -395,14 +401,55 @@ def promote_candidate(
     typer.echo(f"  승격됨: {result.promoted_path}")
     typer.echo(f"  종류: {result.kind}")
 
+    # knowledge 승격 후 wiki-ingest 자동 실행
+    if result.kind == "knowledge" and not no_wiki and settings.wiki_enabled:
+        from app.agents.wiki_agent import build_wiki_agent
+        from pathlib import Path as _Path
+        promoted_folder = str(_Path(result.promoted_path).parent)
+        typer.secho(f"\n  → wiki-ingest 자동 실행 중 (폴더: {promoted_folder})...", fg=typer.colors.CYAN)
+        try:
+            wiki_agent = build_wiki_agent(char_budget=settings.context_char_budget)
+            wiki_result = _handle_llm_errors(lambda: wiki_agent.ingest(folder_filter=promoted_folder))
+            typer.secho(f"  wiki 갱신: {wiki_result}", fg=typer.colors.CYAN)
+        except Exception as e:
+            typer.secho(f"  wiki-ingest 실패 (수동으로 실행하세요): {e}", fg=typer.colors.YELLOW)
+
 
 @app.command("apply-memory-patch")
 def apply_memory_patch(
-    rel_path: str = typer.Argument(..., help="적용할 MemoryPatch 후보 경로 (vault 기준)"),
+    rel_path: str = typer.Argument(default="", help="적용할 MemoryPatch 후보 경로 (vault 기준). 생략 시 인터랙티브 선택."),
+    interactive: bool = typer.Option(False, "--interactive", "-i", help="목록에서 번호로 선택"),
 ) -> None:
-    """MemoryPatch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다."""
+    """MemoryPatch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다.
+
+    경로를 생략하거나 -i 플래그를 쓰면 후보 목록에서 번호로 선택할 수 있다.
+    """
+    curator = _curator_agent()
+
+    if not rel_path or interactive:
+        patches = [c for c in curator.list_candidates() if c.kind == "memory_patch"]
+        if not patches:
+            typer.echo("적용할 MemoryPatch 후보가 없습니다.")
+            raise typer.Exit()
+
+        typer.secho("\nMemoryPatch 후보 목록", fg=typer.colors.CYAN, bold=True)
+        for i, p in enumerate(patches, 1):
+            typer.echo(f"  {i}. {p.title}")
+            typer.echo(f"     {p.rel_path}")
+
+        choice = typer.prompt("\n번호 선택 (취소: 0)", default="0")
+        try:
+            idx = int(choice)
+        except ValueError:
+            idx = 0
+        if idx == 0 or idx > len(patches):
+            typer.echo("취소했습니다.")
+            raise typer.Exit()
+
+        rel_path = patches[idx - 1].rel_path
+
     try:
-        result = _curator_agent().apply_memory_patch(rel_path)
+        result = curator.apply_memory_patch(rel_path)
     except ValueError as e:
         _fail(str(e))
 
@@ -650,6 +697,34 @@ def nightly_distill() -> None:
 
     total = len(result.distill.written) + len(result.career.written)
     typer.secho(f"\nnightly-distill 완료: 후보 {total}개 생성", fg=typer.colors.GREEN, bold=True)
+    for w in result.distill.written:
+        typer.echo(f"  [{w.spec.kind}] {w.spec.title}")
+    for w in result.career.written:
+        typer.echo(f"  [career_bullet] {w.spec.title}")
+    typer.echo(f"\n  digest: {result.digest_rel_path}")
+    if result.sent_telegram:
+        typer.secho("  → Telegram 전송 완료", fg=typer.colors.CYAN)
+
+
+@app.command("weekly-distill")
+def weekly_distill() -> None:
+    """최근 7일 raw 기록을 종합 정제하고 weekly digest를 생성한다.
+
+    금요일 마감 시 한 주를 정리하는 용도로 사용한다.
+    MESSENGER_PROVIDER=telegram이면 digest를 자동 전송한다.
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = NightlyDistillAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+
+    result = _handle_llm_errors(lambda: agent.run(weekly=True))
+
+    total = len(result.distill.written) + len(result.career.written)
+    typer.secho(f"\nweekly-distill 완료: 후보 {total}개 생성", fg=typer.colors.GREEN, bold=True)
     for w in result.distill.written:
         typer.echo(f"  [{w.spec.kind}] {w.spec.title}")
     for w in result.career.written:
