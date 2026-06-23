@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import frontmatter as fm
+
 from app.config import Settings, get_settings
 from app.llm.base import LLMError, LLMProvider
 from app.llm.factory import get_task_llm_provider
@@ -85,6 +87,7 @@ class DistillAgent:
             raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
         written = self.writer.write_many(specs)
+        self._inject_related_links(written, related)
         return DistillResult(written=written, source_refs=[n.path for n in notes])
 
     def _llm(self) -> LLMProvider:
@@ -146,6 +149,35 @@ class DistillAgent:
             if len(related) >= _MAX_RELATED:
                 break
         return related
+
+    def _inject_related_links(self, results: list[CandidateWriteResult], related: list[WikiNote]) -> None:
+        """LLM 출력과 무관하게 related 노트를 ## 관련 노트 섹션에 주입한다."""
+        if not related or not results:
+            return
+        links = "\n".join(f"- [[{Path(r.path).stem}|{r.title}]]" for r in related)
+        for result in results:
+            try:
+                post = fm.loads(result.path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            body: str = post.content
+            if "## 관련 노트" in body:
+                # LLM이 placeholder만 남긴 경우 교체
+                if "(관련 기존 지식 노트 없음)" in body:
+                    body = body.replace("(관련 기존 지식 노트 없음)", links, 1)
+                # LLM이 실제 링크를 이미 넣은 경우: 유지
+            else:
+                # 섹션 자체가 없으면 ## Source Refs 앞에 삽입, 없으면 말미에 추가
+                marker = "\n\n## Source Refs"
+                if marker in body:
+                    body = body.replace(marker, f"\n\n## 관련 노트\n\n{links}{marker}", 1)
+                else:
+                    body = body.rstrip() + f"\n\n## 관련 노트\n\n{links}\n"
+            post.content = body
+            try:
+                result.path.write_text(fm.dumps(post), encoding="utf-8")
+            except Exception:
+                continue
 
     def _render_related_knowledge(self, related: list[WikiNote]) -> str:
         if not related:

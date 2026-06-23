@@ -330,3 +330,143 @@ def test_all_fabricated_refs_fall_back_to_actual_notes(tmp_path):
         assert "FAKE/" not in ref, "폴백 후 source_refs에 허위 경로가 남으면 안 된다"
 
 
+# ── 관련 노트 주입 (cross-session wikilink) ──────────────────────────────────
+
+
+def _no_wikilink_response():
+    """LLM이 ## 관련 노트 없이 자유 서술만 반환하는 케이스 (GPT-4o mini 동작 시뮬레이션)."""
+    return json.dumps(
+        {
+            "knowledge": [
+                {
+                    "title": "LLM 라우터 설계 원칙",
+                    "summary": "task_type 기반 provider 선택",
+                    "body": (
+                        "## 개념\n"
+                        "LLM 라우터는 task_type에 따라 provider를 선택한다.\n\n"
+                        "## 왜 중요한가\n"
+                        "서로 다른 작업에 다른 모델이 필요하다.\n\n"
+                        "## 적용 방법\n"
+                        "light면 flash-lite를 기본으로 사용한다."
+                    ),
+                    "project": "work-agent",
+                    "tags": ["llm", "architecture"],
+                    "source_refs": ["00_Inbox/Captures/test.md"],
+                }
+            ],
+            "decisions": [],
+            "memory_patches": [],
+            "blog_ideas": [],
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_related_links_injected_when_llm_omits_section(tmp_path):
+    """LLM이 ## 관련 노트 섹션을 생략해도 cross-session 지식 노트 wikilink가 주입된다."""
+    import frontmatter as fm
+
+    settings = _settings(tmp_path)
+    now = datetime(2026, 6, 23, 9, 0, 0)
+
+    # 기존 지식 노트 (cross-session 연결 대상)
+    knowledge_dir = tmp_path / "20_Knowledge" / "work-agent"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "llm-router-design.md").write_text(
+        "---\ntitle: LLM 라우터 설계\ntype: knowledge\ntags:\n- llm\n- architecture\n---\n\n# LLM 라우터 설계\nllm architecture router task_type provider\n",
+        encoding="utf-8",
+    )
+
+    CaptureAgent(settings=settings, now=now).capture(
+        text="llm architecture router task_type provider 설계", project="work-agent"
+    )
+    result = DistillAgent(
+        settings=settings, llm=FakeLLM(_no_wikilink_response()), now=now
+    ).distill_today()
+
+    assert result.written
+    post = fm.loads(result.written[0].path.read_text(encoding="utf-8"))
+    body = post.content
+
+    assert "## 관련 노트" in body, "## 관련 노트 섹션이 주입되어야 한다"
+    assert "[[llm-router-design|" in body, "cross-session 지식 노트의 wikilink가 삽입되어야 한다"
+
+
+def test_related_links_replaces_placeholder(tmp_path):
+    """LLM이 (관련 기존 지식 노트 없음) placeholder를 남기면 실제 링크로 교체된다."""
+    import frontmatter as fm
+
+    settings = _settings(tmp_path)
+    now = datetime(2026, 6, 23, 9, 0, 0)
+
+    knowledge_dir = tmp_path / "20_Knowledge" / "work-agent"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "llm-router-design.md").write_text(
+        "---\ntitle: LLM 라우터 설계\ntype: knowledge\ntags:\n- llm\n- architecture\n---\n\n# LLM 라우터 설계\nllm architecture router task_type provider\n",
+        encoding="utf-8",
+    )
+
+    placeholder_response = json.dumps(
+        {
+            "knowledge": [
+                {
+                    "title": "LLM 라우터 설계 원칙",
+                    "summary": "task_type 기반 provider 선택",
+                    "body": (
+                        "## 개념\nLLM 라우터는 task_type에 따라 provider를 선택한다.\n\n"
+                        "## 왜 중요한가\n서로 다른 작업에 다른 모델이 필요하다.\n\n"
+                        "## 적용 방법\nlight면 flash-lite를 기본으로 사용한다.\n\n"
+                        "## 관련 노트\n(관련 기존 지식 노트 없음)"
+                    ),
+                    "project": "work-agent",
+                    "tags": ["llm", "architecture"],
+                    "source_refs": ["00_Inbox/Captures/test.md"],
+                }
+            ],
+            "decisions": [],
+            "memory_patches": [],
+            "blog_ideas": [],
+        },
+        ensure_ascii=False,
+    )
+
+    CaptureAgent(settings=settings, now=now).capture(
+        text="llm architecture router task_type provider 설계", project="work-agent"
+    )
+    result = DistillAgent(
+        settings=settings, llm=FakeLLM(placeholder_response), now=now
+    ).distill_today()
+
+    assert result.written
+    post = fm.loads(result.written[0].path.read_text(encoding="utf-8"))
+    body = post.content
+
+    assert "(관련 기존 지식 노트 없음)" not in body, "placeholder가 실제 링크로 교체되어야 한다"
+    assert "[[llm-router-design|" in body, "cross-session 지식 노트의 wikilink가 삽입되어야 한다"
+
+
+def test_related_links_not_injected_when_no_related(tmp_path):
+    """관련 지식 노트가 없으면 ## 관련 노트 섹션을 억지로 추가하지 않는다."""
+    import frontmatter as fm
+
+    settings = _settings(tmp_path)
+    now = datetime(2026, 6, 23, 9, 0, 0)
+
+    # 20_Knowledge 없이 capture만
+    CaptureAgent(settings=settings, now=now).capture(
+        text="완전히 새로운 주제 테스트", project="new-project"
+    )
+    result = DistillAgent(
+        settings=settings, llm=FakeLLM(_no_wikilink_response()), now=now
+    ).distill_today()
+
+    assert result.written
+    post = fm.loads(result.written[0].path.read_text(encoding="utf-8"))
+    body = post.content
+
+    # LLM이 섹션을 안 쓰고, related도 없으면 섹션이 없어도 된다
+    # (있어도 되지만 빈 섹션이 억지로 생기면 안 됨)
+    if "## 관련 노트" in body:
+        assert "[[" in body or "(관련 기존 지식 노트 없음)" in body
+
+
