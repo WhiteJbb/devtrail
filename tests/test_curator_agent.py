@@ -147,16 +147,13 @@ def test_promote_candidate_updates_status_in_promoted_file(tmp_path):
     assert post.metadata.get("promoted_at") is not None
 
 
-def test_promote_candidate_marks_original_as_promoted(tmp_path):
+def test_promote_candidate_deletes_original(tmp_path):
     rel = _write_candidate(tmp_path, "knowledge", "RAG 지식")
 
     agent = CuratorAgent(settings=_settings(tmp_path))
-    result = agent.promote_candidate(rel)
+    agent.promote_candidate(rel)
 
-    original_content = (tmp_path / rel).read_text(encoding="utf-8")
-    post = frontmatter.loads(original_content)
-    assert post.metadata.get("status") == "promoted"
-    assert post.metadata.get("promoted_to") == result.promoted_path
+    assert not (tmp_path / rel).exists(), "승격 후 원본 파일이 삭제되어야 한다"
 
 
 def test_promote_candidate_appends_vault_log(tmp_path):
