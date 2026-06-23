@@ -200,8 +200,30 @@ class CaptureAgent:
         )
 
         result = self._write_note(rel_path, metadata, body, kind="session")
-        self._log("capture-session", project or "session", result.rel_path)
+        self._log_session(
+            project=project or "session",
+            rel_path=result.rel_path,
+            from_repo=from_repo,
+            from_agent=from_agent,
+        )
         return result
+
+    def _log_session(self, project: str, rel_path: str, from_repo: bool, from_agent: bool) -> None:
+        """capture-session 전용 log.md 기록 (from_repo / from_agent 포함)."""
+        log_path = self.vault_dir / "log.md"
+        self.vault_dir.mkdir(parents=True, exist_ok=True)
+        today = self._date()
+        lines = [
+            f"## [{today}] capture-session | {project}",
+            "",
+            f"- project: {project}",
+            f"- output: {rel_path}",
+            f"- from_repo: {str(from_repo).lower()}",
+            f"- from_agent: {str(from_agent).lower()}",
+            "",
+        ]
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write("\n".join(lines))
 
     def _unique_rel_path(self, rel_path: str) -> str:
         """이미 파일이 있으면 -2, -3, ... suffix를 붙여 고유 경로를 반환한다."""

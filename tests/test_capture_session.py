@@ -307,6 +307,7 @@ def test_distill_session_notes_priority(tmp_path):
         metadata={"type": "session", "date": today, "project": "WorkAgent"},
         tags=["session"],
         wikilinks=[],
+        summary="",
     )
     capture_note = WikiNote(
         path="00_Inbox/Captures/20260623-120000-memo.md",
@@ -315,6 +316,7 @@ def test_distill_session_notes_priority(tmp_path):
         metadata={"type": "capture", "date": today},
         tags=[],
         wikilinks=[],
+        summary="",
     )
 
     with patch("app.agents.distill_agent.get_settings", return_value=settings):
