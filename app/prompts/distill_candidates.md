@@ -16,6 +16,9 @@
 - 공식 영역(`20_Knowledge/`, `40_AgentMemory/Core/`, `30_Projects/*/Context.md`)을 직접 수정하는 문장을 쓰지 않는다. 후보로만 작성한다.
 - 아래 "관련 기존 지식 노트" 목록에 있는 노트는 `[[stem]]` 형식의 wikilink로 body 안에서 참조한다.
 
+# 관련 기존 지식 노트 (body 안에서 [[stem]] wikilink로 참조 가능)
+{{RELATED_KNOWLEDGE}}
+
 # body 작성 기준
 각 후보의 body는 **최소 200자 이상** Markdown으로 작성한다. 단순 요약이 아니라 나중에 다시 봐도 이해할 수 있는 실질적 내용을 담는다.
 
@@ -130,9 +133,6 @@
 }
 
 요청 종류가 `all`이 아니면 해당 종류 배열만 채우고 나머지는 빈 배열로 둔다.
-
-# 관련 기존 지식 노트 (body 안에서 [[stem]] wikilink로 참조 가능)
-{{RELATED_KNOWLEDGE}}
 
 # Raw Source
 {{CONTEXT}}

@@ -375,7 +375,7 @@ class WikiService:
         return score, matched
 
     def _tokenize(self, text: str) -> list[str]:
-        return [t.lower() for t in _TOKEN_RE.findall(text) if len(t.strip()) > 0]
+        return [t.lower() for t in _TOKEN_RE.findall(text) if len(t.strip()) > 1]
 
     def _default_root_index(self) -> str:
         return "# Vault Index\n\n_Run `work-agent index-vault` to rebuild this catalog._\n"
