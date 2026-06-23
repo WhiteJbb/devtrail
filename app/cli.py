@@ -227,20 +227,6 @@ def capture_note(
     _print_capture_result("capture", result)
 
 
-@app.command("capture-chat")
-def capture_chat(
-    file: Path = typer.Option(..., "--file", "-f", help="저장할 대화 Markdown/text 파일"),
-    source: str = typer.Option(..., "--source", "-s", help="chatgpt, codex, claude 등 출처"),
-    project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
-) -> None:
-    """대화 파일을 00_Inbox/Chats에 raw Markdown으로 저장한다."""
-    try:
-        result = _capture_agent().capture_chat(file_path=file, source=source, project=project)
-    except (FileNotFoundError, ValueError) as e:
-        _fail(str(e))
-    _print_capture_result("chat capture", result)
-
-
 @app.command("capture-commit")
 def capture_commit(
     repo: Path = typer.Option(Path.cwd(), "--repo", "-r", help="커밋을 읽을 git 저장소"),

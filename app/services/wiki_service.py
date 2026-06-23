@@ -22,7 +22,6 @@ _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣_+-]+")
 
 
 VAULT_DIRS = [
-    "00_Inbox/Chats",
     "00_Inbox/Captures",
     "00_Inbox/Raw",
     "10_Worklog/Daily",

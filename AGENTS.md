@@ -65,7 +65,6 @@ work-agent related <path>          # 태그/wikilink 기반 관련 노트 탐색
 ### Capture — raw 기록 저장
 ```bash
 work-agent capture "메모"                                   # → 00_Inbox/Captures/
-work-agent capture-chat --file chat.md --source chatgpt    # → 00_Inbox/Chats/
 work-agent capture-commit --repo <path>                    # → 10_Worklog/GitSummaries/
 work-agent daily-log                                       # → 10_Worklog/Daily/
 work-agent capture-session --project WorkAgent             # → 10_Worklog/Daily/ (세션 단위)
