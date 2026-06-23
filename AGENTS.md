@@ -46,7 +46,6 @@ Content Source 계층    — ObsidianSource, GitSource, NotionSource, LocalDocSo
 | `CareerBulletAgent` | 이력서/포트폴리오 bullet 후보 추출 | `10_Worklog/` + `00_Inbox/` | `60_Candidates/CareerBullets/` |
 | `OpenLoopsAgent` | 미해결 이슈 분석 → Open Loops 패치 후보 | `10_Worklog/` + `00_Inbox/` + `40_AgentMemory/05_OpenLoops.md` | `60_Candidates/MemoryPatches/` |
 | `CuratorAgent` | 후보 관리 (조회/승격/패치) | `60_Candidates/` | `20_Knowledge/`, `40_AgentMemory/` |
-| `WikiAgent` | Wiki ingest / query / lint | Vault + prompts | `60_Wiki/` |
 | `WikiBlogAgent` | ContextPack → 블로그 초안 | ContextPack | `50_Outputs/Blog/Drafts/` |
 | `WorklogAgent` | 작업 회고 생성 | `00_Inbox/` + `10_Worklog/` | `10_Worklog/Summaries/` |
 | `TodoAgent` | 다음 할 일 제안 | 최근 raw 기록 | `50_Outputs/Todo/` |
@@ -91,13 +90,6 @@ work-agent list-candidates              # 60_Candidates/ 목록
 work-agent preview-candidate <path>     # 후보 미리보기
 work-agent promote-candidate <path>     # → 20_Knowledge/ 승격
 work-agent apply-memory-patch <path>    # → 40_AgentMemory/ 반영
-```
-
-### Wiki
-```bash
-work-agent wiki-ingest [--folder <path>]    # Vault 소스 읽어 wiki 페이지 생성
-work-agent wiki-query "질문" [--save path]  # Wiki 탐색 후 답변
-work-agent wiki-lint                        # Wiki 건강 상태 점검
 ```
 
 ### 블로그 (Vault 기반)
