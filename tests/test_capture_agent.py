@@ -38,19 +38,6 @@ def test_capture_writes_inbox_note_and_log(tmp_path):
     assert result.rel_path in log
 
 
-def test_capture_chat_reads_file(tmp_path):
-    chat = tmp_path / "chat.md"
-    chat.write_text("# 대화\n설계 논의", encoding="utf-8")
-
-    result = _agent(tmp_path).capture_chat(chat, source="chatgpt", project="WorkAgent")
-
-    assert result.rel_path.startswith("00_Inbox/Chats/")
-    text = result.path.read_text(encoding="utf-8")
-    assert "type: chat_capture" in text
-    assert "source: chatgpt" in text
-    assert "설계 논의" in text
-
-
 def test_daily_log_is_idempotent(tmp_path):
     agent = _agent(tmp_path)
     first = agent.daily_log()

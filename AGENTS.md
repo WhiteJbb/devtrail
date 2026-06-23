@@ -40,8 +40,11 @@ Content Source 계층    — ObsidianSource, GitSource, NotionSource, LocalDocSo
 
 | Agent | 역할 | 입력 | 출력 경로 |
 |---|---|---|---|
-| `CaptureAgent` | 메모/대화/커밋 → Vault raw 저장 | 텍스트/파일/git repo | `00_Inbox/`, `10_Worklog/` |
+| `CaptureAgent` | 메모/대화/커밋/미디어/URL → Vault raw 저장 | 텍스트/파일/git repo/voice/image | `00_Inbox/`, `10_Worklog/` |
 | `DistillAgent` | raw 기록 → 정제 후보 생성 (LLM) | `00_Inbox/` + `10_Worklog/` | `60_Candidates/` |
+| `NightlyDistillAgent` | 하루 전체 정제 + career bullet + digest 생성 | 모든 당일 raw 기록 | `60_Candidates/` + `50_Outputs/Digest/` |
+| `CareerBulletAgent` | 이력서/포트폴리오 bullet 후보 추출 | `10_Worklog/` + `00_Inbox/` | `60_Candidates/CareerBullets/` |
+| `OpenLoopsAgent` | 미해결 이슈 분석 → Open Loops 패치 후보 | `10_Worklog/` + `00_Inbox/` + `40_AgentMemory/05_OpenLoops.md` | `60_Candidates/MemoryPatches/` |
 | `CuratorAgent` | 후보 관리 (조회/승격/패치) | `60_Candidates/` | `20_Knowledge/`, `40_AgentMemory/` |
 | `WikiAgent` | Wiki ingest / query / lint | Vault + prompts | `60_Wiki/` |
 | `WikiBlogAgent` | ContextPack → 블로그 초안 | ContextPack | `50_Outputs/Blog/Drafts/` |
@@ -65,7 +68,6 @@ work-agent related <path>          # 태그/wikilink 기반 관련 노트 탐색
 ### Capture — raw 기록 저장
 ```bash
 work-agent capture "메모"                                   # → 00_Inbox/Captures/
-work-agent capture-chat --file chat.md --source chatgpt    # → 00_Inbox/Chats/
 work-agent capture-commit --repo <path>                    # → 10_Worklog/GitSummaries/
 work-agent daily-log                                       # → 10_Worklog/Daily/
 work-agent capture-session --project WorkAgent             # → 10_Worklog/Daily/ (세션 단위)
@@ -119,9 +121,35 @@ work-agent interview-questions <project>   # 면접 질문 초안
 
 ### 자동화 & 봇
 ```bash
-work-agent serve-bot        # Telegram 봇 실행
-work-agent push-digest      # BlogIdea + 회고 메신저 전송
-work-agent ask "자연어"     # 의도 분류 후 커맨드 실행
+work-agent serve-bot               # Telegram 봇 실행 (voice/image/URL 캡처 포함)
+work-agent push-digest             # BlogIdea 목록 메신저 전송
+work-agent push-digest --daily     # 오늘 전 카테고리 요약 전송
+work-agent push-digest --weekly    # 최근 7일 요약 전송
+work-agent push-digest --worklog   # 작업 회고도 함께 전송
+work-agent ask "자연어"            # 의도 분류 후 커맨드 실행
+```
+
+### Phase 2 자동화
+```bash
+work-agent nightly-distill                        # 하루 raw 기록 종합 정제 + daily digest 생성
+work-agent suggest-career-bullets                 # 이력서/포트폴리오 bullet 후보 생성
+work-agent suggest-career-bullets --project WorkAgent   # 특정 프로젝트 필터
+work-agent update-open-loops                      # Open Loops MemoryPatch 후보 생성
+work-agent print-schedule --windows              # Windows schtasks 등록 명령 출력
+work-agent print-schedule --cron                 # Linux/Mac crontab 등록 명령 출력
+```
+
+**자동화 루프 예시:**
+```
+[OS 스케줄러 23:30]
+  └─ nightly-distill
+       ├─ DistillAgent → 60_Candidates/ (Knowledge / Decision / MemPatch / BlogIdea)
+       ├─ CareerBulletAgent → 60_Candidates/CareerBullets/
+       ├─ 50_Outputs/Digest/{date}-daily-digest.md 저장
+       └─ MESSENGER_PROVIDER=telegram이면 digest 자동 전송
+
+[OS 스케줄러 08:30]
+  └─ push-digest --daily  (아침에 어제 digest 확인)
 ```
 
 ## 지식 순환 파이프라인

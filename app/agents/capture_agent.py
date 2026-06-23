@@ -55,35 +55,6 @@ class CaptureAgent:
         self._log("capture", project or "manual memo", result.rel_path)
         return result
 
-    def capture_chat(self, file_path: Path, source: str, project: str = "") -> CaptureResult:
-        if not source.strip():
-            raise ValueError("chat source is empty.")
-        if not file_path.exists():
-            raise FileNotFoundError(str(file_path))
-
-        text = file_path.read_text(encoding="utf-8", errors="replace").strip()
-        if not text:
-            raise ValueError("chat file is empty.")
-
-        stamp = self._timestamp()
-        rel_path = f"00_Inbox/Chats/{stamp}-{self._slug(source)}-{self._slug(project or 'chat')}.md"
-        title = f"Chat Capture - {source}"
-        if project:
-            title += f" / {project}"
-        metadata = {
-            "type": "chat_capture",
-            "date": self._date(),
-            "project": project,
-            "source": source,
-            "source_file": str(file_path),
-            "status": "raw",
-            "tags": [],
-        }
-        body = f"# {title}\n\n_source file: {file_path}_\n\n{text}\n"
-        result = self._write_note(rel_path, metadata, body, kind="chat_capture")
-        self._log("capture", f"{source} chat", result.rel_path)
-        return result
-
     def capture_commit(self, repo_dir: Path, project: str = "", ref: str = "HEAD") -> CaptureResult:
         repo_dir = repo_dir.resolve()
         if self._git(repo_dir, ["rev-parse", "--is-inside-work-tree"]) is None:
@@ -304,6 +275,107 @@ class CaptureAgent:
         ]
 
         return "\n".join(lines) + "\n"
+
+    def capture_attachment(
+        self,
+        file_path: Path,
+        source: str = "telegram",
+        caption: str = "",
+    ) -> CaptureResult:
+        """voice/image attachment를 00_Inbox/Captures/에 노트로 저장한다.
+
+        파일 자체는 이미 00_Inbox/Raw/Attachments/에 저장돼 있어야 한다.
+        """
+        stamp = self._timestamp()
+        try:
+            rel_attachment = str(file_path.relative_to(self.vault_dir)).replace("\\", "/")
+        except ValueError:
+            rel_attachment = file_path.name
+        is_voice = "voice" in source.lower()
+        kind_str = "voice" if is_voice else "image"
+        note_slug = self._slug(f"{kind_str}-{file_path.stem[:30]}")
+        rel_path = f"00_Inbox/Captures/{stamp}-{note_slug}.md"
+        title = "음성 Capture" if is_voice else "이미지 Capture"
+
+        metadata: dict[str, Any] = {
+            "type": "capture",
+            "date": self._date(),
+            "source": source,
+            "status": "raw",
+            "needs_distill": True,
+            "attachments": [rel_attachment],
+            "tags": ["capture", kind_str],
+        }
+
+        if is_voice:
+            body = (
+                f"# {title}\n\n"
+                "## Attachment\n\n"
+                f"- `{rel_attachment}`\n\n"
+                "## Notes\n\n"
+                "- STT/caption provider is not configured.\n"
+            )
+        else:
+            body = (
+                f"# {title}\n\n"
+                "## Attachment\n\n"
+                f"![[{rel_attachment}]]\n\n"
+                "## Notes\n\n"
+            )
+            if caption:
+                body += f"{caption}\n"
+            else:
+                body += "- OCR/caption provider is not configured.\n"
+
+        result = self._write_note(rel_path, metadata, body, kind="attachment_capture")
+        self._log(f"capture-{kind_str}", source, result.rel_path)
+        return result
+
+    def capture_url(
+        self,
+        url: str,
+        title: str = "",
+        source: str = "telegram_url",
+    ) -> CaptureResult:
+        """URL을 00_Inbox/Captures/에 노트로 저장한다."""
+        import urllib.parse
+
+        stamp = self._timestamp()
+        domain = urllib.parse.urlparse(url).netloc or "url"
+        rel_path = f"00_Inbox/Captures/{stamp}-{self._slug(domain)}.md"
+        fetched_title = title or self._fetch_url_title(url)
+
+        metadata: dict[str, Any] = {
+            "type": "capture",
+            "date": self._date(),
+            "source": source,
+            "url": url,
+            "title": fetched_title,
+            "status": "raw",
+            "needs_distill": True,
+            "tags": ["capture", "url"],
+        }
+        body = (
+            "# URL Capture\n\n"
+            f"- url: {url}\n"
+            f"- title: {fetched_title or '(없음)'}\n"
+            f"- captured_from: {source.replace('_', ' ')}\n"
+        )
+        result = self._write_note(rel_path, metadata, body, kind="url_capture")
+        self._log("capture-url", url[:60], result.rel_path)
+        return result
+
+    @staticmethod
+    def _fetch_url_title(url: str) -> str:
+        """URL에서 <title>을 추출한다. 실패하면 빈 문자열."""
+        import re as _re
+        try:
+            import httpx
+            resp = httpx.get(url, timeout=10.0, follow_redirects=True)
+            m = _re.search(r"<title[^>]*>(.*?)</title>", resp.text, _re.IGNORECASE | _re.DOTALL)
+            return m.group(1).strip() if m else ""
+        except Exception:
+            return ""
 
     def daily_log(self, project: str = "") -> CaptureResult:
         date = self._date()
