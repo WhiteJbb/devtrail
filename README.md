@@ -422,6 +422,22 @@ start.py               # 대화형 대시보드 (python start.py)
 
 ---
 
+## 구현 상태
+
+| 영역 | 상태 | 비고 |
+|---|---|---|
+| Vault 초기화 | ✅ Done | `init-vault` |
+| Capture | ✅ Done | `capture`, `capture-commit`, `capture-session` |
+| Distill | 🔶 Partial | LLM 품질 검증 필요 |
+| Candidate 승격 | ✅ Done | `promote-candidate` / `apply-memory-patch` |
+| Blog 작성 | 🔶 Partial | source grounding 검증 필요 |
+| Resume / Portfolio | 🔶 Partial | 초안 품질 검증 필요 |
+| Telegram Bot | 🔶 Partial | 운영 테스트 필요 |
+| Scheduler | ✅ Done | 명령 출력 방식 (`print-schedule`) |
+| Natural Language ask | 🔶 Partial | intent routing 개선 필요 |
+
+---
+
 ## 테스트
 
 ```powershell
