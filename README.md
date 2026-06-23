@@ -255,6 +255,100 @@ work-agent serve-bot                              # Telegram 봇 실행
 
 ---
 
+## AI Agent 연동 (Claude Code / Cursor 등)
+
+AI 코딩 어시스턴트가 세션마다 vault에 쌓인 지식을 자동으로 참고하게 만드는 방법입니다.
+
+### 1단계 — CLAUDE.md (또는 .cursorrules) 설정
+
+프로젝트 루트에 아래 내용을 추가합니다. Claude Code는 `CLAUDE.md`를, Cursor는 `.cursorrules`를 자동으로 읽습니다.
+
+```markdown
+## Vault 경로
+OBSIDIAN_VAULT_PATH: D:/personal-vault   ← 실제 경로로 교체
+
+## 작업 시작 전 필독 파일
+- {VAULT}/40_AgentMemory/Core/<프로젝트명>.md — 이 프로젝트 핵심 컨텍스트
+- {VAULT}/40_AgentMemory/05_OpenLoops.md    — 미해결 이슈 목록
+
+## Vault 수정 규칙
+- 20_Knowledge/, 30_Projects/, 40_AgentMemory/Core/ 는 직접 수정하지 않는다.
+- 모든 제안·초안은 60_Candidates/ 에 파일로 생성하고 사람이 검토 후 promote 한다.
+```
+
+work-agent 저장소의 `CLAUDE.md`에는 이 내용이 이미 포함되어 있습니다. 다른 프로젝트에서 작업할 때도 같은 내용을 해당 프로젝트의 `CLAUDE.md`에 복사하세요.
+
+---
+
+### 2단계 — 세션 시작 시 컨텍스트 로딩
+
+AI가 지금 작업과 관련된 지식을 갖고 시작하도록 컨텍스트 파일을 생성합니다.
+
+```bash
+# 주제/프로젝트 관련 지식을 한 파일로 묶기
+work-agent build-context "XCoreChat RAG"
+# → 50_Outputs/Context/YYYYMMDD-xcoreChat-rag.md 생성
+
+# 검색으로 관련 노트 확인
+work-agent search "RAG 검색"
+```
+
+생성된 파일을 AI 세션에 추가합니다.
+
+| AI 도구 | 방법 |
+|---------|------|
+| **Claude Code** | `/add 50_Outputs/Context/파일명.md` 또는 `@파일명` |
+| **Cursor** | `@파일명` |
+| **Windsurf / Copilot Chat** | 파일을 열어 두거나 첨부 |
+
+또는 `40_AgentMemory/Core/<프로젝트명>.md`를 직접 참조해도 됩니다 — 프로젝트 컨텍스트, 기술 스택, 설계 결정이 누적된 파일입니다.
+
+---
+
+### 3단계 — 세션 종료 시 vault에 저장
+
+작업이 끝나면 AI에게 세션 요약을 작성하게 하고 vault에 기록합니다.
+
+**Claude Code에서:**
+```
+capture-session 실행해줘
+```
+
+Claude Code가 `CLAUDE.md`의 capture-session 규칙에 따라 요약을 작성하고 아래 명령을 실행합니다.
+
+```bash
+work-agent capture-session \
+  --project <프로젝트명> \
+  --from-repo \
+  --from-agent \
+  --summary-file ./session-summary.md
+```
+
+이후 `nightly-distill`이 이 기록을 읽어 지식 후보를 자동 생성합니다.
+
+---
+
+### 전체 흐름 요약
+
+```
+[세션 시작]
+  build-context → AI에 파일 추가 → 작업
+
+[세션 중]
+  커밋 → post-commit hook → capture-commit (자동)
+
+[세션 종료]
+  capture-session --from-agent → 10_Worklog/Daily/ 저장
+
+[야간]
+  nightly-distill → 60_Candidates/ 후보 생성
+
+[다음 날]
+  list-candidates → promote-candidate → 20_Knowledge/ 누적
+```
+
+---
+
 ## 야간 자동화
 
 OS 스케줄러로 `nightly-distill`을 매일 자동 실행하면 아침에 결과를 확인하는 루프가 만들어집니다.
