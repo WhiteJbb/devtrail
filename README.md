@@ -1,59 +1,163 @@
-# Work Agent — Obsidian LLM Wiki Core
+# Work Agent — Obsidian LLM Knowledge Core
 
-Obsidian Vault를 단일 지식 저장소로 삼아, 작업 흔적을 자동으로 캡처하고 정제해 블로그·포트폴리오·이력서 초안을 만드는 개인 생산성 CLI/봇.
+Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 자동으로 캡처·정제하고, 블로그·포트폴리오·이력서 초안을 만드는 개인 생산성 CLI/봇.
 
 **파이프라인: Capture → Distill → Promote**
 
-```text
-커밋 / 메모 / 세션          정제·분류               확정·출력
-  capture                  distill-today           promote-candidate
-  capture-commit   →       suggest-*        →      write-blog
-  capture-session          build-context           portfolio-draft
-  daily-log                list-candidates         resume / worklog / todo
+```
+커밋/메모/세션          정제·분류                 확정
+  capture             distill-today            promote-candidate
+  capture-session  →  nightly-distill      →   apply-memory-patch
+  capture-commit      list-candidates          write-blog / resume / portfolio
 ```
 
-LLM은 창작자가 아닌 **작업 기록 정리자**다. 존재하지 않는 사실·수치를 만들지 않고, source에 있는 내용만 정리한다.
+LLM은 창작자가 아닌 **작업 기록 정리자**다. source에 없는 사실·수치를 만들지 않는다.
 
 ---
 
 ## 설치
 
-요구사항: Python 3.11+
+Python 3.11+ 필요.
 
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-copy .env.example .env   # 필요한 값만 채우면 됨
+copy .env.example .env
 ```
 
 ---
 
-## `.env` 핵심 설정
+## AI 설정
+
+work-agent는 두 가지 역할로 LLM을 분리합니다.
+
+| 역할 | 설정 키 | 용도 |
+|------|---------|------|
+| **로컬 LLM** | `LOCAL_LLM_PROVIDER` | 분류·라우팅·짧은 요약 (빠름, 무료) |
+| **글쓰기 LLM** | `WRITER_PROVIDER` | 초안 작성·정제 (품질 우선) |
+
+로컬 LLM이 없으면 글쓰기 LLM으로 자동 폴백합니다.
+
+### Gemini (추천 — 인터넷 연결만 있으면 됨)
+
+[Google AI Studio](https://aistudio.google.com/apikey)에서 API 키 발급 (무료 티어 있음).
 
 ```env
-# [필수] Obsidian 볼트 절대경로
-OBSIDIAN_VAULT_PATH=D:/personal-vault
+LLM_PROVIDER=gemini
+LOCAL_LLM_PROVIDER=gemini
+WRITER_PROVIDER=gemini
 
-# [LLM] 분류·라우팅용 로컬 모델 (ollama 권장)
+GEMINI_API_KEY=AIza...
+GEMINI_FLASH_MODEL=gemini-2.5-flash        # 글쓰기용
+GEMINI_LITE_MODEL=gemini-2.5-flash-lite    # 로컬 폴백용 (빠르고 저렴)
+```
+
+`google-generativeai` 패키지 없이 httpx REST로 직접 호출합니다.
+
+### Ollama (로컬, 인터넷 불필요)
+
+[ollama.com](https://ollama.com)에서 Ollama 설치 후 모델 Pull.
+
+```bash
+ollama pull qwen3:8b          # 8B — 8GB VRAM 이상 권장
+# 또는
+ollama pull qwen2.5:14b-instruct-q4_K_M   # 14B — 16GB VRAM 이상
+```
+
+```env
 LOCAL_LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:8b
 
-# [LLM] 글쓰기 모델 (Gemini REST — google-generativeai 패키지 불필요)
-WRITER_PROVIDER=gemini
-GEMINI_API_KEY=
-GEMINI_FLASH_MODEL=gemini-2.5-flash
-
-# [메신저 선택] 텔레그램 봇
-MESSENGER_PROVIDER=telegram
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_ALLOWED_CHAT_IDS=
-TELEGRAM_CHAT_ID=
+# 글쓰기는 Gemini로 넘기거나 ollama 단독 사용
+WRITER_PROVIDER=ollama
 ```
 
-전부 비워도 실행됩니다 (LLM은 안내 메시지만 출력).  
-자세한 항목은 `.env.example` 참고.
+### vLLM (자체 GPU 서버)
+
+OpenAI 호환 API로 동작합니다.
+
+```env
+LOCAL_LLM_PROVIDER=openai_compatible
+OPENAI_BASE_URL=http://localhost:8000/v1
+OPENAI_API_KEY=dummy                     # vLLM은 임의값으로 OK
+OPENAI_MODEL=Qwen/Qwen2.5-14B-Instruct
+
+# context window가 작은 모델이면 반드시 설정 (토큰 수)
+OPENAI_MAX_TOKENS=1024
+OPENAI_CONTEXT_WINDOW=8192               # vLLM --max-model-len 값과 일치시킬 것
+CONTEXT_CHAR_BUDGET=14000                # 8192 토큰 모델 기준 권장값
+```
+
+프롬프트가 context window를 초과하면 자동으로 잘라서 전송합니다.
+
+### OpenAI / 기타 호환 API
+
+```env
+LOCAL_LLM_PROVIDER=openai_compatible
+WRITER_PROVIDER=openai_compatible
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+```
+
+---
+
+## 대시보드 (빠른 시작)
+
+```bash
+python start.py
+```
+
+환경 점검 후 대화형 대시보드로 진입합니다.
+
+```
+╭─────────────────────── work-agent ────────────────────────╮
+│  raw  12    후보  3                                        │
+│  지식 47    distill  오늘                                  │
+│                                                            │
+│  최근 지식                                                 │
+│  · RAG 검색 전략                                           │
+│  · vLLM 컨텍스트 윈도우 처리                               │
+│                                                            │
+│  오픈 루프                                                 │
+│  · XCoreChat DB 마이그레이션                               │
+╰────────────────────────────────────────────────────────────╯
+
+  [1] distill-today       [2] nightly-distill
+  [3] list-candidates     [4] apply-memory-patch
+  [5] push-digest         [6] weekly-distill
+  [c] capture 메모        [s] search 키워드
+  [q] 종료
+```
+
+---
+
+## Vault 구조
+
+`init-vault`가 생성하는 기본 구조.
+
+```
+<vault>/
+├─ 00_Inbox/         # capture로 쌓이는 raw 메모 (AI 쓰기 가능)
+│  └─ Captures/
+├─ 10_Worklog/       # 작업 흔적
+│  ├─ Daily/         #   capture-session, daily-log
+│  ├─ GitSummaries/  #   capture-commit (git hook 자동)
+│  └─ Summaries/     #   worklog 출력
+├─ 20_Knowledge/     # 확정된 지식 ← promote-candidate 목적지
+├─ 30_Projects/      # 프로젝트별 Context.md
+├─ 40_AgentMemory/   # AI 공용 메모리 (Core/, OpenLoops 등)
+├─ 50_Outputs/       # 최종 출력물 (Blog, Portfolio, Resume, Digest, Todo)
+├─ 60_Candidates/    # distill 후보 — 사람 검토 전 임시 영역
+├─ 90_Templates/
+├─ index.md
+└─ log.md
+```
+
+**AI 쓰기 가능**: `00_Inbox/`, `10_Worklog/`, `50_Outputs/`, `60_Candidates/`  
+**직접 수정 금지** (candidate/patch 경유): `20_Knowledge/`, `40_AgentMemory/Core/`, `30_Projects/*/Context.md`
 
 ---
 
@@ -61,148 +165,120 @@ TELEGRAM_CHAT_ID=
 
 ### Vault 초기화
 
-| 명령 | 설명 |
-| --- | --- |
-| `init-vault` | 볼트 기본 폴더 구조 생성 |
-| `install-hooks --repo <path>` | git 레포에 post-commit hook 설치 (커밋 → 자동 캡처) |
-| `index-vault` | 볼트 Markdown을 읽어 `index.md` 갱신 |
-
-### 탐색
-
-| 명령 | 설명 |
-| --- | --- |
-| `search "RAG"` | 키워드로 볼트 노트 검색 |
-| `related <path>` | 특정 노트와 관련된 노트를 태그·위키링크 기반으로 탐색 |
-
-### Capture — 원시 기록 저장
-
-| 명령 | 설명 |
-| --- | --- |
-| `capture "메모"` | `00_Inbox/Captures/`에 raw 메모 저장 |
-| `capture-commit --repo <path>` | git commit을 `10_Worklog/GitSummaries/`에 저장 |
-| `capture-session --project <name>` | 작업 세션 요약 노트를 `10_Worklog/Daily/`에 저장 |
-| `daily-log` | 오늘 날짜 데일리 로그 노트 생성 |
-
-post-commit hook을 설치하면 커밋할 때마다 `capture-commit`이 자동 실행됩니다.
-
-`capture-session` 옵션:
 ```bash
---from-repo            # git 스냅샷(브랜치/커밋/변경 파일) 포함
---from-agent           # Claude Code가 세션 요약을 작성해야 한다는 신호
---summary-file <path>  # AI 요약 파일을 노트 본문에 삽입
+work-agent init-vault                      # 볼트 폴더 구조 생성
+work-agent install-hooks --repo <path>     # git post-commit hook 설치
+work-agent index-vault                     # index.md 갱신
 ```
+
+### Capture — raw 기록 저장
+
+```bash
+work-agent capture "메모"                                         # → 00_Inbox/Captures/
+work-agent capture-commit --repo <path>                          # → 10_Worklog/GitSummaries/
+work-agent capture-session --project <name>                      # → 10_Worklog/Daily/
+work-agent capture-session --project <name> --from-repo          # git 스냅샷 포함
+work-agent capture-session --project <name> --from-agent         # AI 세션 요약 신호
+work-agent capture-session --project <name> --summary-file <md>  # AI 요약 파일 삽입
+work-agent daily-log                                             # 오늘 데일리 로그 노트
+```
+
+post-commit hook 설치 시 커밋마다 `capture-commit` 자동 실행.
 
 ### Distill — 정제 후보 생성 (LLM 필요)
 
-| 명령 | 설명 |
-| --- | --- |
-| `distill-today` | 오늘 Inbox 기록을 읽어 `60_Candidates/`에 정제 후보 생성 |
-| `suggest-knowledge` | 후보 중 지식 노트로 승격할 항목 제안 |
-| `suggest-blog-topics` | 후보 중 블로그 주제 제안 |
-| `suggest-memory-patch` | `40_AgentMemory` 갱신 제안 |
-| `build-context "주제"` | 주제별 ContextPack 구성 (디버그·확인용) |
+```bash
+work-agent distill-today           # 오늘 Inbox → 60_Candidates/ 후보 생성
+work-agent suggest-knowledge       # Knowledge 후보 제안
+work-agent suggest-blog-topics     # BlogIdea 후보 제안
+work-agent suggest-memory-patch    # AgentMemory 패치 제안
+work-agent build-context "주제"    # ContextPack 구성
+```
 
 ### Candidates 관리
 
-| 명령 | 설명 |
-| --- | --- |
-| `list-candidates` | `60_Candidates/` 목록 출력 |
-| `preview-candidate <path>` | 후보 내용 미리보기 |
-| `promote-candidate <path>` | 후보를 `20_Knowledge/`에 확정 |
-| `apply-memory-patch <path>` | 후보를 `40_AgentMemory/`에 반영 |
-
-### Wiki (LLM 필요)
-
-| 명령 | 설명 |
-| --- | --- |
-| `wiki-ingest` | 볼트 소스를 읽어 `60_Wiki/` 페이지 생성·갱신 |
-| `wiki-query "질문"` | Wiki 탐색 후 답변 생성 |
-| `wiki-lint` | Wiki 건강 상태 점검 |
-
-### 출력 — 블로그 (LLM 필요, Vault 기반)
-
-| 명령 | 설명 |
-| --- | --- |
-| `write-blog "주제"` | ContextPack → `50_Outputs/Blog/Drafts/`에 초안 저장 |
-| `revise-blog <path>` | 기존 블로그 초안 다듬기 |
-| `publish-ready <path>` | 초안 상태를 review로 변경 |
-| `suggest-topics` | 블로그 주제 추천 |
-| `write-draft "주제"` | 초안 생성 (Vault 저장) |
-| `list` | 저장된 블로그 초안 목록 |
-| `preview [slug]` | 초안 미리보기 |
-| `export-tistory [slug]` | 티스토리 포맷으로 변환 |
-| `publish-done <url>` | 게시 완료 기록 |
-
-### 출력 — 개인 문서 (LLM 필요, Vault 기반)
-
-| 명령 | 설명 |
-| --- | --- |
-| `worklog` | `00_Inbox + 10_Worklog`를 읽어 작업 회고 → `10_Worklog/Summaries/` |
-| `todo` | 위와 같은 소스로 다음 할 일 제안 → `50_Outputs/Todo/` |
-| `resume` | `40_AgentMemory + 30_Projects`를 읽어 이력서 초안 → `50_Outputs/Resume/` |
-| `portfolio` | 위와 같은 소스로 포트폴리오 초안 → `50_Outputs/Portfolio/` |
-| `summarize-project <name>` | 특정 프로젝트 요약 생성 |
-| `portfolio-draft <name>` | 프로젝트별 포트폴리오 초안 |
-| `interview-questions <name>` | 프로젝트 기록 기반 예상 면접 질문 생성 |
-
-### 자동화 · 봇
-
-| 명령 | 설명 |
-| --- | --- |
-| `serve-bot` | 텔레그램 봇 실행 (자연어/명령 양방향) |
-| `push-digest` | 주제 추천+회고를 메신저로 푸시 |
-| `ask "..."` | 자연어 문장을 해석해 알맞은 명령 실행 |
-
----
-
-## Obsidian 볼트 구조
-
-`init-vault`가 만드는 기본 구조입니다.
-
-```text
-<vault>/
-├─ 00_Inbox/         # capture로 쌓이는 원시 기록 (에이전트 쓰기 가능)
-│  └─ Captures/      #   capture 메모
-├─ 10_Worklog/       # 작업 흔적 정리
-│  ├─ Daily/         #   capture-session, daily-log
-│  ├─ GitSummaries/  #   capture-commit (hook 자동)
-│  └─ Summaries/     #   worklog 출력
-├─ 20_Knowledge/     # 정제·확정된 지식 (promote-candidate 목적지)
-├─ 30_Projects/      # 프로젝트별 Context.md + 노트
-├─ 40_AgentMemory/   # CareerContext, Profile, ProjectMap 등 에이전트 메모리
-├─ 50_Outputs/       # 최종 출력물
-│  ├─ Blog/          #   write-blog 결과
-│  ├─ Portfolio/
-│  ├─ Resume/
-│  ├─ Todo/
-│  └─ Interview/
-├─ 60_Candidates/    # distill 후보 — 검토 전 임시 영역
-├─ 60_Wiki/          # wiki-ingest 결과
-├─ 90_Templates/     # 노트 템플릿
-├─ index.md          # index-vault가 자동 갱신
-└─ log.md            # 에이전트 작업 로그
+```bash
+work-agent list-candidates              # 60_Candidates/ 목록
+work-agent preview-candidate <path>     # 후보 미리보기
+work-agent promote-candidate <path>     # → 20_Knowledge/ 승격
+work-agent apply-memory-patch <path>    # → 40_AgentMemory/ 반영
+work-agent apply-memory-patch -i        # 인터랙티브 선택 모드
 ```
 
-**쓰기 가능 영역**: `00_Inbox/`, `10_Worklog/`, `50_Outputs/`, `60_Candidates/`  
-**보호 영역** (Candidates·패치 경유): `20_Knowledge/`, `40_AgentMemory/Core/`, `30_Projects/*/Context.md`
+### 탐색
+
+```bash
+work-agent search "RAG"             # 키워드 볼트 검색
+work-agent related <path>           # 관련 노트 탐색 (태그·wikilink 기반)
+```
+
+### 블로그 출력 (LLM 필요)
+
+```bash
+work-agent write-blog "주제"        # ContextPack → 50_Outputs/Blog/Drafts/
+work-agent revise-blog <path>       # 기존 초안 다듬기
+work-agent suggest-topics           # 블로그 주제 추천
+work-agent list                     # 초안 목록
+work-agent preview [slug]           # 초안 미리보기
+work-agent export-tistory [slug]    # 티스토리 포맷 변환
+work-agent publish-done <url>       # 게시 완료 기록
+```
+
+### 개인 문서 (LLM 필요)
+
+```bash
+work-agent worklog                         # 작업 회고 → 10_Worklog/Summaries/
+work-agent todo                            # 다음 할 일 → 50_Outputs/Todo/
+work-agent resume                          # 이력서 초안 → 50_Outputs/Resume/
+work-agent portfolio                       # 포트폴리오 초안 → 50_Outputs/Portfolio/
+work-agent summarize-project <name>        # 프로젝트 요약
+work-agent portfolio-draft <name>          # 프로젝트별 포폴 초안
+work-agent interview-questions <name>      # 예상 면접 질문
+```
+
+### 자동화 · Phase 2
+
+```bash
+work-agent nightly-distill                        # 하루 종합 정제 + daily digest
+work-agent weekly-distill                         # 7일치 종합 정제 + weekly digest
+work-agent suggest-career-bullets                 # 이력서/포폴 bullet 후보
+work-agent suggest-career-bullets --project <name>
+work-agent update-open-loops                      # Open Loops MemoryPatch 후보
+work-agent push-digest --daily                    # 오늘 요약 메신저 전송
+work-agent push-digest --weekly                   # 7일 요약 메신저 전송
+work-agent push-digest --worklog                  # 회고 포함 전송
+work-agent print-schedule --windows               # Windows schtasks 등록 명령 출력
+work-agent print-schedule --cron                  # Linux/Mac crontab 등록 명령 출력
+work-agent ask "자연어"                            # 의도 분류 후 커맨드 실행
+work-agent serve-bot                              # Telegram 봇 실행
+```
 
 ---
 
-## LLM 라우팅
+## 야간 자동화
 
-두 종류의 LLM을 용도별로 분리합니다.
+OS 스케줄러로 `nightly-distill`을 매일 자동 실행하면 아침에 결과를 확인하는 루프가 만들어집니다.
 
-| 역할 | 설정 | 기본값 |
-| --- | --- | --- |
-| 분류·라우팅 (빠른 로컬) | `LOCAL_LLM_PROVIDER=ollama` + `OLLAMA_MODEL` | qwen3:8b |
-| 글쓰기 (품질 우선) | `WRITER_PROVIDER=gemini` + `GEMINI_API_KEY` | gemini-2.5-flash |
+```
+[23:30] nightly-distill
+  ├─ DistillAgent       → 60_Candidates/ (Knowledge / Decisions / MemPatches / BlogIdeas)
+  ├─ CareerBulletAgent  → 60_Candidates/CareerBullets/
+  ├─ 50_Outputs/Digest/YYYY-MM-DD-daily-digest.md 저장
+  └─ Telegram 설정 시 digest 자동 전송
 
-로컬 LLM 미사용 시 `GEMINI_LITE_MODEL`(gemini-2.5-flash-lite)로 자동 폴백합니다.  
-Gemini는 `google-generativeai` 패키지 없이 httpx REST로 호출합니다.
+[08:30] push-digest --daily   (어제 요약 아침 확인)
+```
+
+스케줄러 등록 명령 출력:
+
+```bash
+work-agent print-schedule --windows   # Windows Task Scheduler
+work-agent print-schedule --cron      # Linux / Mac crontab
+```
 
 ---
 
-## 텔레그램 봇
+## Telegram 봇
 
 ```env
 MESSENGER_PROVIDER=telegram
@@ -215,7 +291,7 @@ TELEGRAM_CHAT_ID=<알림 받을 chat id>
 work-agent serve-bot
 ```
 
-슬래시 명령과 자유 문장 양방향 지원 (LLM 설정 시 자연어, 미설정 시 슬래시만).
+슬래시 명령과 자유 문장 양방향 지원.
 
 ```
 /capture <메모>    /search <검색어>    /distill
@@ -223,72 +299,31 @@ work-agent serve-bot
 /session <프로젝트>  /worklog           /todo
 ```
 
-`OBSIDIAN_VAULT_PATH` 설정 시 음성(voice)·이미지(photo)·URL 캡처도 자동 처리합니다.
-
----
-
-## Phase 2 — 야간 자동화 루프
-
-하루 작업이 끝나면 OS 스케줄러가 `nightly-distill`을 실행해 모든 후보를 생성하고 아침에 digest를 확인합니다.
-
-```
-[23:30] nightly-distill
-  ├─ DistillAgent    → 60_Candidates/ (Knowledge / Decisions / MemPatches / BlogIdeas)
-  ├─ CareerBulletAgent → 60_Candidates/CareerBullets/
-  ├─ 50_Outputs/Digest/YYYY-MM-DD-daily-digest.md 저장
-  └─ (선택) Telegram으로 digest 전송
-
-[08:30] push-digest --daily   → 아침에 어제 요약 확인
-```
-
-**설정 (초회 1회):**
-
-```bash
-# Windows
-work-agent print-schedule --windows
-
-# Linux/Mac
-work-agent print-schedule --cron
-```
-
-출력된 명령을 OS 스케줄러에 등록하면 됩니다.
-
-**수동 실행:**
-
-```bash
-work-agent nightly-distill                        # 하루 종합 정제
-work-agent suggest-career-bullets                 # 이력서/포폴 bullet 후보
-work-agent suggest-career-bullets --project 프로젝트명
-work-agent update-open-loops                      # Open Loops MemoryPatch 후보
-work-agent push-digest --daily                    # 오늘 요약 전송
-work-agent push-digest --weekly                   # 7일 요약 전송
-```
-
-**안전 원칙**: AI는 `20_Knowledge/`와 `40_AgentMemory/Core/`를 직접 수정하지 않습니다. 모든 후보는 `60_Candidates/`에 쌓이고 `promote-candidate` / `apply-memory-patch`로 사람이 최종 반영합니다.
+음성(voice)·이미지(photo)·URL 캡처도 자동 처리합니다 (`OBSIDIAN_VAULT_PATH` 설정 시).
 
 ---
 
 ## 프로젝트 구조
 
-```text
+```
 app/
 ├─ cli.py              # 진입점 (얇게)
 ├─ config.py           # .env 설정
-├─ agents/             # CaptureAgent, DistillAgent, WikiAgent, WikiBlogAgent
-│                      # CuratorAgent, ProjectAgent
+├─ agents/             # CaptureAgent, DistillAgent, WikiBlogAgent
+│                      # CuratorAgent, NightlyDistillAgent
+│                      # CareerBulletAgent, OpenLoopsAgent
 │                      # WorklogAgent, TodoAgent, PortfolioAgent, ResumeAgent
-│                      # NightlyDistillAgent, CareerBulletAgent, OpenLoopsAgent
+│                      # ProjectAgent
 ├─ memory/             # AgentMemoryLoader, ProjectMemoryLoader, ContextPackBuilder
 ├─ services/           # WikiService, CandidateWriter, RepoSnapshot ...
-├─ llm/                # factory(라우팅), GeminiProvider, ollama, openai_compatible
-├─ content_sources/    # obsidian / git / local_doc + collector
-├─ messaging/          # telegram, router, bot
+├─ llm/                # factory(라우팅), GeminiProvider, Ollama, OpenAI-compat
+├─ content_sources/    # ObsidianSource, GitSource, LocalDocSource
+├─ messaging/          # Telegram provider, router, bot
 ├─ assistant/          # 자연어 의도 라우팅
 ├─ models/             # ContextPack, SourceChunk
 └─ prompts/*.md        # LLM 프롬프트 (코드 분리)
 
-scripts/hooks/post-commit   # git hook 템플릿
-start.py / start.ps1        # 볼트 상태 대시보드 + 환경 시작
+start.py               # 대화형 대시보드 (python start.py)
 ```
 
 ---
@@ -299,4 +334,4 @@ start.py / start.ps1        # 볼트 상태 대시보드 + 환경 시작
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-Vault/LLM/메신저 모두 fake/mock으로 분리되어 키 없이 실행됩니다.
+Vault / LLM / 메신저 모두 fake/mock으로 분리되어 API 키 없이 실행됩니다.
