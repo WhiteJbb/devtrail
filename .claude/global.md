@@ -38,3 +38,24 @@
 # 실행 패턴
 work-agent capture-session --project <프로젝트명> --from-repo --from-agent --summary-file ./session-summary.md
 ```
+
+## Vault 구조 (작업 전 참조)
+
+Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시작 전 아래 파일을 먼저 확인한다:
+- `{VAULT}/40_AgentMemory/Core/` — 프로젝트별 핵심 컨텍스트 (가장 먼저 읽을 것)
+- `{VAULT}/40_AgentMemory/05_OpenLoops.md` — 미해결 이슈 목록
+
+### 폴더별 역할과 AI 권한
+
+| 폴더 | 역할 | AI 권한 |
+|------|------|---------|
+| `00_Inbox/` | 캡처된 raw 메모, URL, 대화 | 읽기 전용 |
+| `10_Worklog/` | 작업 로그, 세션 노트, git 요약 | 읽기 전용 |
+| `20_Knowledge/` | 승격된 공식 지식 노트 | **직접 수정 금지** — `promote-candidate` 경유 |
+| `30_Projects/` | 프로젝트별 컨텍스트 | **직접 수정 금지** |
+| `40_AgentMemory/` | AI 공용 메모리 (Core/, OpenLoops 등) | `Core/` 직접 수정 금지 — `apply-memory-patch` 경유 |
+| `50_Outputs/` | 생성된 결과물 (Digest, Blog, Resume 등) | 읽기 전용 |
+| `60_Candidates/` | 검토 대기 후보 노트 | AI가 생성, 사람이 검토 후 promote |
+
+### 후보 흐름
+모든 AI 출력은 반드시 `60_Candidates/`를 거친다. `promote-candidate` / `apply-memory-patch`로 검토 후 공식 영역에 반영한다.
