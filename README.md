@@ -227,6 +227,7 @@ work-agent related <path>           # 관련 노트 탐색 (태그·wikilink 기
 ```bash
 work-agent write-blog "주제"        # ContextPack → 50_Outputs/Blog/Drafts/
 work-agent revise-blog <path>       # 기존 초안 다듬기
+work-agent publish-ready <path>     # 초안 status를 review로 변경 (게시 준비 완료)
 work-agent suggest-topics           # 블로그 주제 추천
 work-agent list                     # 초안 목록
 work-agent preview [slug]           # 초안 미리보기
@@ -435,18 +436,35 @@ start.py               # 대화형 대시보드 (python start.py)
 
 ## 구현 상태
 
-| 영역 | 상태 | 비고 |
+### 명령 구현 현황
+
+| 영역 | 명령 | 상태 |
 |---|---|---|
-| Vault 초기화 | ✅ Done | `init-vault` |
-| Capture | ✅ Done | `capture`, `capture-commit`, `capture-session` |
-| Distill | 🔶 Partial | LLM 품질 검증 필요 |
-| Candidate 승격 | ✅ Done | `promote-candidate` / `apply-memory-patch` |
-| Blog 작성 | 🔶 Partial | source grounding 검증 필요 |
-| Resume / Portfolio | 🔶 Partial | 초안 품질 검증 필요 |
-| Telegram Bot | 🔶 Partial | 운영 테스트 필요 |
-| Scheduler | ✅ Done | 명령 출력 방식 (`print-schedule`) |
-| Natural Language ask | 🔶 Partial | intent routing 개선 필요 |
-| LLM 라우터 / Fallback | ✅ Done | task_type별 chain, 503/429/timeout 자동 폴백 |
+| Vault 관리 | `init-vault`, `install-hooks`, `index-vault` | Done |
+| 탐색 | `search`, `related` | Done |
+| Capture | `capture`, `capture-commit`, `capture-session`, `daily-log` | Done |
+| Distill | `distill-today`, `suggest-knowledge`, `suggest-blog-topics`, `suggest-memory-patch` | Partial — LLM 품질 검증 필요 |
+| Context | `build-context` | Done |
+| Candidates | `list-candidates`, `preview-candidate`, `promote-candidate`, `apply-memory-patch` | Done |
+| 블로그 | `write-blog`, `revise-blog`, `publish-ready`, `suggest-topics`, `list`, `preview`, `export-tistory`, `publish-done` | Partial — source grounding 검증 필요 |
+| 개인 문서 | `worklog`, `todo`, `resume`, `portfolio` | Partial — 초안 품질 검증 필요 |
+| 프로젝트 | `summarize-project`, `portfolio-draft`, `interview-questions` | Partial — 초안 품질 검증 필요 |
+| 자동화 | `nightly-distill`, `weekly-distill`, `suggest-career-bullets`, `update-open-loops`, `push-digest`, `print-schedule` | Done |
+| 자연어 | `ask` | Partial — intent routing 개선 필요 |
+| 봇 | `serve-bot` | Partial — 운영 테스트 필요 |
+| LLM 인프라 | router, fallback chain, provider (Gemini/OpenAI/Kimi/Ollama) | Done |
+
+### 파이프라인 안정성
+
+| 항목 | 상태 | 비고 |
+|---|---|---|
+| raw 노트 보존 (LLM 실패 시) | Done | 캡처 파일은 distill 실패와 무관 |
+| JSON 파싱 실패 처리 | Done | 2회 재시도 후 LLMError 변환 |
+| Candidate 중복 방지 | Done | 14일 lookback, 제목 유사도 dedup |
+| Candidate frontmatter 통일 | Done | `summary` 필드 항상 포함 |
+| source grounding 검증 | Partial — TODO | 프롬프트 규칙 강화, source_refs 유효성 검사 |
+| nightly-distill → digest 생성 | Done | `50_Outputs/Digest/` 저장 확인 |
+| E2E smoke test | Done | `tests/test_smoke_pipeline.py` |
 
 ---
 

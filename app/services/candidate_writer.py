@@ -116,9 +116,8 @@ class CandidateWriter:
             "project": spec.project,
             "tags": spec.tags,
             "source_refs": spec.source_refs,
+            "summary": spec.summary,
         }
-        if spec.summary:
-            metadata["summary"] = spec.summary
 
         body = self._render_body(spec)
         post = frontmatter.Post(body, **metadata)

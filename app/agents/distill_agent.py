@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
-from app.llm.base import LLMProvider
+from app.llm.base import LLMError, LLMProvider
 from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
 from app.services.candidate_writer import CandidateSpec, CandidateWriteResult, CandidateWriter
-from app.services.json_utils import complete_json
+from app.services.json_utils import JSONParseError, complete_json
 from app.services.wiki_service import WikiNote, WikiService
 
 
@@ -78,7 +78,10 @@ class DistillAgent:
             CONTEXT=context,
             RELATED_KNOWLEDGE=related_section,
         )
-        data = complete_json(self._llm(), prompt)
+        try:
+            data = complete_json(self._llm(), prompt)
+        except JSONParseError as e:
+            raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
         written = self.writer.write_many(specs)
         return DistillResult(written=written, source_refs=[n.path for n in notes])
@@ -203,6 +206,9 @@ class DistillAgent:
         source_refs = item.get("source_refs") or fallback_refs
         if isinstance(source_refs, str):
             source_refs = [source_refs]
+        # Source grounding: reject fabricated paths not in the actual note set
+        valid_refs = [ref for ref in source_refs if str(ref) in fallback_refs]
+        source_refs = valid_refs if valid_refs else fallback_refs
         tags = item.get("tags") or []
         if isinstance(tags, str):
             tags = [t.strip() for t in tags.split(",") if t.strip()]
