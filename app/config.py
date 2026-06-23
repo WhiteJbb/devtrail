@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     local_llm_provider: str = Field(default="", alias="LOCAL_LLM_PROVIDER")
     writer_provider: str = Field(default="", alias="WRITER_PROVIDER")
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
+    gemini_lite_model: str = Field(default="gemini-2.5-flash-lite", alias="GEMINI_LITE_MODEL")
     gemini_flash_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_FLASH_MODEL")
-    gemini_pro_model: str = Field(default="gemini-2.5-pro", alias="GEMINI_PRO_MODEL")
 
     context_char_budget: int = Field(default=12000, alias="CONTEXT_CHAR_BUDGET")
     # LLM HTTP 호출 시도 횟수(1=재시도 없음). 일시적 오류/5xx에 지수 백오프 재시도.
@@ -83,7 +83,6 @@ class Settings(BaseSettings):
     telegram_allowed_chat_ids: str = Field(default="", alias="TELEGRAM_ALLOWED_CHAT_IDS")
     # 알림(outbound)을 보낼 기본 chat id.
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
-    default_timezone: str = Field(default="Asia/Seoul", alias="DEFAULT_TIMEZONE")
 
     # ----- 파생 경로 -----
     @property

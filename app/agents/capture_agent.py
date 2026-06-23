@@ -12,6 +12,7 @@ from typing import Any
 import frontmatter
 
 from app.config import Settings, get_settings
+from app.services.repo_snapshot import RepoSnapshot, capture_repo_snapshot
 from app.services.wiki_service import WikiService
 
 
@@ -131,6 +132,187 @@ class CaptureAgent:
         result = self._write_note(rel_path, metadata, body, kind="git_summary")
         self._log("capture", f"git {sha[:10]}", result.rel_path)
         return result
+
+    def capture_session(
+        self,
+        project: str | None = None,
+        repo: str | None = None,
+        from_repo: bool = False,
+        from_agent: bool = False,
+        summary_file: str | None = None,
+        source: str = "agent_session",
+        title: str | None = None,
+    ) -> CaptureResult:
+        """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Daily/에 저장한다."""
+        date = self._date()
+        project = (project or "").strip()
+        slug_parts = [date, self._slug(project) if project else None, "session"]
+        base_name = "-".join(p for p in slug_parts if p)
+
+        # 파일명 충돌 해소
+        rel_path = self._unique_rel_path(f"10_Worklog/Daily/{base_name}.md")
+
+        # Git snapshot
+        snap: RepoSnapshot | None = None
+        if from_repo:
+            repo_path = repo or "."
+            snap = capture_repo_snapshot(repo_path)
+
+        # summary-file 읽기
+        summary_text = ""
+        if summary_file:
+            try:
+                summary_text = Path(summary_file).read_text(encoding="utf-8").strip()
+            except OSError:
+                summary_text = ""
+
+        # ISO 타임스탬프
+        now = self._now()
+        iso_now = now.strftime("%Y-%m-%dT%H:%M:%S+09:00")
+
+        # frontmatter
+        changed_files: list[str] = snap.changed_files if snap else []
+        branch = snap.branch if snap else None
+        commit = snap.commit if snap else None
+        metadata: dict[str, Any] = {
+            "type": "session",
+            "project": project,
+            "source": source,
+            "status": "raw",
+            "needs_distill": True,
+            "created_at": iso_now,
+            "updated_at": iso_now,
+            "from_repo": from_repo,
+            "from_agent": from_agent,
+            "agent_summary_missing": from_agent and not summary_text,
+            "repo_path": repo or ("." if from_repo else ""),
+            "branch": branch or "",
+            "commit": commit or "",
+            "changed_files": changed_files,
+            "source_refs": [f"git:{commit[:10]}" for commit in ([commit] if commit else [])],
+            "tags": ["session", "worklog"],
+        }
+
+        body = self._build_session_body(
+            title=title or (f"{project} 작업 세션" if project else "작업 세션"),
+            summary_text=summary_text,
+            snap=snap,
+        )
+
+        result = self._write_note(rel_path, metadata, body, kind="session")
+        self._log_session(
+            project=project or "session",
+            rel_path=result.rel_path,
+            from_repo=from_repo,
+            from_agent=from_agent,
+        )
+        return result
+
+    def _log_session(self, project: str, rel_path: str, from_repo: bool, from_agent: bool) -> None:
+        """capture-session 전용 log.md 기록 (from_repo / from_agent 포함)."""
+        log_path = self.vault_dir / "log.md"
+        self.vault_dir.mkdir(parents=True, exist_ok=True)
+        today = self._date()
+        lines = [
+            f"## [{today}] capture-session | {project}",
+            "",
+            f"- project: {project}",
+            f"- output: {rel_path}",
+            f"- from_repo: {str(from_repo).lower()}",
+            f"- from_agent: {str(from_agent).lower()}",
+            "",
+        ]
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+    def _unique_rel_path(self, rel_path: str) -> str:
+        """이미 파일이 있으면 -2, -3, ... suffix를 붙여 고유 경로를 반환한다."""
+        path = self.vault_dir / rel_path
+        if not path.exists():
+            return rel_path
+        stem = Path(rel_path).stem
+        suffix = Path(rel_path).suffix
+        parent = str(Path(rel_path).parent)
+        counter = 2
+        while True:
+            candidate = f"{parent}/{stem}-{counter}{suffix}"
+            if not (self.vault_dir / candidate).exists():
+                return candidate
+            counter += 1
+
+    def _build_session_body(
+        self,
+        title: str,
+        summary_text: str,
+        snap: RepoSnapshot | None,
+    ) -> str:
+        lines = [f"# {title}", ""]
+
+        if summary_text:
+            # summary-file 내용을 섹션에 매핑
+            lines += [
+                "## 1. 오늘 작업", summary_text, "",
+                "## 2. 변경한 파일 / 모듈", "- ", "",
+                "## 3. 해결한 문제", "- ", "",
+                "## 4. 설계 결정 / 이유", "- ", "",
+                "## 5. 남은 문제", "- ", "",
+                "## 6. 다음 할 일", "- ", "",
+                "## 7. 블로그 / 포트폴리오 소재", "- ", "",
+                "## 8. Git / Source Refs", "- ", "",
+            ]
+        else:
+            lines += [
+                "## 1. 오늘 작업", "- ", "",
+                "## 2. 변경한 파일 / 모듈", "- ", "",
+                "## 3. 해결한 문제", "- ", "",
+                "## 4. 설계 결정 / 이유", "- ", "",
+                "## 5. 남은 문제", "- ", "",
+                "## 6. 다음 할 일", "- ", "",
+                "## 7. 블로그 / 포트폴리오 소재", "- ", "",
+                "## 8. Git / Source Refs", "- ", "",
+            ]
+
+        # Repo Snapshot 섹션
+        lines += ["## 9. Repo Snapshot", ""]
+        if snap is None:
+            lines += ["_repo 정보 없음 (--from-repo 없이 실행됨)_", ""]
+        elif snap.error:
+            lines += [f"_Git 정보 수집 실패: {snap.error}_", ""]
+        else:
+            lines += [
+                "### Branch",
+                f"`{snap.branch or '(unknown)'}`",
+                "",
+                "### Recent Commits",
+            ]
+            if snap.recent_commits:
+                for c in snap.recent_commits:
+                    lines.append(f"- {c}")
+            else:
+                lines.append("- (없음)")
+            lines += [
+                "",
+                "### Changed Files",
+            ]
+            if snap.changed_files:
+                for f in snap.changed_files:
+                    lines.append(f"- {f}")
+            else:
+                lines.append("- (없음)")
+            lines += [
+                "",
+                "### Diff Stat",
+                f"```\n{snap.diff_stat or '(없음)'}\n```",
+                "",
+            ]
+
+        lines += [
+            "## 10. Notes",
+            "- 실제로 하지 않은 일은 적지 말 것.",
+            "- 불확실한 내용은 `확실하지 않음`으로 표시할 것.",
+        ]
+
+        return "\n".join(lines) + "\n"
 
     def daily_log(self, project: str = "") -> CaptureResult:
         date = self._date()
