@@ -264,6 +264,47 @@ def daily_log(
     _print_capture_result("daily log", result)
 
 
+@app.command("capture-session")
+def capture_session(
+    project: str = typer.Option("", "--project", "-p", help="프로젝트명"),
+    repo: str = typer.Option(".", "--repo", "-r", help="Git repo 경로 (기본: 현재 디렉토리)"),
+    from_repo: bool = typer.Option(False, "--from-repo", help="git diff, 변경 파일, 최근 커밋 수집"),
+    from_agent: bool = typer.Option(False, "--from-agent", help="AI 세션 요약 포함 여부 (워크플로우 신호)"),
+    summary_file: str = typer.Option("", "--summary-file", help="AI가 작성한 세션 요약 파일 경로"),
+    source: str = typer.Option("agent_session", "--source", help="소스 식별자"),
+    title: str = typer.Option("", "--title", help="세션 노트 제목 수동 지정"),
+) -> None:
+    """작업 세션을 구조화된 노트로 10_Worklog/Daily에 저장한다.
+
+    --from-agent 플래그는 Claude Code / Codex가 실행할 때 현재 세션을 요약해야 한다는
+    워크플로우 신호다. --summary-file로 요약 파일을 전달하는 것을 권장한다.
+    """
+    try:
+        result = _capture_agent().capture_session(
+            project=project or None,
+            repo=repo or None,
+            from_repo=from_repo,
+            from_agent=from_agent,
+            summary_file=summary_file or None,
+            source=source,
+            title=title or None,
+        )
+    except (ValueError, RuntimeError) as e:
+        _fail(str(e))
+
+    verb = "생성" if result.created else "기존 파일 유지"
+    typer.secho(f"\ncapture-session {verb} 완료", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  파일: {result.path}")
+    typer.echo(f"  vault path: {result.rel_path}")
+    if from_agent:
+        typer.secho(
+            "\n  💡 --from-agent 플래그 감지됨.\n"
+            "  AI는 현재 세션에서 수행한 작업을 요약해 이 노트를 채워야 합니다.\n"
+            "  --summary-file <path>로 요약 파일을 전달하면 자동으로 포함됩니다.",
+            fg=typer.colors.YELLOW,
+        )
+
+
 @app.command("distill-today")
 def distill_today() -> None:
     """오늘 raw 기록을 읽어 Knowledge/Decision/Memory/Blog 후보를 만든다."""

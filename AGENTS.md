@@ -3,13 +3,12 @@
 이 저장소의 중심은 Obsidian 기반 LLM Wiki Core다.
 
 ```text
-Obsidian Vault = 공용 메모리 버스
-LLM Wiki Core  = 지식 순환 엔진
-BlogAgent      = Wiki Core를 사용하는 Output Agent
+Obsidian Vault  = 공용 메모리 버스
+LLM Wiki Core   = 지식 순환 엔진
+WikiBlogAgent   = Wiki Core를 사용하는 Output Agent
 ```
 
-Phase 1-9 구현 완료. 기존 BlogAgent/Worklog/Todo/Portfolio/Resume Agent,
-Notion, Telegram, Tistory export 구현은 레거시로 병존하며 삭제하지 않는다.
+Phase 1-9 구현 완료. Worklog/Todo/Portfolio/Resume Agent, Telegram, Tistory export 포함.
 
 ## 설계 원칙
 
@@ -51,7 +50,6 @@ Content Source 계층    — ObsidianSource, GitSource, NotionSource, LocalDocSo
 | `PortfolioAgent` | 포트폴리오 초안 | AgentMemory + Projects | `50_Outputs/Portfolio/` |
 | `ResumeAgent` | 이력서/자기소개서 초안 | AgentMemory + Projects | `50_Outputs/Resume/` |
 | `ProjectAgent` | 프로젝트 요약 / 포폴 / 면접 질문 | Context + Project | `50_Outputs/` |
-| `BlogAgent` | 레거시 workspace 기반 블로그 초안 | SourceCollector | `workspace/drafts/` |
 
 ## CLI 커맨드
 
@@ -70,6 +68,10 @@ work-agent capture "메모"                                   # → 00_Inbox/Cap
 work-agent capture-chat --file chat.md --source chatgpt    # → 00_Inbox/Chats/
 work-agent capture-commit --repo <path>                    # → 10_Worklog/GitSummaries/
 work-agent daily-log                                       # → 10_Worklog/Daily/
+work-agent capture-session --project WorkAgent             # → 10_Worklog/Daily/ (세션 단위)
+work-agent capture-session --project WorkAgent --from-repo                # git 스냅샷 포함
+work-agent capture-session --project WorkAgent --from-repo --from-agent  # AI 세션 요약 신호
+work-agent capture-session --project WorkAgent --summary-file ./s.md     # AI 요약 파일 삽입
 ```
 
 ### Distill — 정제 후보 생성 (LLM 필요)
@@ -203,6 +205,27 @@ curl -s -X PUT \
 - **관련 설계 원칙**: 이번 작업이 어떤 원칙을 따랐는지 명시
 - squash merge를 기본으로 하여 main 히스토리를 단선으로 유지한다
 - 커밋 메시지와 PR 본문에 AI 작성 표시(`Co-Authored-By`, `Generated with` 등)를 넣지 않는다
+
+## capture-session rule
+
+`work-agent capture-session --from-agent` 명령을 실행할 때 Claude Code / Codex는 다음을 수행한다.
+
+1. 현재 작업 세션에서 실제로 수행한 일을 되돌아본다.
+2. 변경 파일, 설계 결정, 해결한 문제, 남은 일을 정리한다.
+3. 아래 항목을 포함하는 세션 요약 Markdown을 작성한다.
+   - 오늘 작업한 내용
+   - 변경/추가/삭제된 파일 또는 모듈
+   - 해결한 문제나 버그
+   - 설계 결정과 그 이유
+   - 남은 문제 및 다음 할 일
+   - 블로그/포트폴리오 소재가 될 만한 것
+4. `--summary-file <임시파일.md>`로 전달하는 것을 권장한다.
+5. 실제로 하지 않은 일은 절대 작성하지 않는다. 불확실하면 `확실하지 않음`으로 표시한다.
+
+```bash
+# 권장 패턴
+work-agent capture-session --project WorkAgent --from-repo --from-agent --summary-file ./session-summary.md
+```
 
 ## 테스트
 

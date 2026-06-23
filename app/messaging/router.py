@@ -17,6 +17,7 @@ _HELP = (
     "/export [vault_path] — 티스토리용 변환\n"
     "/publish <url> — 게시 완료 기록(최신 초안)\n"
     "/search <검색어> — Vault 노트 검색\n"
+    "/session [project] — 작업 세션 노트 생성\n"
     "/capture <메모> — 메모를 Inbox에 저장\n"
     "/distill — 오늘 기록에서 후보 생성\n"
     "/context <주제> — Context Pack 조회\n"
@@ -131,6 +132,21 @@ class CommandRouter:
             for r in results:
                 lines.append(f"· {r.note.title} ({r.note.path})")
             return "\n".join(lines)
+
+        # ── Session ───────────────────────────────────────────────────
+        if cmd == "session":
+            from app.agents import CaptureAgent
+            try:
+                agent = CaptureAgent()
+            except RuntimeError as e:
+                return f"Session 저장 실패: {e}"
+            result = agent.capture_session(project=arg or None, from_agent=False, from_repo=False)
+            proj_label = f" ({arg})" if arg else ""
+            return (
+                f"작업 세션 노트 생성 완료{proj_label}\n"
+                f"vault: {result.rel_path}\n\n"
+                "더 자세히 남기려면 이어서 문제/해결/다음 할 일을 보내줘."
+            )
 
         # ── Capture / Distill ─────────────────────────────────────────
         if cmd == "capture":

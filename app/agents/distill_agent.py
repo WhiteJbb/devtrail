@@ -90,8 +90,14 @@ class DistillAgent:
         ]
         if today_only:
             notes = [note for note in notes if self._note_date(note) == today]
-        notes.sort(key=lambda n: n.path, reverse=True)
-        return notes[:20]
+
+        # session 노트를 가장 먼저 배치 (10_Worklog/Daily/*session*.md)
+        session_notes = [n for n in notes if "session" in Path(n.path).name.lower()
+                         and n.path.startswith("10_Worklog/Daily/")]
+        other_notes = [n for n in notes if n not in session_notes]
+        session_notes.sort(key=lambda n: n.path, reverse=True)
+        other_notes.sort(key=lambda n: n.path, reverse=True)
+        return (session_notes + other_notes)[:20]
 
     def _note_date(self, note: WikiNote) -> str:
         value = note.metadata.get("date") or note.metadata.get("created_at") or ""
