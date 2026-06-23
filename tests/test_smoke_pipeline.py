@@ -328,3 +328,116 @@ def test_all_fabricated_refs_fall_back_to_actual_notes(tmp_path):
     assert saved_refs, "전부 허위 경로일 때 source_refs가 비어있으면 안 된다"
     for ref in saved_refs:
         assert "FAKE/" not in ref, "폴백 후 source_refs에 허위 경로가 남으면 안 된다"
+
+
+# ── 노트 간 cross-link 검증 ───────────────────────────────────────────────────
+
+
+def _distill_two_related():
+    """tag가 겹치는 두 knowledge 후보를 반환한다."""
+    return json.dumps(
+        {
+            "knowledge": [
+                {
+                    "title": "LLM Fallback Chain 설계",
+                    "summary": "여러 provider를 순서대로 시도하는 패턴",
+                    "body": (
+                        "## 개념\nFallback chain은 첫 번째 provider 실패 시 다음 provider로 넘긴다.\n\n"
+                        "## 왜 중요한가\n단일 provider 의존은 장애 전파 위험이 있다.\n\n"
+                        "## 적용 방법\n순서대로 try/except로 감싼다.\n\n"
+                        "## 관련 노트\n(관련 기존 지식 노트 없음)"
+                    ),
+                    "project": "work-agent",
+                    "tags": ["llm", "architecture"],
+                    "source_refs": ["00_Inbox/Captures/test.md"],
+                },
+                {
+                    "title": "LLM Provider 선택 기준",
+                    "summary": "task_type에 따라 provider를 고르는 기준",
+                    "body": (
+                        "## 개념\ntask_type별로 최적 provider가 다르다.\n\n"
+                        "## 왜 중요한가\n비용과 속도 트레이드오프가 task마다 다르다.\n\n"
+                        "## 적용 방법\nlight는 flash-lite, writer는 flash를 기본으로 한다.\n\n"
+                        "## 관련 노트\n(관련 기존 지식 노트 없음)"
+                    ),
+                    "project": "work-agent",
+                    "tags": ["llm", "architecture"],
+                    "source_refs": ["00_Inbox/Captures/test.md"],
+                },
+            ],
+            "decisions": [],
+            "memory_patches": [],
+            "blog_ideas": [],
+        },
+        ensure_ascii=False,
+    )
+
+
+def test_cross_links_added_between_related_candidates(tmp_path):
+    """같은 distill run에서 tag가 겹치는 후보끼리 [[stem]] wikilink가 삽입된다."""
+    import frontmatter as fm
+    from pathlib import Path
+
+    settings = _settings(tmp_path)
+    now = datetime(2026, 6, 23, 9, 0, 0)
+
+    CaptureAgent(settings=settings, now=now).capture(text="LLM 아키텍처 메모", project="work-agent")
+    result = DistillAgent(settings=settings, llm=FakeLLM(_distill_two_related()), now=now).distill_today()
+
+    assert len(result.written) == 2
+
+    for written in result.written:
+        post = fm.loads(written.path.read_text(encoding="utf-8"))
+        body = post.content
+        other = next(w for w in result.written if w.rel_path != written.rel_path)
+        other_stem = Path(other.path).stem
+        assert f"[[{other_stem}]]" in body, (
+            f"'{written.spec.title}' body에 [[{other_stem}]] 링크가 없음"
+        )
+
+
+def test_cross_links_not_added_when_no_tag_overlap(tmp_path):
+    """tag 겹침이 없으면 cross-link를 삽입하지 않는다."""
+    import frontmatter as fm
+    from pathlib import Path
+
+    settings = _settings(tmp_path)
+    now = datetime(2026, 6, 23, 9, 0, 0)
+
+    no_overlap = json.dumps(
+        {
+            "knowledge": [
+                {
+                    "title": "Git Hook 자동화",
+                    "summary": "post-commit hook으로 자동 캡처",
+                    "body": "## 개념\nGit hook...\n\n## 왜\n...\n\n## 적용\n...\n\n## 관련 노트\n(관련 기존 지식 노트 없음)",
+                    "project": "work-agent",
+                    "tags": ["git", "automation"],
+                    "source_refs": ["00_Inbox/Captures/test.md"],
+                },
+                {
+                    "title": "한국어 형태소 분석 활용",
+                    "summary": "검색 품질 향상을 위한 형태소 분석",
+                    "body": "## 개념\n형태소 분석...\n\n## 왜\n...\n\n## 적용\n...\n\n## 관련 노트\n(관련 기존 지식 노트 없음)",
+                    "project": "work-agent",
+                    "tags": ["nlp", "korean"],
+                    "source_refs": ["00_Inbox/Captures/test.md"],
+                },
+            ],
+            "decisions": [],
+            "memory_patches": [],
+            "blog_ideas": [],
+        },
+        ensure_ascii=False,
+    )
+
+    CaptureAgent(settings=settings, now=now).capture(text="태그 겹침 없음 테스트", project="work-agent")
+    result = DistillAgent(settings=settings, llm=FakeLLM(no_overlap), now=now).distill_today()
+
+    assert len(result.written) == 2
+    for written in result.written:
+        post = fm.loads(written.path.read_text(encoding="utf-8"))
+        body = post.content
+        other = next(w for w in result.written if w.rel_path != written.rel_path)
+        other_stem = Path(other.path).stem
+        assert f"[[{other_stem}]]" not in body, "tag 겹침 없으면 cross-link가 없어야 한다"

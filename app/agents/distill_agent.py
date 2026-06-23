@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import frontmatter as fm
+
 from app.config import Settings, get_settings
 from app.llm.base import LLMError, LLMProvider
 from app.llm.factory import get_task_llm_provider
@@ -18,8 +20,9 @@ from app.services.wiki_service import WikiNote, WikiService
 
 _RAW_PREFIXES = ("00_Inbox/", "10_Worklog/")
 _KNOWLEDGE_PREFIXES = ("20_Knowledge/", "30_Projects/")
+_CANDIDATE_PREFIX = "60_Candidates/"
 _MAX_NOTE_CHARS = 3000
-_MAX_RELATED = 8
+_MAX_RELATED = 12
 _CHARS_PER_TOKEN = 3  # 한국어 혼용 기준 보수적 추정
 
 
@@ -84,6 +87,7 @@ class DistillAgent:
             raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
         written = self.writer.write_many(specs)
+        self._patch_cross_links(written)
         return DistillResult(written=written, source_refs=[n.path for n in notes])
 
     def _llm(self) -> LLMProvider:
@@ -117,7 +121,7 @@ class DistillAgent:
         return str(value)[:10]
 
     def _find_related_knowledge(self, notes: list[WikiNote]) -> list[WikiNote]:
-        """기존 Knowledge/Projects 노트 중 관련된 것을 찾아 wikilink 후보로 반환."""
+        """기존 Knowledge/Projects/Candidates 노트 중 관련된 것을 찾아 wikilink 후보로 반환."""
         terms: set[str] = set()
         for note in notes:
             proj = note.metadata.get("project")
@@ -131,8 +135,55 @@ class DistillAgent:
         if not terms:
             return []
         query = " ".join(list(terms)[:12])
-        results = self.wiki_service.search(query, limit=_MAX_RELATED)
-        return [r.note for r in results if r.note.path.startswith(_KNOWLEDGE_PREFIXES)]
+        results = self.wiki_service.search(query, limit=_MAX_RELATED * 2)
+        related: list[WikiNote] = []
+        for r in results:
+            note = r.note
+            if note.path.startswith(_KNOWLEDGE_PREFIXES):
+                related.append(note)
+            elif (
+                note.path.startswith(_CANDIDATE_PREFIX)
+                and note.metadata.get("status") == "candidate"
+            ):
+                related.append(note)
+            if len(related) >= _MAX_RELATED:
+                break
+        return related
+
+    def _patch_cross_links(self, results: list[CandidateWriteResult]) -> None:
+        """같은 distill run 내 노트끼리 tag 겹침이 있으면 [[stem]] wikilink를 삽입한다."""
+        if len(results) < 2:
+            return
+        for result in results:
+            peers = [
+                r for r in results
+                if r.rel_path != result.rel_path
+                and bool(set(result.spec.tags) & set(r.spec.tags))
+            ]
+            if not peers:
+                continue
+            try:
+                post = fm.loads(result.path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            body: str = post.content
+            links = "\n".join(
+                f"- [[{Path(r.path).stem}]] — {r.spec.title}"
+                for r in peers
+            )
+            if "(관련 기존 지식 노트 없음)" in body:
+                body = body.replace("(관련 기존 지식 노트 없음)", links, 1)
+            elif "## 관련 노트" not in body:
+                marker = "\n\n## Source Refs"
+                if marker in body:
+                    body = body.replace(marker, f"\n\n## 관련 노트\n\n{links}{marker}", 1)
+                else:
+                    body = body.rstrip() + f"\n\n## 관련 노트\n\n{links}\n"
+            post.content = body
+            try:
+                result.path.write_text(fm.dumps(post), encoding="utf-8")
+            except Exception:
+                pass
 
     def _render_related_knowledge(self, related: list[WikiNote]) -> str:
         if not related:
