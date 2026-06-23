@@ -267,6 +267,31 @@ def test_kimi_excluded_when_no_api_key():
     assert "kimi" not in names
 
 
+# ── Router: env override (LONG_WRITER_PROVIDER / POLISH_PROVIDER) ─────
+
+
+def test_long_writer_provider_env_overrides_first_in_chain():
+    """LONG_WRITER_PROVIDER=gemini 이면 long_writer chain 첫 번째가 gemini로 바뀐다."""
+    s = _settings(LONG_WRITER_PROVIDER="gemini")
+    chain = get_provider_for_task("long_writer", s)
+    assert chain._providers[0].name == "gemini"
+
+
+def test_polish_provider_env_overrides_first_in_chain():
+    """POLISH_PROVIDER=gemini 이면 polish chain 첫 번째가 gemini로 바뀐다."""
+    s = _settings(POLISH_PROVIDER="gemini", OPENAI_API_KEY="fake-openai")
+    chain = get_provider_for_task("polish", s)
+    assert chain._providers[0].name == "gemini"
+
+
+def test_long_writer_provider_env_deduplicates_chain():
+    """override provider가 기존 chain에 이미 있으면 중복 없이 앞으로 이동한다."""
+    s = _settings(LONG_WRITER_PROVIDER="gemini")
+    chain = get_provider_for_task("long_writer", s)
+    names = [p.name for p in chain._providers]
+    assert names.count("gemini") == 1
+
+
 # ── get_task_type_for_command ─────────────────────────────────────────
 
 

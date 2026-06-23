@@ -16,7 +16,7 @@ import markdown as md
 
 from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
-from app.llm.factory import get_writer_llm_provider
+from app.llm.factory import get_task_llm_provider
 from app.memory.context_pack_builder import ContextPackBuilder
 from app.models.context_pack import ContextPack
 from app.prompts import render_prompt
@@ -303,7 +303,7 @@ class WikiBlogAgent:
         path.write_text(frontmatter.dumps(frontmatter.Post(post.content, **meta)), encoding="utf-8")
 
     def _llm(self) -> LLMProvider:
-        return self.llm or get_writer_llm_provider(self.settings)
+        return self.llm or get_task_llm_provider("writer", self.settings)
 
     def _slug(self, value: str) -> str:
         text = value.strip().lower()

@@ -119,6 +119,14 @@ _BUILDER_MAP: dict[str, _ProviderBuilder] = {
     "ollama":       _make_ollama,
 }
 
+# .env provider 이름 → _BUILDER_MAP 키 변환
+_ENV_TO_BUILDER: dict[str, str] = {
+    "gemini":            "gemini_flash",
+    "kimi":              "kimi",
+    "openai_compatible": "openai",
+    "ollama":            "ollama",
+}
+
 
 def _build_chain(provider_names: list[str], settings: Settings, task_type: str) -> FallbackChain:
     providers: list[LLMProvider] = []
@@ -146,8 +154,21 @@ def get_provider_for_task(task_type: str, settings: Settings) -> FallbackChain:
     """task_type에 맞는 FallbackChain을 반환한다.
 
     알 수 없는 task_type이면 writer를 기본으로 사용한다.
+    LONG_WRITER_PROVIDER / POLISH_PROVIDER 환경변수가 있으면 해당 task의 첫 번째 provider를 override한다.
     """
-    chain_names = TASK_CHAINS.get(task_type, TASK_CHAINS["writer"])
+    chain_names = list(TASK_CHAINS.get(task_type, TASK_CHAINS["writer"]))
+
+    override_env = ""
+    if task_type == "long_writer":
+        override_env = (settings.long_writer_provider or "").strip().lower()
+    elif task_type == "polish":
+        override_env = (settings.polish_provider or "").strip().lower()
+
+    if override_env:
+        builder_name = _ENV_TO_BUILDER.get(override_env)
+        if builder_name and builder_name in _BUILDER_MAP:
+            chain_names = [builder_name] + [n for n in chain_names if n != builder_name]
+
     return _build_chain(chain_names, settings, task_type)
 
 

@@ -10,11 +10,11 @@ fallback 조건:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Sequence
 
 from app.llm.base import LLMError, LLMNotConfiguredError, LLMProvider
+from app.services.json_utils import JSONParseError, extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +60,9 @@ class FallbackChain:
             for attempt in range(2):
                 try:
                     result = provider.complete(prompt, system)
-                    json.loads(result)  # JSON 유효성 검증
+                    extract_json_object(result)  # 코드펜스 제거 포함 JSON 유효성 검증
                     return result
-                except ValueError as e:
+                except JSONParseError as e:
                     if attempt == 0:
                         logger.warning(
                             "[json-retry] %s JSON 파싱 실패, 동일 provider 재시도", provider.name
