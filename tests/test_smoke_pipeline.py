@@ -100,10 +100,8 @@ def test_full_pipeline_capture_to_promote(tmp_path):
     assert promote_result.kind == "knowledge"
     assert promote_result.promoted_path.startswith("20_Knowledge/")
 
-    # 승격 후 후보 파일에 status=promoted 마킹 확인
-    import frontmatter
-    post = frontmatter.loads((tmp_path / item.rel_path).read_text(encoding="utf-8"))
-    assert post.metadata.get("status") == "promoted"
+    # 승격 후 원본 candidate 파일 삭제 확인 (duplicate stem 방지)
+    assert not (tmp_path / item.rel_path).exists(), "승격 후 원본 파일이 삭제되어야 한다"
 
 
 def test_build_context_after_promote(tmp_path):

@@ -368,11 +368,17 @@ def list_candidates() -> None:
         typer.echo("60_Candidates/ 에 후보가 없습니다.")
         return
 
-    typer.secho(f"\n후보 {len(items)}개", fg=typer.colors.CYAN, bold=True)
+    stale_count = sum(1 for i in items if i.is_stale)
+    header = f"\n후보 {len(items)}개"
+    if stale_count:
+        header += f"  ({stale_count}개 stale)"
+    typer.secho(header, fg=typer.colors.CYAN, bold=True)
     for item in items:
+        stale_tag = "  ⚠ stale" if item.is_stale else ""
         typer.echo(
             f"  [{item.kind}] {item.title}"
             + (f"  ({item.project})" if item.project else "")
+            + stale_tag
         )
         typer.echo(f"    {item.rel_path}")
 
@@ -404,6 +410,21 @@ def promote_candidate(
     typer.echo(f"  후보: {result.candidate_path}")
     typer.echo(f"  승격됨: {result.promoted_path}")
     typer.echo(f"  종류: {result.kind}")
+
+
+@app.command("promote-all")
+def promote_all_cmd(
+    kind: str = typer.Option("", "--kind", "-k", help="종류 필터 (knowledge/decision/blog_idea). 생략 시 전체."),
+) -> None:
+    """60_Candidates 내 후보를 일괄 승격한다."""
+    curator = _curator_agent()
+    results = curator.promote_all(kind=kind or None)
+    if not results:
+        typer.echo("승격할 후보가 없습니다.")
+        return
+    typer.secho(f"\n{len(results)}개 승격 완료", fg=typer.colors.GREEN, bold=True)
+    for r in results:
+        typer.echo(f"  [{r.kind}] {r.promoted_path}")
 
 
 @app.command("apply-memory-patch")

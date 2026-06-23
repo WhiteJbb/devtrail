@@ -19,6 +19,7 @@ from app.services.wiki_service import WikiService
 
 
 _CANDIDATE_DIR = "60_Candidates"
+_STALE_DAYS = 14
 
 _PROMOTE_TARGETS = {
     "knowledge": "20_Knowledge",
@@ -43,6 +44,7 @@ class CandidateItem:
     created_at: str
     project: str
     tags: list[str] = field(default_factory=list)
+    is_stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,17 +121,26 @@ class CuratorAgent:
         promoted_post = frontmatter.Post(body, **metadata)
         promoted_path.write_text(frontmatter.dumps(promoted_post), encoding="utf-8")
 
-        # 원본 candidate에 promoted 마킹
-        metadata_orig: dict[str, Any] = dict(frontmatter.loads(raw).metadata)
-        metadata_orig["status"] = "promoted"
-        metadata_orig["promoted_to"] = promoted_rel
-        original_post = frontmatter.Post(body, **metadata_orig)
-        src_path.write_text(frontmatter.dumps(original_post), encoding="utf-8")
+        # 원본 candidate 삭제 — promoted 사본이 20_Knowledge에 존재하므로 중복 stem 방지
+        src_path.unlink()
 
         title = str(metadata.get("title") or src_path.stem)
         self.wiki_service.append_vault_log("promote", title, [promoted_rel])
 
         return PromoteResult(candidate_path=rel_path, promoted_path=promoted_rel, kind=kind)
+
+    def promote_all(self, kind: str | None = None) -> list[PromoteResult]:
+        """후보 전체(또는 지정 kind)를 일괄 승격한다."""
+        items = self.list_candidates()
+        if kind:
+            items = [i for i in items if i.kind == kind]
+        results = []
+        for item in items:
+            try:
+                results.append(self.promote_candidate(item.rel_path))
+            except Exception:
+                pass
+        return results
 
     def apply_memory_patch(self, rel_path: str) -> PromoteResult:
         """memory_patch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다."""
@@ -195,13 +206,27 @@ class CuratorAgent:
             tags_raw = [t.strip() for t in tags_raw.split(",")]
         tags = [str(t) for t in tags_raw]
 
+        status = str(metadata.get("status") or "")
+        if status in ("promoted", "applied"):
+            return None
+
+        created_at = str(metadata.get("created_at") or "")
+        is_stale = False
+        if created_at:
+            try:
+                created_date = datetime.strptime(created_at[:10], "%Y-%m-%d")
+                is_stale = (self._now() - created_date).days > _STALE_DAYS
+            except ValueError:
+                pass
+
         return CandidateItem(
             kind=kind,
             title=title,
             rel_path=rel_path,
-            created_at=str(metadata.get("created_at") or ""),
+            created_at=created_at,
             project=str(metadata.get("project") or ""),
             tags=tags,
+            is_stale=is_stale,
         )
 
     def _normalize_kind(self, kind: str) -> str:
@@ -225,6 +250,9 @@ class CuratorAgent:
         if kind == "knowledge" and project:
             return f"20_Knowledge/{project}/{filename}"
         return f"{base}/{filename}"
+
+    def _now(self) -> datetime:
+        return self.now or datetime.now()
 
     def _h1_from_body(self, body: str) -> str:
         for line in body.splitlines():
