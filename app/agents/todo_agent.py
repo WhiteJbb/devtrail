@@ -8,7 +8,7 @@ from pathlib import Path
 
 from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
-from app.llm.factory import get_writer_llm_provider
+from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
 from app.services.wiki_service import WikiNote, WikiService
 
@@ -92,4 +92,4 @@ class TodoAgent:
         return "\n\n".join(parts)
 
     def _llm(self) -> LLMProvider:
-        return self.llm or get_writer_llm_provider(self.settings)
+        return self.llm or get_task_llm_provider("writer", self.settings)

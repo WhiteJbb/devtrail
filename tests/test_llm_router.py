@@ -3,8 +3,9 @@
 import pytest
 
 from app.config import Settings
-from app.llm.factory import _FallbackProvider, get_llm_provider, get_local_llm_provider, get_writer_llm_provider
+from app.llm.factory import get_llm_provider, get_local_llm_provider, get_writer_llm_provider
 from app.llm.base import LLMError, LLMNotConfiguredError
+from app.llm.fallback import FallbackChain
 from app.llm.gemini_provider import GeminiProvider
 
 
@@ -76,8 +77,8 @@ def test_writer_provider_falls_back_to_llm_provider():
 # ── get_local_llm_provider ──────────────────────────────────────────
 
 
-def test_local_provider_with_gemini_returns_fallback_wrapper():
-    """로컬 + Gemini 모두 설정 → FallbackProvider로 래핑."""
+def test_local_provider_with_gemini_returns_fallback_chain():
+    """로컬 + Gemini 모두 설정 → FallbackChain으로 래핑."""
     from app.llm.ollama_provider import OllamaProvider
 
     s = _settings(
@@ -86,9 +87,9 @@ def test_local_provider_with_gemini_returns_fallback_wrapper():
         GEMINI_API_KEY="fake-key",
     )
     provider = get_local_llm_provider(s)
-    assert isinstance(provider, _FallbackProvider)
-    assert isinstance(provider._primary, OllamaProvider)
-    assert isinstance(provider._fallback, GeminiProvider)
+    assert isinstance(provider, FallbackChain)
+    assert isinstance(provider._providers[0], OllamaProvider)
+    assert isinstance(provider._providers[1], GeminiProvider)
 
 
 def test_local_provider_without_gemini_returns_primary_directly():
@@ -125,8 +126,8 @@ def test_local_provider_not_set_no_gemini_falls_back_to_llm_provider():
     assert isinstance(provider, GeminiProvider)
 
 
-def test_fallback_provider_uses_fallback_on_llm_error():
-    """primary에서 LLMError 발생 시 fallback.complete()를 호출한다."""
+def test_fallback_chain_uses_fallback_on_llm_error():
+    """primary에서 LLMError 발생 시 FallbackChain이 다음 provider를 사용한다."""
 
     class _FailProvider:
         name = "fail"
@@ -142,5 +143,5 @@ def test_fallback_provider_uses_fallback_on_llm_error():
         def complete(self, prompt: str, system: str = "") -> str:
             return "fallback result"
 
-    p = _FallbackProvider(_FailProvider(), _OkProvider())
-    assert p.complete("test") == "fallback result"
+    chain = FallbackChain([_FailProvider(), _OkProvider()])
+    assert chain.complete("test") == "fallback result"

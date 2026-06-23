@@ -16,6 +16,7 @@ venv/
 # Claude Code settings (토큰 포함)
 .claude/*
 !.claude/global.md
+!.claude/github.example.json
 
 # Notion mock store
 workspace/.notion_mock.json
