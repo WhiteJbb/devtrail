@@ -43,11 +43,15 @@ class ContextPackBuilder:
         else:
             project_section = ""
 
-        # 3. Related Notes — keyword search
-        related = self.wiki_service.search(topic, limit=_MAX_NOTES)
+        # 3. Related Notes — keyword search (60_Candidates는 검토 전 임시 영역이므로 제외)
+        related = self.wiki_service.search(topic, limit=_MAX_NOTES * 2)
         note_parts: list[str] = []
         for result in related:
             note = result.note
+            if note.path.startswith("60_Candidates/"):
+                continue
+            if len(note_parts) >= _MAX_NOTES:
+                break
             preview = note.body.strip()
             if len(preview) > _NOTE_PREVIEW_CHARS:
                 preview = preview[:_NOTE_PREVIEW_CHARS].rstrip() + "\n..."
