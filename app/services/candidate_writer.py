@@ -65,18 +65,14 @@ class CandidateWriter:
         norm_new = self._norm_title(spec.title)
 
         for md_path in cand_dir.glob("*.md"):
-            # 파일명에서 날짜 파싱 (20250623-... 형식)
-            stem = md_path.stem
-            try:
-                file_date = datetime.strptime(stem[:8], "%Y%m%d")
-                if (today - file_date).days > _DEDUP_LOOKBACK_DAYS:
-                    continue
-            except ValueError:
-                continue  # 날짜 파싱 실패 파일은 lookback 대상에서 제외
-
             try:
                 existing = frontmatter.loads(md_path.read_text(encoding="utf-8"))
                 existing_title = str(existing.metadata.get("title") or "").strip()
+                created_str = str(existing.metadata.get("created_at") or "")
+                if created_str:
+                    file_date = datetime.strptime(created_str[:10], "%Y-%m-%d")
+                    if (today - file_date).days > _DEDUP_LOOKBACK_DAYS:
+                        continue
             except Exception:
                 continue
 
@@ -145,14 +141,13 @@ class CandidateWriter:
 
     def _unique_rel_path(self, kind: str, title: str) -> str:
         base_dir = _CANDIDATE_DIRS[kind]
-        stamp = self._now().strftime("%Y%m%d-%H%M%S")
-        slug = self._slug(title)
-        rel = f"{base_dir}/{stamp}-{slug}.md"
+        name = self._slug(title)
+        rel = f"{base_dir}/{name}.md"
         if not (self.vault_dir / rel).exists():
             return rel
         idx = 2
         while True:
-            rel = f"{base_dir}/{stamp}-{slug}-{idx}.md"
+            rel = f"{base_dir}/{name} ({idx}).md"
             if not (self.vault_dir / rel).exists():
                 return rel
             idx += 1
@@ -180,10 +175,9 @@ class CandidateWriter:
         return re.sub(r"\s+", " ", t).strip()
 
     def _slug(self, value: str) -> str:
-        text = value.strip().lower()
-        text = re.sub(r"[^0-9a-z가-힣_-]+", "-", text)
-        text = re.sub(r"-{2,}", "-", text).strip("-_")
-        return text or "candidate"
+        """파일시스템 금지 문자만 제거하고 제목을 그대로 파일명으로 사용한다."""
+        text = re.sub(r'[\\/:*?"<>|]', "", value.strip())
+        return re.sub(r"\s+", " ", text).strip() or "candidate"
 
     def _now(self) -> datetime:
         return self.now or datetime.now()
