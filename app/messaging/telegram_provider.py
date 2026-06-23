@@ -38,7 +38,7 @@ def _md_to_html(text: str) -> str:
 
     # ``` 코드 블록
     def replace_code_block(m: re.Match) -> str:
-        inner = _escape_html(m.group(2).strip("\n"))
+        inner = _escape_html(m.group(1).strip("\n"))
         return save(f"<pre><code>{inner}</code></pre>")
 
     text = re.sub(r"```[^\n]*\n?([\s\S]*?)```", replace_code_block, text)

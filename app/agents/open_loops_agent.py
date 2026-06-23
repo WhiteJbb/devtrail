@@ -120,22 +120,28 @@ class OpenLoopsAgent:
         if add_items:
             lines += ["## 추가할 항목", ""]
             for item in add_items:
-                priority = item.get("priority", "")
-                tag = f" [{priority}]" if priority else ""
-                lines.append(f"- {item.get('item', '')}{tag}")
+                if isinstance(item, str):
+                    lines.append(f"- {item}")
+                else:
+                    priority = item.get("priority", "")
+                    tag = f" [{priority}]" if priority else ""
+                    lines.append(f"- {item.get('item', '')}{tag}")
             lines.append("")
 
         if complete_items:
             lines += ["## 완료 처리할 항목", ""]
             for item in complete_items:
-                lines.append(f"- {item.get('item', '')}")
+                lines.append(f"- {item if isinstance(item, str) else item.get('item', '')}")
             lines.append("")
 
         if defer_items:
             lines += ["## 보류할 항목", ""]
             for item in defer_items:
-                reason = item.get("reason", "")
-                lines.append(f"- {item.get('item', '')}" + (f" ({reason})" if reason else ""))
+                if isinstance(item, str):
+                    lines.append(f"- {item}")
+                else:
+                    reason = item.get("reason", "")
+                    lines.append(f"- {item.get('item', '')}" + (f" ({reason})" if reason else ""))
             lines.append("")
 
         if rationale:

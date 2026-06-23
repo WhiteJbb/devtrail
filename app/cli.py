@@ -825,10 +825,10 @@ def push_digest(
     if include_worklog:
         try:
             worklog_agent = WorklogAgent(settings=settings)
-            wlog = _handle_llm_errors(lambda: worklog_agent.generate(save=False))
+            wlog = worklog_agent.generate(save=False)
             if wlog:
                 text += f"\n\n**작업 회고**\n{wlog.text[:1500]}"
-        except RuntimeError:
+        except Exception:
             pass
 
     provider.send(settings.telegram_chat_id, text)
