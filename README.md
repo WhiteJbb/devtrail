@@ -30,76 +30,86 @@ copy .env.example .env
 
 ## AI 설정
 
-work-agent는 두 가지 역할로 LLM을 분리합니다.
+work-agent는 작업 성격에 따라 LLM을 자동 선택하고, 실패 시 다음 provider로 자동 폴백합니다.
 
-| 역할 | 설정 키 | 용도 |
-|------|---------|------|
-| **로컬 LLM** | `LOCAL_LLM_PROVIDER` | 분류·라우팅·짧은 요약 (빠름, 무료) |
-| **글쓰기 LLM** | `WRITER_PROVIDER` | 초안 작성·정제 (품질 우선) |
+### task_type별 라우팅
 
-로컬 LLM이 없으면 글쓰기 LLM으로 자동 폴백합니다.
+| task_type | 용도 | 기본 chain |
+|-----------|------|-----------|
+| **light** | 분류·태깅·짧은 요약 (`distill-today`, `suggest-*`, `capture`) | Gemini Flash-Lite → GPT-4o mini → Ollama |
+| **writer** | 블로그·이력서·포트폴리오 초안 (`write-blog`, `resume`, `worklog`) | Gemini Flash → GPT-4o mini → Kimi |
+| **long_writer** | 긴 ContextPack 기반 글쓰기 (`weekly-distill`, `summarize-project`) | Kimi → Gemini Flash → GPT-4o mini |
+| **polish** | 최종 문장 다듬기 (`revise-blog`) | GPT-4o mini → Gemini Flash |
+| **local** | 인터넷 전체 장애 시 최소 동작 | Ollama |
+
+각 chain에서 API 키가 없는 provider는 자동으로 제외됩니다. Gemini만 설정해도 동작합니다.
+
+### HTTP 오류별 처리
+
+- **503 / 429 / timeout / connection error** → 즉시 다음 provider로 fallback
+- **JSON 파싱 실패** → 같은 provider 1회 재시도 → 실패 시 다음 provider
+- **모든 provider 실패** → 명확한 오류 메시지 반환
 
 ### Gemini (추천 — 인터넷 연결만 있으면 됨)
 
 [Google AI Studio](https://aistudio.google.com/apikey)에서 API 키 발급 (무료 티어 있음).
 
 ```env
-LLM_PROVIDER=gemini
-LOCAL_LLM_PROVIDER=gemini
-WRITER_PROVIDER=gemini
-
 GEMINI_API_KEY=AIza...
-GEMINI_FLASH_MODEL=gemini-2.5-flash        # 글쓰기용
-GEMINI_LITE_MODEL=gemini-2.5-flash-lite    # 로컬 폴백용 (빠르고 저렴)
+GEMINI_FLASH_MODEL=gemini-2.5-flash        # writer task 1순위
+GEMINI_LITE_MODEL=gemini-2.5-flash-lite    # light task 1순위
+
+# 구 경로 호환 (선택)
+LLM_PROVIDER=gemini
+WRITER_PROVIDER=gemini
 ```
 
 `google-generativeai` 패키지 없이 httpx REST로 직접 호출합니다.
 
-### Ollama (로컬, 인터넷 불필요)
+### OpenAI / GPT-4o mini (fallback chain 포함)
+
+`OPENAI_API_KEY`를 설정하면 각 task chain에 자동으로 포함됩니다.
+
+```env
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-4o-mini
+```
+
+### Kimi (Moonshot AI) — long_writer 특화
+
+긴 ContextPack 기반 글쓰기에서 1순위로 사용됩니다.
+
+```env
+KIMI_API_KEY=...
+KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_MODEL=kimi-k2
+```
+
+### Ollama (로컬, 인터넷 불필요 — light task 최후 폴백)
 
 [ollama.com](https://ollama.com)에서 Ollama 설치 후 모델 Pull.
 
 ```bash
-ollama pull qwen3:8b          # 8B — 8GB VRAM 이상 권장
-# 또는
-ollama pull qwen2.5:14b-instruct-q4_K_M   # 14B — 16GB VRAM 이상
+ollama pull qwen3:8b
 ```
 
 ```env
-LOCAL_LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen3:8b
-
-# 글쓰기는 Gemini로 넘기거나 ollama 단독 사용
-WRITER_PROVIDER=ollama
 ```
 
 ### vLLM (자체 GPU 서버)
 
-OpenAI 호환 API로 동작합니다.
+OpenAI 호환 API로 동작합니다. `OPENAI_API_KEY=dummy`로 설정하면 fallback chain에 포함됩니다.
 
 ```env
-LOCAL_LLM_PROVIDER=openai_compatible
 OPENAI_BASE_URL=http://localhost:8000/v1
-OPENAI_API_KEY=dummy                     # vLLM은 임의값으로 OK
+OPENAI_API_KEY=dummy
 OPENAI_MODEL=Qwen/Qwen2.5-14B-Instruct
-
-# context window가 작은 모델이면 반드시 설정 (토큰 수)
 OPENAI_MAX_TOKENS=1024
-OPENAI_CONTEXT_WINDOW=8192               # vLLM --max-model-len 값과 일치시킬 것
-CONTEXT_CHAR_BUDGET=14000                # 8192 토큰 모델 기준 권장값
-```
-
-프롬프트가 context window를 초과하면 자동으로 잘라서 전송합니다.
-
-### OpenAI / 기타 호환 API
-
-```env
-LOCAL_LLM_PROVIDER=openai_compatible
-WRITER_PROVIDER=openai_compatible
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_CONTEXT_WINDOW=8192
+CONTEXT_CHAR_BUDGET=14000
 ```
 
 ---
@@ -410,7 +420,8 @@ app/
 │                      # ProjectAgent
 ├─ memory/             # AgentMemoryLoader, ProjectMemoryLoader, ContextPackBuilder
 ├─ services/           # WikiService, CandidateWriter, RepoSnapshot ...
-├─ llm/                # factory(라우팅), GeminiProvider, Ollama, OpenAI-compat
+├─ llm/                # router(task_type→chain), fallback(FallbackChain)
+│                      # GeminiProvider, KimiProvider, OllamaProvider, OpenAICompatibleProvider
 ├─ content_sources/    # ObsidianSource, GitSource, LocalDocSource
 ├─ messaging/          # Telegram provider, router, bot
 ├─ assistant/          # 자연어 의도 라우팅
@@ -435,6 +446,7 @@ start.py               # 대화형 대시보드 (python start.py)
 | Telegram Bot | 🔶 Partial | 운영 테스트 필요 |
 | Scheduler | ✅ Done | 명령 출력 방식 (`print-schedule`) |
 | Natural Language ask | 🔶 Partial | intent routing 개선 필요 |
+| LLM 라우터 / Fallback | ✅ Done | task_type별 chain, 503/429/timeout 자동 폴백 |
 
 ---
 

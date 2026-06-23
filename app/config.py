@@ -37,9 +37,15 @@ class Settings(BaseSettings):
 
     local_llm_provider: str = Field(default="", alias="LOCAL_LLM_PROVIDER")
     writer_provider: str = Field(default="", alias="WRITER_PROVIDER")
+    long_writer_provider: str = Field(default="", alias="LONG_WRITER_PROVIDER")
+    polish_provider: str = Field(default="", alias="POLISH_PROVIDER")
     gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     gemini_lite_model: str = Field(default="gemini-2.5-flash-lite", alias="GEMINI_LITE_MODEL")
     gemini_flash_model: str = Field(default="gemini-2.5-flash", alias="GEMINI_FLASH_MODEL")
+
+    kimi_api_key: str = Field(default="", alias="KIMI_API_KEY")
+    kimi_base_url: str = Field(default="https://api.moonshot.ai/v1", alias="KIMI_BASE_URL")
+    kimi_model: str = Field(default="kimi-k2", alias="KIMI_MODEL")
 
     context_char_budget: int = Field(default=12000, alias="CONTEXT_CHAR_BUDGET")
     llm_max_retries: int = Field(default=2, alias="LLM_MAX_RETRIES")

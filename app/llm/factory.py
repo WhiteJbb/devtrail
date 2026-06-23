@@ -82,6 +82,16 @@ def get_local_llm_provider(settings: Settings) -> LLMProvider:
     return get_llm_provider(settings)
 
 
+def get_task_llm_provider(task_type: str, settings: Settings) -> LLMProvider:
+    """task_type 기반 FallbackChain 반환.
+
+    task_type 후보: 'light', 'writer', 'long_writer', 'polish', 'local'.
+    알 수 없는 값이면 'writer'를 기본으로 사용한다.
+    """
+    from app.llm.router import get_provider_for_task
+    return get_provider_for_task(task_type, settings)
+
+
 def _make_provider(provider_name: str, settings: Settings, prefer_flash: bool = False) -> LLMProvider:
     provider = (provider_name or "").strip().lower()
 
