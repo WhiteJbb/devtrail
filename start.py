@@ -65,23 +65,50 @@ def ollama_running() -> bool:
 
 def vault_status(vault: Path) -> dict:
     """Vault의 현재 상태를 반환한다."""
+    import re as _re
+
+    today = time.strftime("%Y-%m-%d")
+
     raw_count = sum(
         1 for p in vault.rglob("*.md")
         if any(str(p.relative_to(vault)).startswith(prefix)
                for prefix in ("00_Inbox", "10_Worklog"))
     )
-    candidate_count = sum(
-        1 for p in (vault / "60_Candidates").rglob("*.md")
-        if (vault / "60_Candidates") in p.parents or p.parent == vault / "60_Candidates"
-    ) if (vault / "60_Candidates").exists() else 0
+
+    # 후보 전체 및 오늘 생성분, kind별 분류
+    candidate_by_kind: dict[str, int] = {}
+    candidate_today = 0
+    cand_dir = vault / "60_Candidates"
+    if cand_dir.exists():
+        for p in cand_dir.rglob("*.md"):
+            # 파일명 앞 8자리가 오늘 날짜면 오늘 생성
+            stem = p.stem
+            if stem[:8].replace("-", "") == today.replace("-", ""):
+                candidate_today += 1
+            # 상위 폴더명으로 kind 분류
+            kind_folder = p.parent.name
+            candidate_by_kind[kind_folder] = candidate_by_kind.get(kind_folder, 0) + 1
+    candidate_count = sum(candidate_by_kind.values())
 
     knowledge_count = sum(1 for _ in (vault / "20_Knowledge").rglob("*.md")) \
         if (vault / "20_Knowledge").exists() else 0
 
+    # 마지막 distill 날짜: 50_Outputs/Digest/ 최신 파일에서 추출
+    last_distill = ""
+    digest_dir = vault / "50_Outputs" / "Digest"
+    if digest_dir.exists():
+        digests = sorted(digest_dir.glob("*.md"), reverse=True)
+        if digests:
+            m = _re.match(r"(\d{4}-\d{2}-\d{2})", digests[0].stem)
+            last_distill = m.group(1) if m else ""
+
     return {
         "raw": raw_count,
         "candidates": candidate_count,
+        "candidate_today": candidate_today,
+        "candidate_by_kind": candidate_by_kind,
         "knowledge": knowledge_count,
+        "last_distill": last_distill,
     }
 
 
@@ -166,11 +193,30 @@ def main():
         ok(f"Vault: {vault}")
         print(f"       raw 기록: {status['raw']}개  |  후보 대기: {status['candidates']}개  |  지식: {status['knowledge']}개")
 
+        # 오늘 후보 및 kind별 breakdown
+        if status["candidate_today"]:
+            print(f"       오늘 생성 후보: {status['candidate_today']}개")
+        if status["candidate_by_kind"]:
+            kind_str = "  ".join(
+                f"{k}: {v}" for k, v in sorted(status["candidate_by_kind"].items())
+            )
+            print(f"       종류별: {kind_str}")
+
+        # 마지막 distill
+        if status["last_distill"]:
+            today_str = time.strftime("%Y-%m-%d")
+            if status["last_distill"] == today_str:
+                print(f"       마지막 distill: 오늘 ({status['last_distill']})")
+            else:
+                print(f"       마지막 distill: {status['last_distill']}")
+
         # 다음 권장 액션 제안
         if status["raw"] > 0 and status["candidates"] == 0:
             info(f"raw 기록 {status['raw']}개 → distill-today 실행 권장")
-        elif status["candidates"] > 0:
+        elif status["candidates"] > 0 and not status["last_distill"]:
             info(f"후보 {status['candidates']}개 대기 중 → list-candidates 로 검토 권장")
+        elif status["raw"] > 0 and status["last_distill"] and status["last_distill"] < time.strftime("%Y-%m-%d"):
+            info("오늘 distill 미실행 → nightly-distill 실행 권장")
     elif vault:
         warn(f"Vault 없음: {vault}  — init-vault 실행 권장")
     else:
@@ -209,10 +255,8 @@ def main():
     print(f"    {py} -m app.cli list-candidates")
     print(f"    {py} -m app.cli promote-candidate '60_Candidates/Knowledge/...'")
     print()
-    print("  [검색 / Wiki]")
+    print("  [검색 / 컨텍스트]")
     print(f"    {py} -m app.cli search 'RAG 검색'")
-    print(f"    {py} -m app.cli wiki-ingest")
-    print(f"    {py} -m app.cli wiki-query 'vLLM 설정 방법'")
     print(f"    {py} -m app.cli build-context 'XCoreChat 개발환경 분리'")
     print()
     print("  [글쓰기]")

@@ -398,11 +398,39 @@ def promote_candidate(
 
 @app.command("apply-memory-patch")
 def apply_memory_patch(
-    rel_path: str = typer.Argument(..., help="적용할 MemoryPatch 후보 경로 (vault 기준)"),
+    rel_path: str = typer.Argument(default="", help="적용할 MemoryPatch 후보 경로 (vault 기준). 생략 시 인터랙티브 선택."),
+    interactive: bool = typer.Option(False, "--interactive", "-i", help="목록에서 번호로 선택"),
 ) -> None:
-    """MemoryPatch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다."""
+    """MemoryPatch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다.
+
+    경로를 생략하거나 -i 플래그를 쓰면 후보 목록에서 번호로 선택할 수 있다.
+    """
+    curator = _curator_agent()
+
+    if not rel_path or interactive:
+        patches = [c for c in curator.list_candidates() if c.kind == "memory_patch"]
+        if not patches:
+            typer.echo("적용할 MemoryPatch 후보가 없습니다.")
+            raise typer.Exit()
+
+        typer.secho("\nMemoryPatch 후보 목록", fg=typer.colors.CYAN, bold=True)
+        for i, p in enumerate(patches, 1):
+            typer.echo(f"  {i}. {p.title}")
+            typer.echo(f"     {p.rel_path}")
+
+        choice = typer.prompt("\n번호 선택 (취소: 0)", default="0")
+        try:
+            idx = int(choice)
+        except ValueError:
+            idx = 0
+        if idx == 0 or idx > len(patches):
+            typer.echo("취소했습니다.")
+            raise typer.Exit()
+
+        rel_path = patches[idx - 1].rel_path
+
     try:
-        result = _curator_agent().apply_memory_patch(rel_path)
+        result = curator.apply_memory_patch(rel_path)
     except ValueError as e:
         _fail(str(e))
 
@@ -650,6 +678,34 @@ def nightly_distill() -> None:
 
     total = len(result.distill.written) + len(result.career.written)
     typer.secho(f"\nnightly-distill 완료: 후보 {total}개 생성", fg=typer.colors.GREEN, bold=True)
+    for w in result.distill.written:
+        typer.echo(f"  [{w.spec.kind}] {w.spec.title}")
+    for w in result.career.written:
+        typer.echo(f"  [career_bullet] {w.spec.title}")
+    typer.echo(f"\n  digest: {result.digest_rel_path}")
+    if result.sent_telegram:
+        typer.secho("  → Telegram 전송 완료", fg=typer.colors.CYAN)
+
+
+@app.command("weekly-distill")
+def weekly_distill() -> None:
+    """최근 7일 raw 기록을 종합 정제하고 weekly digest를 생성한다.
+
+    금요일 마감 시 한 주를 정리하는 용도로 사용한다.
+    MESSENGER_PROVIDER=telegram이면 digest를 자동 전송한다.
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+    try:
+        agent = NightlyDistillAgent(settings=settings)
+    except RuntimeError as e:
+        _fail(str(e))
+
+    result = _handle_llm_errors(lambda: agent.run(weekly=True))
+
+    total = len(result.distill.written) + len(result.career.written)
+    typer.secho(f"\nweekly-distill 완료: 후보 {total}개 생성", fg=typer.colors.GREEN, bold=True)
     for w in result.distill.written:
         typer.echo(f"  [{w.spec.kind}] {w.spec.title}")
     for w in result.career.written:
@@ -954,59 +1010,6 @@ def ask(
 
     reply = _handle_llm_errors(lambda: assistant.execute(intent))
     typer.echo(reply)
-
-
-@app.command("wiki-ingest")
-def wiki_ingest(
-    folder: str = typer.Option("", "--folder", "-f", help="특정 폴더만 처리 (예: 50_Reference/AI)"),
-) -> None:
-    """Obsidian 볼트 소스 문서를 읽어 wiki 페이지를 생성·갱신한다."""
-    from app.agents.wiki_agent import build_wiki_agent
-
-    settings = get_settings()
-    if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
-
-    label = f"폴더: {folder}" if folder else f"전체 볼트: {settings.obsidian_vault_root}"
-    typer.echo(f"wiki 생성 중... ({label})")
-    agent = build_wiki_agent(char_budget=settings.context_char_budget)
-    result = _handle_llm_errors(lambda: agent.ingest(folder_filter=folder))
-    typer.secho(result, fg=typer.colors.GREEN)
-
-
-@app.command("wiki-query")
-def wiki_query(
-    question: str = typer.Argument(..., help="위키에 물어볼 질문"),
-    save: str = typer.Option("", "--save", "-s", help="답변을 wiki 페이지로 저장 (예: ai/rag-tips.md)"),
-) -> None:
-    """wiki를 탐색해 질문에 답한다. --save로 답변을 페이지로 저장할 수 있다."""
-    from app.agents.wiki_agent import build_wiki_agent
-
-    settings = get_settings()
-    if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
-
-    agent = build_wiki_agent(char_budget=settings.context_char_budget)
-    answer = _handle_llm_errors(lambda: agent.query(question))
-    typer.echo(answer)
-    if save:
-        msg = _handle_llm_errors(lambda: agent.file_answer(question, answer, save))
-        typer.secho(f"\n{msg}", fg=typer.colors.GREEN)
-
-
-@app.command("wiki-lint")
-def wiki_lint() -> None:
-    """wiki 건강 상태 점검: 고아 페이지, 누락 링크, 갱신 필요 항목 등."""
-    from app.agents.wiki_agent import build_wiki_agent
-
-    settings = get_settings()
-    if not settings.wiki_enabled:
-        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env를 확인하세요.")
-
-    typer.echo("wiki 점검 중...")
-    agent = build_wiki_agent(char_budget=settings.context_char_budget)
-    result = _handle_llm_errors(lambda: agent.lint())
-    typer.echo(result)
 
 
 @app.command("serve-bot")

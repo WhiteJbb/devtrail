@@ -23,8 +23,6 @@ _HELP = (
     "/context <주제> — Context Pack 조회\n"
     "/candidates — 후보 노트 목록\n"
     "/promote <경로> — 후보 노트 승격\n"
-    "/wiki <질문> — wiki 검색 (예: /wiki vLLM 설정)\n"
-    "/lint — wiki 건강 점검\n"
     "/worklog — 작업 회고\n"
     "/todo — 다음 할 일\n"
     "/portfolio — 포트폴리오 초안\n"
@@ -101,20 +99,7 @@ class CommandRouter:
                 return "게시 기록할 초안이 없습니다."
             return f"게시 완료 기록: {draft.title}\n{draft.published_url}"
 
-        # ── Wiki / 검색 ──────────────────────────────────────────────
-        if cmd in ("wiki", "w"):
-            if not arg:
-                return "질문을 함께 보내주세요. 예: /wiki vLLM 설정 방법"
-            from app.agents.wiki_agent import build_wiki_agent
-            wiki_agent = build_wiki_agent()
-            return wiki_agent.query(arg)
-
-        if cmd == "lint":
-            from app.agents.wiki_agent import build_wiki_agent
-            wiki_agent = build_wiki_agent()
-            result = wiki_agent.lint()
-            return f"wiki 점검 완료\n\n{result[:1500]}"
-
+        # ── 검색 ─────────────────────────────────────────────────────
         if cmd == "search":
             if not arg:
                 return "검색어를 함께 보내주세요. 예: /search RAG"

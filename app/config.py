@@ -71,16 +71,6 @@ class Settings(BaseSettings):
         return self.obsidian_vault_path or self.obsidian_vault_dir
 
     @property
-    def wiki_path(self) -> Path | None:
-        if not self.obsidian_vault_root:
-            return None
-        return Path(self.obsidian_vault_root) / self.wiki_folder
-
-    @property
-    def wiki_enabled(self) -> bool:
-        return bool(self.obsidian_vault_root)
-
-    @property
     def obsidian_enabled(self) -> bool:
         return bool(self.obsidian_vault_root)
 
