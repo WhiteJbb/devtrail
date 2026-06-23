@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import httpx
 
@@ -37,7 +38,7 @@ def _md_to_html(text: str) -> str:
 
     # ``` 코드 블록
     def replace_code_block(m: re.Match) -> str:
-        inner = _escape_html(m.group(2).strip("\n"))
+        inner = _escape_html(m.group(1).strip("\n"))
         return save(f"<pre><code>{inner}</code></pre>")
 
     text = re.sub(r"```[^\n]*\n?([\s\S]*?)```", replace_code_block, text)
@@ -110,11 +111,52 @@ class TelegramProvider:
             msg = upd.get("message") or upd.get("edited_message")
             if not msg:
                 continue
-            text = msg.get("text")
             chat = msg.get("chat", {})
-            if text is None or "id" not in chat:
+            chat_id = str(chat.get("id", ""))
+            if not chat_id:
                 continue
-            messages.append(
-                IncomingMessage(chat_id=str(chat["id"]), text=text, update_id=update_id)
-            )
+
+            text = msg.get("text") or ""
+            caption = msg.get("caption") or ""
+            voice_file_id = ""
+            photo_file_id = ""
+
+            if msg.get("voice"):
+                voice_file_id = str(msg["voice"].get("file_id", ""))
+            elif msg.get("photo"):
+                photos = msg["photo"]
+                if photos:
+                    photo_file_id = str(photos[-1].get("file_id", ""))
+
+            # 텍스트도 없고 미디어도 없으면 skip
+            if not text and not voice_file_id and not photo_file_id:
+                continue
+
+            messages.append(IncomingMessage(
+                chat_id=chat_id,
+                text=text,
+                update_id=update_id,
+                voice_file_id=voice_file_id,
+                photo_file_id=photo_file_id,
+                caption=caption,
+            ))
         return messages, next_offset
+
+    def download_file(self, file_id: str, dest_dir: Path, filename: str = "") -> Path:
+        """Telegram file_id를 받아 dest_dir에 다운로드하고 저장 경로를 반환한다."""
+        resp = httpx.get(
+            self._url("getFile"),
+            params={"file_id": file_id},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        file_path = resp.json()["result"]["file_path"]
+
+        file_url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+        content = httpx.get(file_url, timeout=60.0).content
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        name = filename or Path(file_path).name
+        dest = dest_dir / name
+        dest.write_bytes(content)
+        return dest

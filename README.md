@@ -223,6 +223,49 @@ work-agent serve-bot
 /session <프로젝트>  /worklog           /todo
 ```
 
+`OBSIDIAN_VAULT_PATH` 설정 시 음성(voice)·이미지(photo)·URL 캡처도 자동 처리합니다.
+
+---
+
+## Phase 2 — 야간 자동화 루프
+
+하루 작업이 끝나면 OS 스케줄러가 `nightly-distill`을 실행해 모든 후보를 생성하고 아침에 digest를 확인합니다.
+
+```
+[23:30] nightly-distill
+  ├─ DistillAgent    → 60_Candidates/ (Knowledge / Decisions / MemPatches / BlogIdeas)
+  ├─ CareerBulletAgent → 60_Candidates/CareerBullets/
+  ├─ 50_Outputs/Digest/YYYY-MM-DD-daily-digest.md 저장
+  └─ (선택) Telegram으로 digest 전송
+
+[08:30] push-digest --daily   → 아침에 어제 요약 확인
+```
+
+**설정 (초회 1회):**
+
+```bash
+# Windows
+work-agent print-schedule --windows
+
+# Linux/Mac
+work-agent print-schedule --cron
+```
+
+출력된 명령을 OS 스케줄러에 등록하면 됩니다.
+
+**수동 실행:**
+
+```bash
+work-agent nightly-distill                        # 하루 종합 정제
+work-agent suggest-career-bullets                 # 이력서/포폴 bullet 후보
+work-agent suggest-career-bullets --project 프로젝트명
+work-agent update-open-loops                      # Open Loops MemoryPatch 후보
+work-agent push-digest --daily                    # 오늘 요약 전송
+work-agent push-digest --weekly                   # 7일 요약 전송
+```
+
+**안전 원칙**: AI는 `20_Knowledge/`와 `40_AgentMemory/Core/`를 직접 수정하지 않습니다. 모든 후보는 `60_Candidates/`에 쌓이고 `promote-candidate` / `apply-memory-patch`로 사람이 최종 반영합니다.
+
 ---
 
 ## 프로젝트 구조
@@ -234,6 +277,7 @@ app/
 ├─ agents/             # CaptureAgent, DistillAgent, WikiAgent, WikiBlogAgent
 │                      # CuratorAgent, ProjectAgent
 │                      # WorklogAgent, TodoAgent, PortfolioAgent, ResumeAgent
+│                      # NightlyDistillAgent, CareerBulletAgent, OpenLoopsAgent
 ├─ memory/             # AgentMemoryLoader, ProjectMemoryLoader, ContextPackBuilder
 ├─ services/           # WikiService, CandidateWriter, RepoSnapshot ...
 ├─ llm/                # factory(라우팅), GeminiProvider, ollama, openai_compatible

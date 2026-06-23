@@ -10,6 +10,7 @@ process_once는 네트워크 한 번 폴링 단위라 테스트하기 쉽다.
 from __future__ import annotations
 
 from app.messaging.base import MessengerProvider
+from app.messaging.media_handler import TelegramMediaHandler, is_url
 from app.messaging.router import CommandRouter
 
 _YES = {"예", "네", "ㅇ", "응", "ok", "오케이", "yes", "y"}
@@ -24,10 +25,12 @@ class MessengerBot:
         allowed_chat_ids: list[str] | None = None,
         default_chat_id: str = "",
         assistant=None,
+        media_handler: TelegramMediaHandler | None = None,
     ):
         self.provider = provider
         self.router = router
         self.assistant = assistant
+        self.media_handler = media_handler
         self.allowed_chat_ids = set(allowed_chat_ids or [])
         self.default_chat_id = default_chat_id
         self._offset: int | None = None
@@ -38,6 +41,11 @@ class MessengerBot:
 
     def _handle_text(self, chat_id: str, text: str) -> str:
         t = (text or "").strip()
+
+        # URL 감지 — media_handler가 있을 때만 URL capture로 라우팅
+        if t and self.media_handler is not None and is_url(t):
+            return self.media_handler.handle_url(t)
+
         low = t.lower()
 
         # 1) 확인 대기 중이면 예/아니오 처리
@@ -81,7 +89,13 @@ class MessengerBot:
         for msg in messages:
             if not self._is_allowed(msg.chat_id):
                 continue
-            reply = self._handle_text(msg.chat_id, msg.text)
+            if msg.voice_file_id or msg.photo_file_id:
+                if self.media_handler is not None:
+                    reply = self.media_handler.handle(msg)
+                else:
+                    reply = "미디어 처리가 설정되지 않았습니다. 텍스트 메시지를 사용해 주세요."
+            else:
+                reply = self._handle_text(msg.chat_id, msg.text)
             self.provider.send(msg.chat_id, reply)
             handled += 1
         return handled
