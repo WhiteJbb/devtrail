@@ -9,8 +9,11 @@ from pydantic import BaseModel
 
 class IncomingMessage(BaseModel):
     chat_id: str
-    text: str
+    text: str = ""
     update_id: int
+    voice_file_id: str = ""
+    photo_file_id: str = ""
+    caption: str = ""
 
 
 class MessengerNotConfiguredError(RuntimeError):
