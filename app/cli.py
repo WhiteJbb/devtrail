@@ -232,10 +232,20 @@ def capture_commit(
     repo: Path = typer.Option(Path.cwd(), "--repo", "-r", help="커밋을 읽을 git 저장소"),
     project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
     ref: str = typer.Option("HEAD", "--ref", help="캡처할 commit/ref"),
+    from_agent: bool = typer.Option(False, "--from-agent", help="LLM으로 커밋 의도·결정을 요약한다 (raw diff 대신)"),
 ) -> None:
-    """git commit을 10_Worklog/GitSummaries에 raw Markdown으로 저장한다."""
+    """git commit을 10_Worklog/GitSummaries에 Markdown으로 저장한다."""
+    llm = None
+    if from_agent:
+        from app.llm.factory import get_task_llm_provider
+        try:
+            llm = get_task_llm_provider("light", get_settings())
+        except Exception as e:
+            _fail(f"LLM 초기화 실패: {e}")
     try:
-        result = _capture_agent().capture_commit(repo_dir=repo, project=project, ref=ref)
+        result = _capture_agent().capture_commit(
+            repo_dir=repo, project=project, ref=ref, from_agent=from_agent, llm=llm
+        )
     except ValueError as e:
         _fail(str(e))
     _print_capture_result("commit capture", result)

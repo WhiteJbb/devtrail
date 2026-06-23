@@ -12,6 +12,8 @@ from typing import Any
 import frontmatter
 
 from app.config import Settings, get_settings
+from app.llm.base import LLMProvider
+from app.prompts import render_prompt
 from app.services.repo_snapshot import RepoSnapshot, capture_repo_snapshot
 from app.services.wiki_service import WikiService
 
@@ -55,7 +57,14 @@ class CaptureAgent:
         self._log("capture", project or "manual memo", result.rel_path)
         return result
 
-    def capture_commit(self, repo_dir: Path, project: str = "", ref: str = "HEAD") -> CaptureResult:
+    def capture_commit(
+        self,
+        repo_dir: Path,
+        project: str = "",
+        ref: str = "HEAD",
+        from_agent: bool = False,
+        llm: LLMProvider | None = None,
+    ) -> CaptureResult:
         repo_dir = repo_dir.resolve()
         if self._git(repo_dir, ["rev-parse", "--is-inside-work-tree"]) is None:
             raise ValueError(f"not a git repository: {repo_dir}")
@@ -97,7 +106,22 @@ class CaptureAgent:
         if message_body:
             body += f"## Message\n\n{message_body}\n\n"
         body += f"## Changed Files\n\n{stat or '(no stat)'}\n\n"
-        if diff:
+
+        if from_agent:
+            _llm = llm
+            if _llm is None:
+                from app.llm.factory import get_task_llm_provider
+                _llm = get_task_llm_provider("light", self.settings)
+            commit_context = f"메시지: {subject}\n\n변경 파일:\n{stat}\n\ndiff:\n{diff}"
+            try:
+                summary = _llm.complete(
+                    render_prompt("commit_summary", COMMIT_CONTEXT=commit_context)
+                )
+                body += f"## AI 요약\n\n{summary}\n"
+            except Exception:
+                if diff:
+                    body += f"## Diff\n\n```diff\n{diff}\n```\n"
+        elif diff:
             body += f"## Diff\n\n```diff\n{diff}\n```\n"
 
         result = self._write_note(rel_path, metadata, body, kind="git_summary")

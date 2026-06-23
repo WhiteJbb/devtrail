@@ -18,6 +18,6 @@ REPO=$(git rev-parse --show-toplevel)
 WORK_AGENT_HOME_UNIX=$(echo "$WORK_AGENT_HOME" | tr '\\' '/')
 
 cd "$WORK_AGENT_HOME_UNIX" && \
-  "$PYTHON" -m app.cli capture-commit --repo "$REPO" --project "$PROJECT" 2>/dev/null \
+  "$PYTHON" -m app.cli capture-commit --repo "$REPO" --project "$PROJECT" --from-agent 2>/dev/null \
   && echo "[work-agent] captured -> $PROJECT" \
   || true
