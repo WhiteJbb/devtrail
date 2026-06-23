@@ -25,7 +25,6 @@ DESCRIPTIONS = {
     "preview": "초안 미리보기",
     "export-tistory": "티스토리용 변환",
     "publish-done": "게시 완료 기록",
-    "sync-notion": "Notion 동기화",
     "worklog": "작업 회고 생성",
     "todo": "다음 할 일 제안",
     "portfolio": "포트폴리오 초안 생성",
@@ -42,7 +41,6 @@ _ROUTER_CMD = {
     "preview": "preview",
     "export-tistory": "export",
     "publish-done": "publish",
-    "sync-notion": "sync",
 }
 
 _HELP = (

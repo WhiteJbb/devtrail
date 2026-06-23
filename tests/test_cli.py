@@ -2,19 +2,8 @@ from typer.testing import CliRunner
 
 from app import cli
 from app.llm.base import LLMNotConfiguredError
-from app.models import BlogPost, TopicSuggestion
 
 runner = CliRunner()
-
-
-class _FakeBlogAgent:
-    """CLI 테스트용 BlogAgent 대역 (legacy list/preview 커맨드용)."""
-
-    def __init__(self, *a, **k):
-        pass
-
-    def preview(self, target="latest"):
-        return None
 
 
 class _FakeDistillAgent:
@@ -43,9 +32,9 @@ def test_suggest_topics_llm_not_configured(monkeypatch):
 def test_suggest_topics_prints(monkeypatch):
     from app.agents.distill_agent import DistillResult
     from app.services.candidate_writer import CandidateSpec, CandidateWriteResult
+    from pathlib import Path
 
     _FakeDistillAgent.raise_llm = False
-    from pathlib import Path
     spec = CandidateSpec(kind="blog_idea", title="RAG 환경 분리", body="", summary="worklog 근거")
     written = [CandidateWriteResult(spec=spec, path=Path("/tmp/rag.md"), rel_path="60_Candidates/BlogIdeas/rag.md")]
     _FakeDistillAgent.suggest_result = DistillResult(written=written, source_refs=[])
@@ -56,16 +45,7 @@ def test_suggest_topics_prints(monkeypatch):
     assert "RAG 환경 분리" in result.output
 
 
-def test_preview_no_drafts(monkeypatch):
-    monkeypatch.setattr(cli, "BlogAgent", _FakeBlogAgent)
-    result = runner.invoke(cli.app, ["preview", "latest"])
-    assert result.exit_code == 0
-    assert "저장된 초안이 없습니다" in result.output
-
-
 def test_ask_requires_llm(monkeypatch):
-    # LLM 미설정 환경에서는 자연어 해석이 불가 → 안내 후 exit 1
-    from app.llm.base import LLMNotConfiguredError
     from app.llm import factory as llm_factory
 
     monkeypatch.setattr(

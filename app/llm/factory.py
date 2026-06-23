@@ -3,10 +3,37 @@
 from __future__ import annotations
 
 from app.config import Settings
-from app.llm.base import LLMNotConfiguredError, LLMProvider
+from app.llm.base import LLMError, LLMNotConfiguredError, LLMProvider
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.ollama_provider import OllamaProvider
 from app.llm.openai_compatible_provider import OpenAICompatibleProvider
+
+
+class _FallbackProvider:
+    """primary 호출 실패 시 fallback으로 재시도하는 래퍼."""
+
+    def __init__(self, primary: LLMProvider, fallback: LLMProvider) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self.name = f"{primary.name}(fallback={fallback.name})"
+        self.model = primary.model
+
+    def complete(self, prompt: str, system: str = "") -> str:
+        try:
+            return self._primary.complete(prompt, system)
+        except LLMError:
+            return self._fallback.complete(prompt, system)
+
+
+def _make_gemini(settings: Settings, model: str | None = None) -> GeminiProvider | None:
+    """GEMINI_API_KEY가 있으면 GeminiProvider를 반환, 없으면 None."""
+    if not settings.gemini_api_key:
+        return None
+    return GeminiProvider(
+        api_key=settings.gemini_api_key,
+        model=model or settings.gemini_flash_model,
+        max_retries=settings.llm_max_retries,
+    )
 
 
 def get_llm_provider(settings: Settings) -> LLMProvider:
@@ -33,12 +60,25 @@ def get_writer_llm_provider(settings: Settings) -> LLMProvider:
 def get_local_llm_provider(settings: Settings) -> LLMProvider:
     """분류·태깅·짧은 요약 등 저비용 작업용 provider.
 
-    LOCAL_LLM_PROVIDER가 설정되면 그것을 우선 사용한다.
-    미설정이면 LLM_PROVIDER로 폴백한다.
+    LOCAL_LLM_PROVIDER가 설정되면 우선 사용한다.
+    - 설정이 없거나 초기화 실패 시: Gemini로 폴백
+    - 설정이 있고 초기화 성공 시: 런타임 오류에도 Gemini로 폴백 (GEMINI_API_KEY 있을 때)
+    - Gemini도 없으면 LLM_PROVIDER로 최종 폴백
     """
     local = (settings.local_llm_provider or "").strip().lower()
+    gemini = _make_gemini(settings, model=settings.gemini_lite_model)
+
     if local:
-        return _make_provider(local, settings)
+        try:
+            primary = _make_provider(local, settings)
+            return _FallbackProvider(primary, gemini) if gemini else primary
+        except LLMNotConfiguredError:
+            if gemini:
+                return gemini
+            raise
+
+    if gemini:
+        return gemini
     return get_llm_provider(settings)
 
 
