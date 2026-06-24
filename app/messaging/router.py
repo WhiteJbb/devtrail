@@ -22,7 +22,7 @@ _HELP = (
     "/worklog — 오늘 작업 회고\n"
     "/write <주제> — 블로그 초안 작성\n"
     "\n"
-    "기타: /list /promote /context /resume /portfolio"
+    "기타: /list /promote /context /resume /portfolio /sync"
 )
 
 
@@ -112,6 +112,54 @@ class CommandRouter:
             for r in results:
                 lines.append(f"· {r.note.title} ({r.note.path})")
             return "\n".join(lines)
+
+        # ── Vault Sync ────────────────────────────────────────────────
+        if cmd == "sync":
+            import subprocess
+            import sys
+            from pathlib import Path
+
+            repo_root = Path(__file__).parent.parent.parent
+            script = repo_root / "scripts" / "sync-vault.ps1"
+
+            if not script.exists():
+                return f"sync-vault.ps1 를 찾을 수 없습니다.\n{script}"
+
+            if sys.platform != "win32":
+                return "sync 커맨드는 Windows 서버에서만 지원됩니다."
+
+            try:
+                proc = subprocess.run(
+                    [
+                        "powershell.exe",
+                        "-NonInteractive",
+                        "-ExecutionPolicy", "Bypass",
+                        "-File", str(script),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                out = proc.stdout + proc.stderr
+
+                if "Nothing to sync" in out:
+                    return "✅ Vault 이미 최신 상태"
+
+                if proc.returncode != 0 or "ERROR:" in out:
+                    errors = [l for l in out.splitlines() if "ERROR:" in l]
+                    err_msg = "\n".join(errors)[:400] if errors else out[-400:]
+                    return f"❌ 동기화 실패\n{err_msg}"
+
+                lines = [l for l in out.splitlines() if any(k in l for k in ("commit:", "pull:", "push:", "Committed", "done"))]
+                summary = "\n".join(l.split("  ", 1)[-1] for l in lines[-6:])
+                return f"✅ Vault 동기화 완료\n{summary}"
+
+            except subprocess.TimeoutExpired:
+                return "⏱ 동기화 타임아웃 (120초 초과)"
+            except Exception as e:
+                return f"❌ 동기화 실패: {e}"
 
         # ── Session ───────────────────────────────────────────────────
         if cmd == "session":

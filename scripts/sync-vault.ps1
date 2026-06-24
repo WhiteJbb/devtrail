@@ -55,7 +55,6 @@ if (-not $VaultDir -or -not (Test-Path $VaultDir)) {
     exit 1
 }
 
-Log "=== sync-vault start === ($VaultDir)"
 Set-Location $VaultDir
 
 # ── 충돌 상태 체크 ────────────────────────────────────────────────────
@@ -69,62 +68,79 @@ if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
 # ── fetch ──────────────────────────────────────────────────────────────
 git fetch origin 2>&1 | ForEach-Object { Log "fetch: $_" }
 
-# ── 로컬 변경 커밋 (AI 폴더만) ────────────────────────────────────────
+# ── 로컬 변경 확인 (AI 폴더만) ───────────────────────────────────────
 $aiFolders = @("00_Inbox", "10_Worklog", "50_Outputs", "60_Candidates")
-$hasChanges = $false
-
+$hasLocal = $false
 foreach ($folder in $aiFolders) {
-    if (Test-Path $folder) {
-        $changes = git status --porcelain $folder 2>&1
-        if ($changes) { $hasChanges = $true; break }
+    if ((Test-Path $folder) -and (git status --porcelain $folder 2>&1)) {
+        $hasLocal = $true; break
     }
 }
 
-if ($hasChanges) {
+# ── remote 변경 확인 ──────────────────────────────────────────────────
+$localRev  = git rev-parse HEAD
+$remoteRev = git rev-parse "@{u}" 2>&1
+$hasRemote = ($localRev -ne $remoteRev)
+
+# 둘 다 없으면 조기 종료
+if (-not $hasLocal -and -not $hasRemote) {
+    Log "Nothing to sync."
+    exit 0
+}
+
+Log "=== sync-vault start === (local=$hasLocal remote=$hasRemote)"
+
+# ── 로컬 변경 커밋 ────────────────────────────────────────────────────
+if ($hasLocal) {
     foreach ($folder in $aiFolders) {
         if (Test-Path $folder) {
             git add $folder 2>&1 | ForEach-Object { Log "add: $_" }
         }
     }
-
     if (-not $CommitMsg) {
         $CommitMsg = "auto: vault sync $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
     }
-
     git commit -m $CommitMsg 2>&1 | ForEach-Object { Log "commit: $_" }
     Log "Committed local changes."
-} else {
-    Log "No local changes in AI folders."
 }
 
 # ── pull --rebase ──────────────────────────────────────────────────────
-git pull --rebase 2>&1 | ForEach-Object { Log "pull: $_" }
+if ($hasRemote -or $hasLocal) {
+    git pull --rebase 2>&1 | ForEach-Object { Log "pull: $_" }
 
-if ($LASTEXITCODE -ne 0) {
-    $msg = "[work-agent] Vault rebase 실패. 수동 해결 필요: $VaultDir"
-    Log "ERROR: $msg"
-    Send-TelegramAlert $msg
-    # rebase 중단
-    git rebase --abort 2>&1 | Out-Null
-    exit 1
+    if ($LASTEXITCODE -ne 0) {
+        $msg = "[work-agent] Vault rebase 실패. 수동 해결 필요: $VaultDir"
+        Log "ERROR: $msg"
+        Send-TelegramAlert $msg
+        git rebase --abort 2>&1 | Out-Null
+        exit 1
+    }
+
+    if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
+        $msg = "[work-agent] Vault rebase 충돌 감지. 수동 해결 필요: $VaultDir"
+        Log "ERROR: $msg"
+        Send-TelegramAlert $msg
+        exit 1
+    }
 }
 
-# rebase 후 충돌 상태 재확인
-if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
-    $msg = "[work-agent] Vault rebase 충돌 감지. 수동 해결 필요: $VaultDir"
-    Log "ERROR: $msg"
-    Send-TelegramAlert $msg
-    exit 1
-}
+# ── push (로컬 커밋이 있을 때만) ──────────────────────────────────────
+if ($hasLocal) {
+    git push 2>&1 | ForEach-Object { Log "push: $_" }
 
-# ── push ───────────────────────────────────────────────────────────────
-git push 2>&1 | ForEach-Object { Log "push: $_" }
+    if ($LASTEXITCODE -ne 0) {
+        $msg = "[work-agent] Vault push 실패 (exit $LASTEXITCODE)"
+        Log "ERROR: $msg"
+        Send-TelegramAlert $msg
+        exit 1
+    }
 
-if ($LASTEXITCODE -ne 0) {
-    $msg = "[work-agent] Vault push 실패 (exit $LASTEXITCODE)"
-    Log "ERROR: $msg"
-    Send-TelegramAlert $msg
-    exit 1
+    # 커밋된 파일 목록 수집해서 알림
+    $changed = git diff --name-only HEAD~1 HEAD 2>&1 | Where-Object { $_ -ne "" }
+    $count   = ($changed | Measure-Object).Count
+    $preview = ($changed | Select-Object -First 5) -join "`n  "
+    $more    = if ($count -gt 5) { "`n  ... 외 $($count - 5)개" } else { "" }
+    Send-TelegramAlert "📥 Vault 업데이트 ($count개 파일)`n  $preview$more"
 }
 
 Log "sync-vault done"

@@ -31,7 +31,7 @@ $PyExe = $null
 
 # py launcher가 있으면 설치된 버전 목록을 읽어 3.10+ 중 최신을 선택
 # py --list 출력 형식: " -3.14-64"
-$pyListRaw = py --list 2>&1 | Where-Object { $_ -match "^\s*-3\.\d+" }
+$pyListRaw = py --list 2>$null | Where-Object { $_ -match "^\s*-3\.\d+" }
 if ($pyListRaw) {
     $versions = $pyListRaw |
         ForEach-Object {
