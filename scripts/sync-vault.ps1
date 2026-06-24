@@ -77,6 +77,9 @@ foreach ($folder in $aiFolders) {
         $hasLocal = $true; break
     }
 }
+if (-not $hasLocal -and (Test-Path "log.md") -and (git status --porcelain "log.md" 2>&1)) {
+    $hasLocal = $true
+}
 
 # ── remote 변경 확인 ──────────────────────────────────────────────────
 $localRev  = git rev-parse HEAD
@@ -97,6 +100,9 @@ if ($hasLocal) {
         if (Test-Path $folder) {
             git add $folder 2>&1 | ForEach-Object { Log "add: $_" }
         }
+    }
+    if (Test-Path "log.md") {
+        git add "log.md" 2>&1 | ForEach-Object { Log "add: $_" }
     }
     if (-not $CommitMsg) {
         $CommitMsg = "auto: vault sync $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
