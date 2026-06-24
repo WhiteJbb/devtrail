@@ -43,15 +43,7 @@ _ROUTER_CMD = {
     "publish-done": "publish",
 }
 
-_HELP = (
-    "이렇게 자유롭게 말해보세요:\n"
-    "· \"쓸만한 주제 추천해줘\"\n"
-    "· \"프로젝트 기반으로 초안 써줘\"\n"
-    "· \"방금 초안 다듬어줘\"\n"
-    "· \"오늘 작업 회고 정리해줘\"\n"
-    "· \"오늘 작업 세션 정리해줘\" (세션 노트 저장)\n"
-    "· \"다음 할 일 알려줘\" / \"포트폴리오 초안\" / \"이력서 초안\""
-)
+from app.messaging.router import _HELP
 
 # 확장 Agent 팩토리(테스트에서 주입 가능)
 DocFactory = Callable[[], object]
