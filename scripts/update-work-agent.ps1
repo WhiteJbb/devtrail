@@ -52,6 +52,13 @@ if ($botProc) {
     Log "Bot process stopped."
 }
 
+# 이전 실패로 남은 pip 임시 디렉터리 정리 (~로 시작하는 invalid distribution)
+$sitePackages = "$RepoRoot\.venv\Lib\site-packages"
+Get-ChildItem "$sitePackages\~*" -ErrorAction SilentlyContinue | ForEach-Object {
+    Remove-Item $_.FullName -Recurse -Force
+    Log "Cleaned stale pip temp: $($_.Name)"
+}
+
 Log "Reinstalling package..."
 & "$RepoRoot\.venv\Scripts\python.exe" -m pip install -e "$RepoRoot" 2>&1 | ForEach-Object { Log "pip: $_" }
 if ($LASTEXITCODE -ne 0) {
