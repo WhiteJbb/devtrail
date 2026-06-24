@@ -18,6 +18,7 @@ from app.assistant.intent import Intent
 
 # command → 사람이 읽을 설명(확인 메시지용)
 DESCRIPTIONS = {
+    "capture": "메모 저장",
     "suggest-topics": "블로그 주제 추천",
     "list": "초안 목록 보기",
     "write-draft": "블로그 초안 생성",
@@ -101,6 +102,17 @@ class Assistant:
     # ----- 3) 실행 -----
     def execute(self, intent: Intent) -> str:
         cmd = intent.command
+
+        if cmd == "capture":
+            if not intent.arg:
+                return "저장할 내용을 함께 말씀해 주세요."
+            from app.agents import CaptureAgent
+            try:
+                result = CaptureAgent().capture(text=intent.arg)
+            except RuntimeError as e:
+                return f"저장 실패: {e}"
+            verb = "저장" if result.created else "기존 파일 유지"
+            return f"메모 {verb} 완료\n{result.rel_path}"
 
         if cmd == "capture-session":
             from app.agents import CaptureAgent
