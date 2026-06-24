@@ -50,4 +50,12 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# 봇 프로세스 재시작 (run-bot-service.ps1이 10초 후 새 코드로 자동 재기동)
+$botProc = Get-Process -Name "work-agent" -ErrorAction SilentlyContinue
+if ($botProc) {
+    Log "Restarting bot process to apply new code..."
+    $botProc | Stop-Process -Force
+    Log "Bot process stopped. run-bot-service will restart it."
+}
+
 Log "update-work-agent done"
