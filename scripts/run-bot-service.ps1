@@ -20,6 +20,8 @@ if (-not (Test-Path $wa)) {
     exit 1
 }
 
+Set-Location $RepoRoot
+
 Log "=== bot service start ==="
 
 while ($true) {
