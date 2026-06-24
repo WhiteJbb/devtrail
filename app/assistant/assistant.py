@@ -43,7 +43,22 @@ _ROUTER_CMD = {
     "publish-done": "publish",
 }
 
-from app.messaging.router import _HELP
+_HELP = (
+    "**Work Agent**\n"
+    "안녕하세요. 개인 지식 관리 에이전트입니다.\n"
+    "\n"
+    "말로 편하게 지시하면 처리해 드립니다.\n"
+    "\n"
+    "**자주 쓰는 요청**\n"
+    "\"오늘 할 일 정리해줘\"\n"
+    "\"작업 회고 써줘\"\n"
+    "\"블로그 주제 추천해줘\"\n"
+    "\"[주제] 초안 써줘\"\n"
+    "\"오늘 세션 정리해줘\"\n"
+    "URL 붙여넣기 → 자동 요약 저장\n"
+    "\n"
+    "슬래시 명령 목록은 /help"
+)
 
 # 확장 Agent 팩토리(테스트에서 주입 가능)
 DocFactory = Callable[[], object]
