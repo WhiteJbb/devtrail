@@ -78,8 +78,8 @@
 
 | 스크립트 | 상태 | 비고 |
 |----------|------|------|
-| `sync-vault.ps1` vault git 동기화 | ✅ | AI 폴더 + log.md 추적 |
-| `update-work-agent.ps1` 자동 업데이트 | ✅ | bot 먼저 종료 후 pip install |
+| `sync-vault.ps1` vault git 동기화 | ✅ | AI 폴더 + log.md 추적, union merge |
+| `update-work-agent.ps1` 자동 업데이트 | ✅ | 락 파일로 bot 재시작 차단 후 pip install |
 | `run-nightly-safe.ps1` | ✅ | lock 파일, Telegram 오류 알림 |
 | `run-weekly-safe.ps1` | ✅ | |
 | `run-bot-service.ps1` | ✅ | SYSTEM 계정, 로그인 불필요 |
