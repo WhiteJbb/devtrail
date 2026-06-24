@@ -24,7 +24,7 @@ Log "=== bot service start ==="
 
 while ($true) {
     Log "Starting bot..."
-    $output = & $wa run-bot 2>&1
+    $output = & $wa serve-bot 2>&1
     $code = $LASTEXITCODE
     if ($output) {
         $output | ForEach-Object { Log "  $_" }
