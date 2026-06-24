@@ -49,15 +49,10 @@ Set-Content $LockFile "" -Encoding UTF8
 Log "Update lock created."
 
 try {
-    # 봇 프로세스 종료 (work-agent.exe 점유 해제)
-    $botProc = Get-Process -Name "work-agent" -ErrorAction SilentlyContinue
-    if ($botProc) {
-        Log "Stopping bot process before reinstall..."
-        $botProc | Stop-Process -Force
-        # 프로세스 완전 종료 대기 (최대 10초)
-        $botProc | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
-        Log "Bot process stopped."
-    }
+    # work-agent.exe 프로세스 트리 강제 종료 (launcher + 자식 python.exe 포함)
+    Log "Stopping work-agent process tree..."
+    taskkill /F /IM work-agent.exe /T 2>&1 | ForEach-Object { Log "taskkill: $_" }
+    Start-Sleep -Seconds 3
 
     # 이전 실패로 남은 pip 임시 디렉터리 정리 (~로 시작하는 invalid distribution)
     $sitePackages = "$RepoRoot\.venv\Lib\site-packages"
