@@ -124,6 +124,7 @@ class WikiService:
             "index.md": self._default_root_index(),
             "log.md": "# Log\n\n",
             "AGENTS.md": self._default_vault_agents(),
+            ".gitattributes": "log.md merge=union\n",
         }
         for rel, content in root_files.items():
             self._write_if_missing(rel, content, created_files, existing_files)
