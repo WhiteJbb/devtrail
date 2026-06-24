@@ -3,7 +3,8 @@
 # 충돌 감지 시 중단 + Telegram 알림
 
 param(
-    [string]$CommitMsg = ""   # 커밋 메시지 직접 지정 (생략 시 자동 생성)
+    [string]$CommitMsg = "",  # 커밋 메시지 직접 지정 (생략 시 자동 생성)
+    [switch]$Internal         # nightly에서 호출 시 lock 체크 건너뜀
 )
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -42,8 +43,8 @@ function Send-TelegramAlert($text) {
     }
 }
 
-# ── nightly 실행 중이면 건너뜀 ────────────────────────────────────────
-if (Test-Path $LockFile) {
+# ── nightly 실행 중이면 건너뜀 (직접 호출 시 제외) ───────────────────
+if (-not $Internal -and (Test-Path $LockFile)) {
     Log "Nightly lock active — skip vault sync."
     exit 0
 }
