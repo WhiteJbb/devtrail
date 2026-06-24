@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -152,9 +153,15 @@ class DistillAgent:
 
     def _inject_related_links(self, results: list[CandidateWriteResult], related: list[WikiNote]) -> None:
         """LLM 출력과 무관하게 related 노트를 ## 관련 노트 섹션에 주입한다."""
-        if not related or not results:
+        if not results:
             return
-        links = "\n".join(f"- [[{Path(r.path).stem}|{r.title}]]" for r in related)
+        # related 없으면 placeholder로 정리; 있으면 실제 wikilink 주입
+        content = (
+            "\n".join(f"- [[{Path(r.path).stem}|{r.title}]]" for r in related)
+            if related
+            else "(관련 기존 지식 노트 없음)"
+        )
+        _SECTION_PAT = re.compile(r"(?s)(## 관련 노트[ \t]*\n)(.*?)(?=\n## |\Z)")
         for result in results:
             try:
                 post = fm.loads(result.path.read_text(encoding="utf-8"))
@@ -162,17 +169,18 @@ class DistillAgent:
                 continue
             body: str = post.content
             if "## 관련 노트" in body:
-                # LLM이 placeholder만 남긴 경우 교체
-                if "(관련 기존 지식 노트 없음)" in body:
-                    body = body.replace("(관련 기존 지식 노트 없음)", links, 1)
-                # LLM이 실제 링크를 이미 넣은 경우: 유지
-            else:
-                # 섹션 자체가 없으면 ## Source Refs 앞에 삽입, 없으면 말미에 추가
+                # LLM이 넣은 내용(placeholder 또는 임의 링크)과 무관하게 교체
+                body = _SECTION_PAT.sub(
+                    lambda _: f"## 관련 노트\n\n{content}\n",
+                    body,
+                )
+            elif related:
+                # 섹션 자체가 없고 related가 있으면 ## Source Refs 앞에 삽입
                 marker = "\n\n## Source Refs"
                 if marker in body:
-                    body = body.replace(marker, f"\n\n## 관련 노트\n\n{links}{marker}", 1)
+                    body = body.replace(marker, f"\n\n## 관련 노트\n\n{content}{marker}", 1)
                 else:
-                    body = body.rstrip() + f"\n\n## 관련 노트\n\n{links}\n"
+                    body = body.rstrip() + f"\n\n## 관련 노트\n\n{content}\n"
             post.content = body
             try:
                 result.path.write_text(fm.dumps(post), encoding="utf-8")
