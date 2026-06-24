@@ -6,47 +6,33 @@ $PS    = "powershell.exe"
 $Flags = "-NonInteractive -ExecutionPolicy Bypass -File"
 $wa    = "$RepoRoot\.venv\Scripts\work-agent.exe"
 
-function Register($name, $trigger, $cmd) {
-    # $trigger를 개별 인수로 분리하기 위해 Invoke-Expression 사용
-    $expr = "schtasks /Create /TN `"$name`" /TR `"$cmd`" /RL HIGHEST /F $trigger"
-    $result = Invoke-Expression $expr 2>&1
+function Register($name, $triggerStr, $script, $extraArgs = @()) {
+    $cmd         = "$PS $Flags `"$script`""
+    $triggerArgs = $triggerStr -split '\s+'
+    $result = & schtasks /Create /TN $name /TR $cmd /RL HIGHEST /F @triggerArgs @extraArgs 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] $name" -ForegroundColor Green
     } else {
-        Write-Host "  [!!] $name - $result" -ForegroundColor Red
+        Write-Host "  [!!] $name - $($result -join ' ')" -ForegroundColor Red
     }
 }
 
 Write-Host "`nTask Scheduler 등록 중...`n" -ForegroundColor White
 
-# 시작 시: Telegram 봇 상시 실행 (SYSTEM으로 실행해야 ONSTART 가능)
-$botCmd = "$PS $Flags `"$RepoRoot\scripts\run-bot-service.ps1`""
-$r = schtasks /Create /TN "work-agent-bot" /TR $botCmd /RL HIGHEST /F /SC ONSTART /RU SYSTEM 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  [OK] work-agent-bot" -ForegroundColor Green
-} else {
-    Write-Host "  [!!] work-agent-bot - $r" -ForegroundColor Red
-}
+# 시작 시: Telegram 봇 (SYSTEM으로 실행 — 로그인 없이도 동작)
+Register "work-agent-bot" "/SC ONSTART" "$RepoRoot\scripts\run-bot-service.ps1" @("/RU", "SYSTEM")
 
 # 10분마다: work-agent 코드 업데이트
-Register "work-agent-update" `
-    "/SC MINUTE /MO 10" `
-    "$PS $Flags `"$RepoRoot\scripts\update-work-agent.ps1`""
+Register "work-agent-update" "/SC MINUTE /MO 10" "$RepoRoot\scripts\update-work-agent.ps1"
 
 # 10분마다: vault git 동기화
-Register "work-agent-vault-sync" `
-    "/SC MINUTE /MO 10" `
-    "$PS $Flags `"$RepoRoot\scripts\sync-vault.ps1`""
+Register "work-agent-vault-sync" "/SC MINUTE /MO 10" "$RepoRoot\scripts\sync-vault.ps1"
 
 # 매일 23:30: nightly 전체 파이프라인
-Register "work-agent-nightly" `
-    "/SC DAILY /ST 23:30" `
-    "$PS $Flags `"$RepoRoot\scripts\run-nightly-safe.ps1`""
+Register "work-agent-nightly" "/SC DAILY /ST 23:30" "$RepoRoot\scripts\run-nightly-safe.ps1"
 
 # 매주 금요일 23:00: weekly distill
-Register "work-agent-weekly" `
-    "/SC WEEKLY /D FRI /ST 23:00" `
-    "$PS $Flags `"$RepoRoot\scripts\run-weekly-safe.ps1`""
+Register "work-agent-weekly" "/SC WEEKLY /D FRI /ST 23:00" "$RepoRoot\scripts\run-weekly-safe.ps1"
 
 Write-Host ""
 Write-Host "등록된 작업 확인:" -ForegroundColor White
