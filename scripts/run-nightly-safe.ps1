@@ -1,4 +1,4 @@
-# nightly 안전 실행 wrapper
+﻿# nightly 안전 실행 wrapper
 # update-work-agent → sync-vault(pull) → nightly-distill → push-digest → sync-vault(push)
 # 충돌/오류 발생 시 중단 + Telegram 알림
 

@@ -1,4 +1,4 @@
-# Vault git 동기화
+﻿# Vault git 동기화
 # AI 폴더 변경만 커밋 → pull --rebase → push
 # 충돌 감지 시 중단 + Telegram 알림
 

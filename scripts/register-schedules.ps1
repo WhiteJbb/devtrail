@@ -1,4 +1,4 @@
-# Windows Task Scheduler 등록
+﻿# Windows Task Scheduler 등록
 # 관리자 권한으로 실행 필요
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent

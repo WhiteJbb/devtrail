@@ -1,4 +1,4 @@
-# work-agent 코드 자동 업데이트
+﻿# work-agent 코드 자동 업데이트
 # 로컬 변경이 있으면 건너뜀. 새 커밋이 있으면 pull + 재설치.
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
