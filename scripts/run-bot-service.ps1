@@ -27,6 +27,12 @@ $env:PYTHONPATH = $RepoRoot
 Log "=== bot service start ==="
 
 while ($true) {
+    # 업데이트 중이면 완료될 때까지 대기
+    while (Test-Path "$RepoRoot\.update.lock") {
+        Log "Update in progress, waiting..."
+        Start-Sleep 3
+    }
+
     Log "Starting bot..."
     $output = & $wa serve-bot 2>&1
     $code = $LASTEXITCODE
