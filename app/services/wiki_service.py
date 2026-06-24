@@ -50,7 +50,6 @@ VAULT_DIRS = [
     "60_Candidates/Decisions",
     "60_Candidates/MemoryPatches",
     "60_Candidates/BlogIdeas",
-    "90_Templates",
 ]
 
 
@@ -131,15 +130,6 @@ class WikiService:
 
         for rel, title in AGENT_MEMORY_FILES.items():
             self._write_if_missing(rel, self._default_agent_memory(title), created_files, existing_files)
-
-        templates = {
-            "90_Templates/Worklog.md": self._template_worklog(),
-            "90_Templates/Knowledge.md": self._template_knowledge(),
-            "90_Templates/Decision.md": self._template_decision(),
-            "90_Templates/BlogDraft.md": self._template_blog_draft(),
-        }
-        for rel, content in templates.items():
-            self._write_if_missing(rel, content, created_files, existing_files)
 
         self.append_vault_log("init", "vault skeleton", [str(p.relative_to(self.vault_dir)) for p in created_files])
         return VaultInitResult(
@@ -236,8 +226,6 @@ class WikiService:
         if any(part.startswith(".") for part in parts):
             return True
         if rel.as_posix() in {"index.md", "log.md", "AGENTS.md"}:
-            return True
-        if parts and parts[0] == "90_Templates":
             return True
         return False
 
@@ -410,66 +398,6 @@ class WikiService:
             "---\n\n"
             f"# {title}\n\n"
             "_Fill this note with durable context that future agents should know._\n"
-        )
-
-    def _template_worklog(self) -> str:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return (
-            "---\n"
-            "type: worklog\n"
-            f"date: {today}\n"
-            "project: \n"
-            "tags: []\n"
-            "source: manual\n"
-            "status: raw\n"
-            "---\n\n"
-            "# Worklog\n\n"
-            "## Done\n\n"
-            "## Blockers\n\n"
-            "## Next\n"
-        )
-
-    def _template_knowledge(self) -> str:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return (
-            "---\n"
-            "type: knowledge\n"
-            "domain: \n"
-            "topic: \n"
-            "status: stable\n"
-            "source_refs: []\n"
-            f"updated_at: {today}\n"
-            "---\n\n"
-            "# Knowledge Note\n\n"
-        )
-
-    def _template_decision(self) -> str:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return (
-            "---\n"
-            "type: decision\n"
-            "project: \n"
-            "topic: \n"
-            "status: proposed\n"
-            f"date: {today}\n"
-            "source_refs: []\n"
-            "---\n\n"
-            "# Decision\n\n"
-        )
-
-    def _template_blog_draft(self) -> str:
-        today = datetime.now().strftime("%Y-%m-%d")
-        return (
-            "---\n"
-            "type: draft\n"
-            "output: blog\n"
-            "project: \n"
-            "status: draft\n"
-            "tags: []\n"
-            "source_refs: []\n"
-            f"created_at: {today}\n"
-            "---\n\n"
-            "# Blog Draft\n\n"
         )
 
     # ── index / log ──────────────────────────────────────────────

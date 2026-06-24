@@ -254,9 +254,17 @@ def capture_commit(
 @app.command("daily-log")
 def daily_log(
     project: str = typer.Option("", "--project", "-p", help="프로젝트별 daily log가 필요할 때 지정"),
+    from_agent: bool = typer.Option(False, "--from-agent", help="LLM으로 오늘 컨텍스트를 읽어 내용을 미리 채운다"),
 ) -> None:
     """오늘 daily worklog 파일을 10_Worklog/Daily에 만든다."""
-    result = _capture_agent().daily_log(project=project)
+    llm = None
+    if from_agent:
+        from app.llm.factory import get_task_llm_provider
+        try:
+            llm = get_task_llm_provider("light", get_settings())
+        except Exception as e:
+            _fail(f"LLM 초기화 실패: {e}")
+    result = _capture_agent().daily_log(project=project, llm=llm)
     _print_capture_result("daily log", result)
 
 

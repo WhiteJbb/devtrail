@@ -360,14 +360,40 @@ class CaptureAgent:
         url: str,
         title: str = "",
         source: str = "telegram_url",
+        llm: LLMProvider | None = None,
     ) -> CaptureResult:
         """URL을 00_Inbox/Captures/에 노트로 저장한다."""
+        import json
         import urllib.parse
 
         stamp = self._timestamp()
         domain = urllib.parse.urlparse(url).netloc or "url"
         rel_path = f"00_Inbox/Captures/{stamp}-{self._slug(domain)}.md"
-        fetched_title = title or self._fetch_url_title(url)
+
+        fetched_title, page_text = self._fetch_url_content(url)
+        if title:
+            fetched_title = title
+
+        summary = ""
+        tags: list[str] = ["capture", "url"]
+
+        if llm and page_text:
+            try:
+                raw = llm.complete(
+                    render_prompt(
+                        "url_summary",
+                        URL=url,
+                        TITLE=fetched_title or "(없음)",
+                        CONTENT=page_text,
+                    )
+                ).strip()
+                parsed = json.loads(raw)
+                summary = parsed.get("summary", "")
+                extra = parsed.get("tags", [])
+                if extra:
+                    tags = list(dict.fromkeys(tags + [str(t) for t in extra]))
+            except Exception:
+                pass
 
         metadata: dict[str, Any] = {
             "type": "capture",
@@ -377,7 +403,7 @@ class CaptureAgent:
             "title": fetched_title,
             "status": "raw",
             "needs_distill": True,
-            "tags": ["capture", "url"],
+            "tags": tags,
         }
         body = (
             "# URL Capture\n\n"
@@ -385,23 +411,32 @@ class CaptureAgent:
             f"- title: {fetched_title or '(없음)'}\n"
             f"- captured_from: {source.replace('_', ' ')}\n"
         )
+        if summary:
+            body += f"\n## Summary\n\n{summary}\n"
+
         result = self._write_note(rel_path, metadata, body, kind="url_capture")
         self._log("capture-url", url[:60], result.rel_path)
         return result
 
     @staticmethod
-    def _fetch_url_title(url: str) -> str:
-        """URL에서 <title>을 추출한다. 실패하면 빈 문자열."""
+    def _fetch_url_content(url: str) -> tuple[str, str]:
+        """URL에서 title과 본문 텍스트를 추출한다. (title, text) 반환. 실패하면 ('', '')."""
         import re as _re
         try:
             import httpx
-            resp = httpx.get(url, timeout=10.0, follow_redirects=True)
-            m = _re.search(r"<title[^>]*>(.*?)</title>", resp.text, _re.IGNORECASE | _re.DOTALL)
-            return m.group(1).strip() if m else ""
+            resp = httpx.get(url, timeout=15.0, follow_redirects=True)
+            html = resp.text
+            m = _re.search(r"<title[^>]*>(.*?)</title>", html, _re.IGNORECASE | _re.DOTALL)
+            fetched_title = m.group(1).strip() if m else ""
+            # script/style 제거 후 태그 strip
+            text = _re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=_re.IGNORECASE | _re.DOTALL)
+            text = _re.sub(r"<[^>]+>", " ", text)
+            text = _re.sub(r"\s+", " ", text).strip()
+            return fetched_title, text[:4000]
         except Exception:
-            return ""
+            return "", ""
 
-    def daily_log(self, project: str = "") -> CaptureResult:
+    def daily_log(self, project: str = "", llm: LLMProvider | None = None) -> CaptureResult:
         date = self._date()
         name = f"{date}-{self._slug(project)}.md" if project else f"{date}.md"
         rel_path = f"10_Worklog/Daily/{name}"
@@ -409,6 +444,25 @@ class CaptureAgent:
         if path.exists():
             self._log("daily-log", project or date, rel_path)
             return CaptureResult(path=path, rel_path=rel_path, created=False, kind="daily_log")
+
+        sections = ""
+        if llm:
+            context = self._gather_daily_context(date, project)
+            if context:
+                try:
+                    sections = llm.complete(
+                        render_prompt("daily_log_suggest", CONTEXT=context)
+                    ).strip()
+                except Exception:
+                    sections = ""
+
+        if not sections:
+            sections = (
+                "## Done\n\n- \n\n"
+                "## Blockers\n\n- \n\n"
+                "## Next\n\n- \n\n"
+                "## Blog Seeds\n\n- \n"
+            )
 
         metadata = {
             "type": "worklog",
@@ -418,20 +472,39 @@ class CaptureAgent:
             "source": "daily-log",
             "status": "raw",
         }
-        body = (
-            f"# Daily Log - {date}\n\n"
-            "## Done\n\n"
-            "- \n\n"
-            "## Blockers\n\n"
-            "- \n\n"
-            "## Next\n\n"
-            "- \n\n"
-            "## Blog Seeds\n\n"
-            "- \n"
-        )
+        body = f"# Daily Log - {date}\n\n{sections}\n"
         result = self._write_note(rel_path, metadata, body, kind="daily_log")
         self._log("daily-log", project or date, result.rel_path)
         return result
+
+    def _gather_daily_context(self, date: str, project: str = "") -> str:
+        """오늘의 작업 컨텍스트를 수집한다: 캡처, git 요약, open loops."""
+        parts: list[str] = []
+
+        captures_dir = self.vault_dir / "00_Inbox" / "Captures"
+        if captures_dir.exists():
+            for f in sorted(captures_dir.glob(f"{date}*.md"))[:10]:
+                try:
+                    parts.append(f"[캡처] {f.stem}\n{f.read_text(encoding='utf-8')[:300]}")
+                except Exception:
+                    pass
+
+        git_dir = self.vault_dir / "10_Worklog" / "GitSummaries"
+        if git_dir.exists():
+            for f in sorted(git_dir.glob(f"{date}*.md"))[:5]:
+                try:
+                    parts.append(f"[Git] {f.stem}\n{f.read_text(encoding='utf-8')[:600]}")
+                except Exception:
+                    pass
+
+        open_loops = self.vault_dir / "40_AgentMemory" / "05_OpenLoops.md"
+        if open_loops.exists():
+            try:
+                parts.append(f"[OpenLoops]\n{open_loops.read_text(encoding='utf-8')[:600]}")
+            except Exception:
+                pass
+
+        return "\n\n---\n\n".join(parts)
 
     def _write_note(self, rel_path: str, metadata: dict[str, Any], body: str, kind: str) -> CaptureResult:
         path = self.vault_dir / rel_path
