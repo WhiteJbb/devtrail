@@ -100,6 +100,7 @@ powershell -ExecutionPolicy Bypass -File C:\work\work-agent\scripts\register-sch
 | `work-agent-update` | 10분마다 | `update-work-agent.ps1` |
 | `work-agent-vault-sync` | 10분마다 | `sync-vault.ps1` |
 | `work-agent-nightly` | 매일 23:30 | `run-nightly-safe.ps1` |
+| `work-agent-weekly` | 매주 금요일 23:00 | `work-agent weekly-distill` |
 
 등록 확인:
 
@@ -113,6 +114,7 @@ schtasks /Query /TN "work-agent-nightly" /FO LIST
 schtasks /Delete /TN work-agent-update     /F
 schtasks /Delete /TN work-agent-vault-sync /F
 schtasks /Delete /TN work-agent-nightly    /F
+schtasks /Delete /TN work-agent-weekly     /F
 ```
 
 ---

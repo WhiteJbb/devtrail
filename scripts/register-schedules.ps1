@@ -32,14 +32,28 @@ Register "work-agent-nightly" `
     "/SC DAILY /ST 23:30" `
     "$RepoRoot\scripts\run-nightly-safe.ps1"
 
+# 매주 금요일 23:00: weekly distill (7일치 종합 정제)
+$wa = "$RepoRoot\.venv\Scripts\work-agent.exe"
+$weeklyCmd = "$PS -NonInteractive -ExecutionPolicy Bypass -Command `"& '$wa' weekly-distill`""
+$result = schtasks /Create /TN "work-agent-weekly" /TR $weeklyCmd /RL HIGHEST /F /SC WEEKLY /D FRI /ST 23:00 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  [OK] work-agent-weekly" -ForegroundColor Green
+} else {
+    Write-Host "  [!!] work-agent-weekly -- $result" -ForegroundColor Red
+}
+
 Write-Host ""
 Write-Host "등록된 작업 확인:" -ForegroundColor White
-schtasks /Query /TN "work-agent-update"    /FO LIST 2>$null | Select-String "Status|Next Run"
-schtasks /Query /TN "work-agent-vault-sync" /FO LIST 2>$null | Select-String "Status|Next Run"
-schtasks /Query /TN "work-agent-nightly"   /FO LIST 2>$null | Select-String "Status|Next Run"
+foreach ($tn in @("work-agent-update", "work-agent-vault-sync", "work-agent-nightly", "work-agent-weekly")) {
+    $q = schtasks /Query /TN $tn /FO LIST 2>$null
+    $status  = ($q | Where-Object { $_ -match "^Status" }  | Select-Object -First 1) -replace "^Status\s*:\s*", ""
+    $nextRun = ($q | Where-Object { $_ -match "^Next Run" } | Select-Object -First 1) -replace "^Next Run Time\s*:\s*", ""
+    Write-Host "  $tn  [$status]  next: $nextRun"
+}
 
 Write-Host ""
 Write-Host "삭제하려면:" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-update     /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-vault-sync /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-nightly    /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-weekly     /F" -ForegroundColor DarkGray
