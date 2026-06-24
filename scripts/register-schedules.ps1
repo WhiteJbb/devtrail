@@ -42,9 +42,14 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  [!!] work-agent-weekly -- $result" -ForegroundColor Red
 }
 
+# 시작 시: Telegram 봇 (크래시 시 자동 재시작)
+Register "work-agent-bot" `
+    "/SC ONSTART /DELAY 0000:30" `
+    "$RepoRoot\scripts\run-bot-service.ps1"
+
 Write-Host ""
 Write-Host "등록된 작업 확인:" -ForegroundColor White
-foreach ($tn in @("work-agent-update", "work-agent-vault-sync", "work-agent-nightly", "work-agent-weekly")) {
+foreach ($tn in @("work-agent-bot", "work-agent-update", "work-agent-vault-sync", "work-agent-nightly", "work-agent-weekly")) {
     $q = schtasks /Query /TN $tn /FO LIST 2>$null
     $status  = ($q | Where-Object { $_ -match "^Status" }  | Select-Object -First 1) -replace "^Status\s*:\s*", ""
     $nextRun = ($q | Where-Object { $_ -match "^Next Run" } | Select-Object -First 1) -replace "^Next Run Time\s*:\s*", ""
@@ -55,5 +60,6 @@ Write-Host ""
 Write-Host "삭제하려면:" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-update     /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-vault-sync /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-bot        /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-nightly    /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-weekly     /F" -ForegroundColor DarkGray
