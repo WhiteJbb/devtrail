@@ -14,6 +14,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+chcp 65001 | Out-Null
 
 # ── 출력 헬퍼 ──────────────────────────────────────────────────────────────────
 
