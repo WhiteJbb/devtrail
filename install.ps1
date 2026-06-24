@@ -1,4 +1,4 @@
-# work-agent 설치 스크립트
+﻿# work-agent 설치 스크립트
 #
 # 최초 설치:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
@@ -76,7 +76,7 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $VenvPip    = Join-Path $VenvDir "Scripts\pip.exe"
 
 if (Test-Path $VenvPython) {
-    ok ".venv 이미 존재 — 건너뜀"
+    ok ".venv 이미 존재 - 건너뜀"
 } else {
     info ".venv 생성 중..."
     & $PyExe -m venv $VenvDir
@@ -89,7 +89,7 @@ step "[ 3 / 5 ]  패키지 설치 (pip install -e .)"
 
 $installed = & $VenvPip show work-agent 2>&1
 if ($installed -match "Version:") {
-    ok "work-agent 이미 설치됨 — 업그레이드 확인 중..."
+    ok "work-agent 이미 설치됨 - 업그레이드 확인 중..."
 }
 
 & $VenvPip install -e $Root -q
@@ -126,9 +126,9 @@ if (Test-Path $EnvFile) {
         Select-Object -First 1) -replace "^\s*OBSIDIAN_VAULT_PATH\s*=\s*", "" -replace '^["\x27]|["\x27]$', ""
     if ($vaultPath) {
         info "OBSIDIAN_VAULT_PATH = $vaultPath"
-        if (-not (Test-Path $vaultPath)) { warn "경로가 존재하지 않습니다 — 확인 필요" }
+        if (-not (Test-Path $vaultPath)) { warn "경로가 존재하지 않습니다 - 확인 필요" }
     } else {
-        warn "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다 — .env를 수정하세요"
+        warn "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다 - .env를 수정하세요"
     }
 } elseif (Test-Path $EnvExample) {
     Copy-Item $EnvExample $EnvFile
@@ -138,7 +138,7 @@ if (Test-Path $EnvFile) {
     warn "  WRITER_PROVIDER     = gemini / openai / ollama 중 택1"
     warn "  GEMINI_API_KEY      = (gemini 사용 시)"
 } else {
-    warn ".env.example 없음 — .env를 직접 생성하세요."
+    warn ".env.example 없음 - .env를 직접 생성하세요."
 }
 
 # ── 훅 설치 (선택) ────────────────────────────────────────────────────────────
