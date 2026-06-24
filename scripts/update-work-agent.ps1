@@ -1,5 +1,6 @@
 # work-agent 코드 자동 업데이트
-# 로컬 변경이 있으면 건너뜀. 새 커밋이 있으면 pull + 재설치.
+# 로컬 변경이 있으면 건너뜀. 새 커밋이 있으면 pull.
+# pyproject.toml 변경 시에만 pip 재설치 (editable install은 소스 변경 자동 반영)
 
 $RepoRoot  = Split-Path $PSScriptRoot -Parent
 $LogFile   = "$RepoRoot\logs\update-work-agent.log"
@@ -36,6 +37,9 @@ if ($local -eq $remote) {
     exit 0
 }
 
+# pyproject.toml 변경 여부 확인 (pull 전에 diff 확인)
+$pyprojectChanged = git diff HEAD "$remote" --name-only 2>&1 | Where-Object { $_ -match "pyproject\.toml" }
+
 Log "New commits detected. Pulling..."
 git pull --ff-only 2>&1 | ForEach-Object { Log "pull: $_" }
 
@@ -44,24 +48,31 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# editable install이므로 pyproject.toml 변경 시에만 pip 재설치 필요
+if (-not $pyprojectChanged) {
+    Log "pyproject.toml unchanged — editable install auto-reflects source changes. Done."
+    exit 0
+}
+
+Log "pyproject.toml changed — reinstalling package..."
+
 # 업데이트 락 생성 — bot service가 재시작을 대기하게 함
 Set-Content $LockFile "" -Encoding UTF8
 Log "Update lock created."
 
 try {
-    # work-agent.exe 프로세스 트리 강제 종료 (launcher + 자식 python.exe 포함)
+    # work-agent.exe 프로세스 트리 강제 종료
     Log "Stopping work-agent process tree..."
     taskkill /F /IM work-agent.exe /T 2>&1 | ForEach-Object { Log "taskkill: $_" }
     Start-Sleep -Seconds 3
 
-    # 이전 실패로 남은 pip 임시 디렉터리 정리 (~로 시작하는 invalid distribution)
+    # 이전 실패로 남은 pip 임시 디렉터리 정리
     $sitePackages = "$RepoRoot\.venv\Lib\site-packages"
     Get-ChildItem "$sitePackages\~*" -ErrorAction SilentlyContinue | ForEach-Object {
         Remove-Item $_.FullName -Recurse -Force
         Log "Cleaned stale pip temp: $($_.Name)"
     }
 
-    Log "Reinstalling package..."
     & "$RepoRoot\.venv\Scripts\python.exe" -m pip install -e "$RepoRoot" 2>&1 | ForEach-Object { Log "pip: $_" }
     if ($LASTEXITCODE -ne 0) {
         Log "ERROR: pip install failed (exit $LASTEXITCODE)"
@@ -70,7 +81,6 @@ try {
 
     Log "update-work-agent done"
 } finally {
-    # 성공·실패 무관하게 락 해제 — bot service 재시작 허용
     Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
     Log "Update lock released."
 }
