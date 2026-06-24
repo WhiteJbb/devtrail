@@ -121,6 +121,15 @@ $EnvExample = Join-Path $Root ".env.example"
 
 if (Test-Path $EnvFile) {
     ok ".env 이미 존재"
+    $vaultPath = (Get-Content $EnvFile -Encoding UTF8 |
+        Where-Object { $_ -match "^\s*OBSIDIAN_VAULT_PATH\s*=" } |
+        Select-Object -First 1) -replace "^\s*OBSIDIAN_VAULT_PATH\s*=\s*", "" -replace '^["\x27]|["\x27]$', ""
+    if ($vaultPath) {
+        info "OBSIDIAN_VAULT_PATH = $vaultPath"
+        if (-not (Test-Path $vaultPath)) { warn "경로가 존재하지 않습니다 — 확인 필요" }
+    } else {
+        warn "OBSIDIAN_VAULT_PATH가 설정되지 않았습니다 — .env를 수정하세요"
+    }
 } elseif (Test-Path $EnvExample) {
     Copy-Item $EnvExample $EnvFile
     ok ".env.example → .env 복사 완료"
