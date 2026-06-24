@@ -35,7 +35,7 @@ function Send-TelegramAlert($text) {
     $chatId = Get-EnvVar "TELEGRAM_CHAT_ID"
     if (-not $token -or -not $chatId) { return }
     $body      = @{ chat_id = $chatId; text = $text } | ConvertTo-Json -Compress
-    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+    $bodyBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($body)
     try {
         Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" `
             -Method Post -Body $bodyBytes -ContentType "application/json; charset=utf-8" | Out-Null
