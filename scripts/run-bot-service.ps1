@@ -24,8 +24,11 @@ Log "=== bot service start ==="
 
 while ($true) {
     Log "Starting bot..."
-    & $wa run-bot
+    $output = & $wa run-bot 2>&1
     $code = $LASTEXITCODE
+    if ($output) {
+        $output | ForEach-Object { Log "  $_" }
+    }
     Log "Bot exited (code=$code). Restarting in 10s..."
     Start-Sleep 10
 }
