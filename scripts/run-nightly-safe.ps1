@@ -82,7 +82,7 @@ try {
 
     # 2. Vault 최신화 (pull)
     Invoke-Step "sync-vault (pull)" {
-        & "$RepoRoot\scripts\sync-vault.ps1"
+        & "$RepoRoot\scripts\sync-vault.ps1" -Internal
     }
 
     # 3. nightly-distill
@@ -98,7 +98,7 @@ try {
 
     # 5. 결과 vault에 push
     Invoke-Step "sync-vault (push)" {
-        & "$RepoRoot\scripts\sync-vault.ps1" -CommitMsg "auto: nightly distill $(Get-Date -Format 'yyyy-MM-dd')"
+        & "$RepoRoot\scripts\sync-vault.ps1" -Internal -CommitMsg "auto: nightly distill $(Get-Date -Format 'yyyy-MM-dd')"
     }
 
     Log "=== run-nightly-safe done ==="
