@@ -167,7 +167,7 @@ if ($Repo -ne "") {
 # ── 완료 ──────────────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
+Write-Host "--------------------------------------------" -ForegroundColor DarkGray
 Write-Host "  설치 완료!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  다음 단계:" -ForegroundColor White
@@ -185,5 +185,5 @@ if (-not (Test-Path $EnvFile) -or ((Get-Content $EnvFile -Raw) -match "OBSIDIAN_
     Write-Host "  다른 레포에 훅 추가하려면:" -ForegroundColor DarkGray
     Write-Host "    powershell -ExecutionPolicy Bypass -File install.ps1 -Repo C:\path\to\repo" -ForegroundColor DarkGray
 }
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
+Write-Host "--------------------------------------------" -ForegroundColor DarkGray
 Write-Host ""
