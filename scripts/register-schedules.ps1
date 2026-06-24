@@ -35,12 +35,14 @@ Register "work-agent-nightly" "/SC DAILY /ST 23:30" "$RepoRoot\scripts\run-night
 Register "work-agent-weekly" "/SC WEEKLY /D FRI /ST 23:00" "$RepoRoot\scripts\run-weekly-safe.ps1"
 
 Write-Host ""
-Write-Host "등록된 작업 확인:" -ForegroundColor White
+Write-Host "등록 결과 확인:" -ForegroundColor White
 foreach ($tn in @("work-agent-bot", "work-agent-update", "work-agent-vault-sync", "work-agent-nightly", "work-agent-weekly")) {
-    $q       = schtasks /Query /TN $tn /FO LIST 2>$null
-    $status  = ($q | Where-Object { $_ -match "^Status" }  | Select-Object -First 1) -replace "^Status\s*:\s*", ""
-    $nextRun = ($q | Where-Object { $_ -match "^Next Run" } | Select-Object -First 1) -replace "^Next Run Time\s*:\s*", ""
-    Write-Host "  $tn  [$status]  next: $nextRun"
+    schtasks /Query /TN $tn 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  [OK] $tn" -ForegroundColor Green
+    } else {
+        Write-Host "  [!!] $tn - 등록되지 않음" -ForegroundColor Red
+    }
 }
 
 Write-Host ""
