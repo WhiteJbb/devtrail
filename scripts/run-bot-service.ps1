@@ -21,6 +21,8 @@ if (-not (Test-Path $wa)) {
 }
 
 Set-Location $RepoRoot
+# editable install이 깨져도 app 패키지를 찾을 수 있게 PYTHONPATH 명시
+$env:PYTHONPATH = $RepoRoot
 
 Log "=== bot service start ==="
 
