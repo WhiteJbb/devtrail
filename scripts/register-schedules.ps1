@@ -19,10 +19,14 @@ function Register($name, $trigger, $cmd) {
 
 Write-Host "`nTask Scheduler 등록 중...`n" -ForegroundColor White
 
-# 시작 시 (1분 지연): Telegram 봇 상시 실행
-Register "work-agent-bot" `
-    "/SC ONSTART /DELAY 00:01" `
-    "$PS $Flags `"$RepoRoot\scripts\run-bot-service.ps1`""
+# 시작 시: Telegram 봇 상시 실행 (SYSTEM으로 실행해야 ONSTART 가능)
+$botCmd = "$PS $Flags `"$RepoRoot\scripts\run-bot-service.ps1`""
+$r = schtasks /Create /TN "work-agent-bot" /TR $botCmd /RL HIGHEST /F /SC ONSTART /RU SYSTEM 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  [OK] work-agent-bot" -ForegroundColor Green
+} else {
+    Write-Host "  [!!] work-agent-bot - $r" -ForegroundColor Red
+}
 
 # 10분마다: work-agent 코드 업데이트
 Register "work-agent-update" `
