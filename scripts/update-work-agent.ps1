@@ -44,9 +44,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Log "Reinstalling package..."
-& "$RepoRoot\.venv\Scripts\python.exe" -m pip install -e "$RepoRoot" -q
+& "$RepoRoot\.venv\Scripts\python.exe" -m pip install -e "$RepoRoot" 2>&1 | ForEach-Object { Log "pip: $_" }
 if ($LASTEXITCODE -ne 0) {
-    Log "ERROR: pip install failed"
+    Log "ERROR: pip install failed (exit $LASTEXITCODE)"
     exit 1
 }
 
