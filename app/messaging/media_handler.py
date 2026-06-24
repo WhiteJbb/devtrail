@@ -35,9 +35,17 @@ class TelegramMediaHandler:
         return "알 수 없는 미디어 타입입니다."
 
     def handle_url(self, url: str) -> str:
+        llm = None
         try:
-            result = self.capture_agent.capture_url(url, source="telegram_url")
-            return f"URL 캡처 완료\n노트: {result.rel_path}"
+            from app.config import get_settings
+            from app.llm.factory import get_task_llm_provider
+            llm = get_task_llm_provider("light", get_settings())
+        except Exception:
+            pass
+        try:
+            result = self.capture_agent.capture_url(url, source="telegram_url", llm=llm)
+            label = "URL 캡처 + 요약 완료" if llm else "URL 캡처 완료"
+            return f"{label}\n노트: {result.rel_path}"
         except Exception as e:
             return f"URL 캡처 실패: {e}"
 

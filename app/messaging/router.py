@@ -9,25 +9,20 @@ from __future__ import annotations
 from app.llm.base import LLMError, LLMNotConfiguredError
 
 _HELP = (
-    "사용 가능한 명령:\n"
-    "/list — 초안 목록\n"
-    "/write <주제> — 블로그 초안 생성\n"
-    "/revise [vault_path] — 초안 다듬기\n"
-    "/preview [vault_path] — 초안 미리보기\n"
-    "/export [vault_path] — 티스토리용 변환\n"
-    "/publish <url> — 게시 완료 기록(최신 초안)\n"
-    "/search <검색어> — Vault 노트 검색\n"
-    "/session [project] — 작업 세션 노트 생성\n"
-    "/capture <메모> — 메모를 Inbox에 저장\n"
-    "/distill — 오늘 기록에서 후보 생성\n"
-    "/context <주제> — Context Pack 조회\n"
-    "/candidates — 후보 노트 목록\n"
-    "/promote <경로> — 후보 노트 승격\n"
-    "/worklog — 작업 회고\n"
+    "📥 캡처\n"
+    "/capture <메모> — 빠른 메모 저장\n"
+    "\n"
+    "🔍 분석 · 검색\n"
+    "/distill — 오늘 기록 → 후보 생성\n"
+    "/candidates — 후보 목록 보기\n"
+    "/search <검색어> — Vault 검색\n"
+    "\n"
+    "📝 정리 · 출력\n"
     "/todo — 다음 할 일\n"
-    "/portfolio — 포트폴리오 초안\n"
-    "/resume — 이력서 초안\n"
-    "/help — 도움말"
+    "/worklog — 오늘 작업 회고\n"
+    "/write <주제> — 블로그 초안 작성\n"
+    "\n"
+    "기타: /list /promote /context /resume /portfolio"
 )
 
 
