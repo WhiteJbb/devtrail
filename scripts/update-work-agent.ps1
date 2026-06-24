@@ -43,19 +43,20 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# 봇 프로세스 먼저 종료 (work-agent.exe 점유 해제)
+$botProc = Get-Process -Name "work-agent" -ErrorAction SilentlyContinue
+if ($botProc) {
+    Log "Stopping bot process before reinstall..."
+    $botProc | Stop-Process -Force
+    Start-Sleep -Seconds 2
+    Log "Bot process stopped."
+}
+
 Log "Reinstalling package..."
 & "$RepoRoot\.venv\Scripts\python.exe" -m pip install -e "$RepoRoot" 2>&1 | ForEach-Object { Log "pip: $_" }
 if ($LASTEXITCODE -ne 0) {
     Log "ERROR: pip install failed (exit $LASTEXITCODE)"
     exit 1
-}
-
-# 봇 프로세스 재시작 (run-bot-service.ps1이 10초 후 새 코드로 자동 재기동)
-$botProc = Get-Process -Name "work-agent" -ErrorAction SilentlyContinue
-if ($botProc) {
-    Log "Restarting bot process to apply new code..."
-    $botProc | Stop-Process -Force
-    Log "Bot process stopped. run-bot-service will restart it."
 }
 
 Log "update-work-agent done"
