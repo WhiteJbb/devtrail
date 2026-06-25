@@ -52,10 +52,10 @@ python start.py     # 현재 터미널에서 직접 실행
 
 | task_type | 용도 | 기본 chain |
 |-----------|------|-----------|
-| **light** | 분류·태깅·짧은 요약 (`distill-today`, `suggest-*`, `capture`) | Gemini Flash-Lite → GPT-4o mini → Ollama |
-| **writer** | 블로그·이력서·포트폴리오 초안 (`write-blog`, `resume`, `worklog`) | Gemini Flash → GPT-4o mini → Kimi |
-| **long_writer** | 긴 ContextPack 기반 글쓰기 (`weekly-distill`, `summarize-project`) | Kimi → Gemini Flash → GPT-4o mini |
-| **polish** | 최종 문장 다듬기 (`revise-blog`) | GPT-4o mini → Gemini Flash |
+| **light** | 분류·태깅·짧은 요약 (`distill-today`, `suggest-*`, `capture`) | Gemini Flash-Lite → GPT-4.1-mini → Ollama |
+| **writer** | 블로그·이력서·포트폴리오 초안 (`write-blog`, `resume`, `worklog`) | Gemini Flash → GPT-4.1-mini → Kimi |
+| **long_writer** | 긴 ContextPack 기반 글쓰기 (`weekly-distill`, `summarize-project`) | Kimi → Gemini Flash → GPT-4.1-mini |
+| **polish** | 최종 문장 다듬기 (`revise-blog`) | GPT-4.1-mini → Gemini Flash |
 | **local** | 인터넷 장애 시 최소 동작 | Ollama |
 
 API 키가 없는 provider는 chain에서 자동 제외됩니다. Gemini만 설정해도 동작합니다.
@@ -70,12 +70,12 @@ GEMINI_FLASH_MODEL=gemini-2.5-flash
 GEMINI_LITE_MODEL=gemini-2.5-flash-lite
 ```
 
-### OpenAI / GPT-4o mini
+### OpenAI / GPT-4.1-mini
 
 ```env
 OPENAI_API_KEY=sk-...
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
 ### Kimi (Moonshot AI) — long_writer 특화
@@ -314,7 +314,24 @@ TELEGRAM_CHAT_ID=<알림 받을 chat id>
 work-agent serve-bot
 ```
 
-주요 커맨드:
+### 할 일 관리
+
+```
+/task <내용>              할 일 추가  (예: /task 코드리뷰 내일까지)
+/tasks                    목록 보기 + 완료·삭제 인라인 버튼
+/done <번호>              완료 처리
+/del <번호>               삭제
+/edit <번호> <새내용>     내용·날짜·섹션 수정
+```
+
+날짜 키워드 자동 인식: `오늘` · `내일` · `이번 주` · `월~일요일` · `2026-07-01`  
+날짜 기준으로 섹션(오늘 / 이번 주 / 언제든지) 자동 배정.
+
+`/tasks` 응답에는 태스크마다 **완료(✅)·삭제(🗑) 버튼**이 붙습니다. 버튼은 내부적으로 안정 ID(`^hex6`)를 사용해 목록이 바뀐 뒤에도 오동작하지 않습니다.
+
+태스크는 Obsidian Vault `70_Tasks/Active.md`에 저장되며, 완료 시 `70_Tasks/Done/<날짜>.md`에 기록됩니다.
+
+### 지식 관리 · 기타
 
 ```
 /capture <메모>     /distill           /candidates
@@ -338,8 +355,10 @@ app/
 │                      # CareerBulletAgent, OpenLoopsAgent
 │                      # WorklogAgent, TodoAgent, PortfolioAgent
 │                      # ResumeAgent, ProjectAgent
+│                      # TaskAgent  ← 할 일 관리 (Telegram 봇 전용)
+├─ services/           # WikiService, CandidateWriter, RepoSnapshot
+│                      # TaskService  ← Active.md CRUD + 안정 ID
 ├─ memory/             # AgentMemoryLoader, ProjectMemoryLoader, ContextPackBuilder
-├─ services/           # WikiService, CandidateWriter, RepoSnapshot ...
 ├─ llm/                # router(task_type→chain), FallbackChain
 │                      # GeminiProvider, KimiProvider, OllamaProvider, OpenAICompatibleProvider
 ├─ content_sources/    # ObsidianSource, GitSource, LocalDocSource
