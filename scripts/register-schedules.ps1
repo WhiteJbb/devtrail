@@ -7,8 +7,9 @@ $Flags = "-NonInteractive -ExecutionPolicy Bypass -File"
 
 # work-agent.exe 경로: PATH 탐색 → .venv → 시스템 Python Scripts 순으로 찾는다
 $wa = $null
+$_waTmp = Get-Command work-agent -ErrorAction SilentlyContinue
 $waCandidates = @(
-    (Get-Command work-agent -ErrorAction SilentlyContinue)?.Source,
+    $(if ($_waTmp) { $_waTmp.Source } else { $null }),
     "$RepoRoot\.venv\Scripts\work-agent.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python311\Scripts\work-agent.exe",
     "$env:LOCALAPPDATA\Programs\Python\Python312\Scripts\work-agent.exe"
