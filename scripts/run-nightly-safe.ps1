@@ -42,9 +42,15 @@ function Send-TelegramAlert($text) {
 function Invoke-Step($name, $scriptBlock) {
     Log "--- $name ---"
     try {
-        & $scriptBlock
-        if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            throw "exit code $LASTEXITCODE"
+        $output = & $scriptBlock 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($output) {
+            foreach ($line in ($output | Out-String).Trim().Split("`n")) {
+                if ($line.Trim()) { Log "  $($line.Trim())" }
+            }
+        }
+        if ($exitCode -and $exitCode -ne 0) {
+            throw "exit code $exitCode"
         }
         Log "$name OK"
     } catch {
