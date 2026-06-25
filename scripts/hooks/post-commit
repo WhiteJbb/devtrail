@@ -14,6 +14,13 @@ PROJECT=$(git config --local work-agent.project 2>/dev/null)
 
 REPO=$(git rev-parse --show-toplevel)
 
+# feat: / refactor: / fix: 커밋만 캡처
+SUBJECT=$(git log -1 --format=%s)
+case "$SUBJECT" in
+  feat:*|refactor:*|fix:*) ;;
+  *) exit 0 ;;
+esac
+
 # Convert Windows backslashes to forward slashes for Git Bash
 WORK_AGENT_HOME_UNIX=$(echo "$WORK_AGENT_HOME" | tr '\\' '/')
 
