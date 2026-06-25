@@ -31,6 +31,9 @@ DESCRIPTIONS = {
     "portfolio": "포트폴리오 초안 생성",
     "resume": "이력서/자기소개서 초안 생성",
     "capture-session": "작업 세션 노트 저장",
+    "task-add": "할 일 추가",
+    "task-list": "할 일 목록 조회",
+    "task-done": "할 일 완료 처리",
 }
 
 # command → CommandRouter 슬래시 토큰(블로그 명령)
@@ -137,6 +140,34 @@ class Assistant:
                 return f"실행 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
             head = DESCRIPTIONS.get(cmd, cmd)
             return f"{head} 완료: {result.path.name}\n\n{result.text[:1500]}"
+
+        if cmd == "task-add":
+            if not intent.arg:
+                return "추가할 할 일 내용을 말씀해 주세요."
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().add(intent.arg)
+            except RuntimeError as e:
+                return f"태스크 추가 실패: {e}"
+            return result.message
+
+        if cmd == "task-list":
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().list_tasks()
+            except RuntimeError as e:
+                return f"목록 조회 실패: {e}"
+            return result.message
+
+        if cmd == "task-done":
+            if not intent.arg:
+                return "완료할 번호를 말씀해 주세요. 예: '2번 완료'"
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().done(intent.arg)
+            except RuntimeError as e:
+                return f"완료 처리 실패: {e}"
+            return result.message
 
         if cmd in _ROUTER_CMD:
             slash = f"/{_ROUTER_CMD[cmd]} {intent.arg}".strip()
