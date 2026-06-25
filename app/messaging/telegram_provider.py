@@ -125,11 +125,17 @@ class TelegramProvider:
         params: dict = {"timeout": self.poll_timeout}
         if offset is not None:
             params["offset"] = offset
+        import time
         resp = httpx.get(
             self._url("getUpdates"),
             params=params,
             timeout=self.poll_timeout + 10.0,
         )
+        if resp.status_code == 409:
+            # 다른 인스턴스가 이미 polling 중 — 30초 대기 후 재시도
+            print("[bot] 409 Conflict: 다른 봇 인스턴스가 실행 중입니다. 30초 후 재시도...", flush=True)
+            time.sleep(30)
+            return [], offset or 0
         resp.raise_for_status()
         data = resp.json()
 
