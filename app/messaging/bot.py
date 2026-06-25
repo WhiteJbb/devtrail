@@ -15,6 +15,15 @@ from app.messaging.router import CommandRouter
 
 _YES = {"예", "네", "ㅇ", "응", "ok", "오케이", "yes", "y"}
 _NO = {"아니", "아니오", "ㄴ", "취소", "cancel", "no", "n"}
+_TASKS_CMDS = {"tasks", "할일", "할_일"}  # /tasks 명령 별칭 집합
+
+
+def _is_tasks_cmd(text: str) -> bool:
+    t = text.strip()
+    if not t.startswith("/"):
+        return False
+    cmd = t.lstrip("/").split()[0].lower()
+    return cmd in _TASKS_CMDS
 
 
 class MessengerBot:
@@ -81,6 +90,24 @@ class MessengerBot:
         self._pending[chat_id] = intent
         return f"해석: {self.assistant.describe(intent)}\n실행할까요? (예/아니오)"
 
+    def _build_task_buttons(self) -> list[list[dict]] | None:
+        """현재 할 일 목록을 기반으로 인라인 버튼 행을 만든다."""
+        try:
+            from app.agents.task_agent import TaskAgent
+            tasks = TaskAgent().service.list_tasks()
+            if not tasks:
+                return None
+            rows = []
+            for t in tasks:
+                label = t.text[:20] + ("…" if len(t.text) > 20 else "")
+                rows.append([
+                    {"text": f"✅ {t.number}. {label}", "callback_data": f"/done {t.number}"},
+                    {"text": "🗑", "callback_data": f"/del {t.number}"},
+                ])
+            return rows
+        except Exception:
+            return None
+
     def process_once(self) -> int:
         """한 번 폴링해 들어온 메시지를 처리한다. 처리한 메시지 수를 반환."""
         messages, next_offset = self.provider.get_updates(self._offset)
@@ -96,6 +123,19 @@ class MessengerBot:
                     reply = "미디어 처리가 설정되지 않았습니다. 텍스트 메시지를 사용해 주세요."
             else:
                 reply = self._handle_text(msg.chat_id, msg.text)
+
+            # /tasks 명령에는 인라인 버튼을 붙여 보낸다
+            if (
+                not (msg.voice_file_id or msg.photo_file_id)
+                and _is_tasks_cmd(msg.text)
+                and hasattr(self.provider, "send_with_buttons")
+            ):
+                buttons = self._build_task_buttons()
+                if buttons:
+                    self.provider.send_with_buttons(msg.chat_id, reply, buttons)
+                    handled += 1
+                    continue
+
             self.provider.send(msg.chat_id, reply)
             handled += 1
         return handled

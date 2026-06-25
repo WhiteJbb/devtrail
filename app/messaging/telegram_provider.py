@@ -91,6 +91,36 @@ class TelegramProvider:
             if not html:
                 break
 
+    def send_with_buttons(
+        self,
+        chat_id: str,
+        text: str,
+        buttons: list[list[dict]],
+    ) -> None:
+        """인라인 키보드 버튼과 함께 메시지를 전송한다."""
+        html = _md_to_html(text)
+        httpx.post(
+            self._url("sendMessage"),
+            json={
+                "chat_id": chat_id,
+                "text": html[:_MAX_LEN],
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": buttons},
+            },
+            timeout=30.0,
+        ).raise_for_status()
+
+    def _answer_callback(self, callback_query_id: str, text: str = "") -> None:
+        """콜백 쿼리에 응답해 버튼 로딩 상태를 해제한다."""
+        try:
+            httpx.post(
+                self._url("answerCallbackQuery"),
+                json={"callback_query_id": callback_query_id, "text": text},
+                timeout=10.0,
+            )
+        except Exception:
+            pass
+
     def get_updates(self, offset: int | None = None) -> tuple[list[IncomingMessage], int]:
         params: dict = {"timeout": self.poll_timeout}
         if offset is not None:
@@ -108,6 +138,22 @@ class TelegramProvider:
         for upd in data.get("result", []):
             update_id = upd.get("update_id", 0)
             next_offset = max(next_offset, update_id + 1)
+
+            # 인라인 버튼 탭 — callback_query로 들어온다
+            cbq = upd.get("callback_query")
+            if cbq:
+                self._answer_callback(cbq["id"])
+                chat = cbq.get("message", {}).get("chat", {})
+                chat_id = str(chat.get("id", ""))
+                if chat_id and cbq.get("data"):
+                    messages.append(IncomingMessage(
+                        chat_id=chat_id,
+                        text=cbq["data"],
+                        update_id=update_id,
+                        callback_query_id=cbq["id"],
+                    ))
+                continue
+
             msg = upd.get("message") or upd.get("edited_message")
             if not msg:
                 continue
