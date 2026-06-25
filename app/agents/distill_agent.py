@@ -92,7 +92,7 @@ class DistillAgent:
         return DistillResult(written=written, source_refs=[n.path for n in notes])
 
     def _llm(self) -> LLMProvider:
-        return self.llm or get_task_llm_provider("light", self.settings)
+        return self.llm or get_task_llm_provider("distill", self.settings)
 
     def _raw_notes(self, today_only: bool, days: int = 0) -> list[WikiNote]:
         from datetime import timedelta

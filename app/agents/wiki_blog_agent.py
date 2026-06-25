@@ -137,7 +137,8 @@ class WikiBlogAgent:
             ORIGINAL=original_body,
             TOPIC=str(metadata.get("title") or vault_rel_path),
         )
-        revised_body = self._llm().complete(prompt)
+        polish_llm = self.llm or get_task_llm_provider("polish", self.settings)
+        revised_body = polish_llm.complete(prompt)
 
         metadata["status"] = "review"
         revised_post = frontmatter.Post(revised_body, **metadata)

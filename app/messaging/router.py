@@ -12,6 +12,15 @@ _HELP = (
     "**Work Agent**\n"
     "개인 지식 관리 · 자동 정리 · 콘텐츠 생성\n"
     "\n"
+    "**[ 할 일 관리 ]**\n"
+    "/task <내용>  — 할 일 추가  (예: /task 코드리뷰 내일까지)\n"
+    "/tasks  — 목록 보기 + 완료·삭제 버튼\n"
+    "/done <번호>  — 완료 처리\n"
+    "/del <번호>  — 삭제\n"
+    "/edit <번호> <새내용>  — 내용·날짜·섹션 수정\n"
+    "  날짜 키워드: 오늘·내일·이번 주·월~일요일·2026-07-01\n"
+    "  섹션: 오늘 / 이번 주 / 언제든지 (날짜로 자동 분류)\n"
+    "\n"
     "**[ 매일 쓰는 명령 ]**\n"
     "/capture <내용>  — 메모·아이디어 즉시 저장\n"
     "URL 붙여넣기  — 링크 저장 + AI 요약 자동 생성\n"
@@ -54,6 +63,55 @@ class CommandRouter:
     def _dispatch(self, cmd: str, arg: str) -> str:
         if cmd in ("help", "start", ""):
             return _HELP
+
+        # ── 태스크 관리 ───────────────────────────────────────────────
+        if cmd == "task":
+            if not arg:
+                return "할 일 내용을 함께 보내주세요.\n예: /task 코드 리뷰 내일까지"
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().add(arg)
+            except RuntimeError as e:
+                return f"태스크 추가 실패: {e}"
+            return result.message
+
+        if cmd in ("tasks", "할일", "할_일"):
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().list_tasks()
+            except RuntimeError as e:
+                return f"목록 조회 실패: {e}"
+            return result.message
+
+        if cmd == "done":
+            if not arg:
+                return "완료할 번호를 함께 보내주세요.\n예: /done 2"
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().done(arg)
+            except RuntimeError as e:
+                return f"완료 처리 실패: {e}"
+            return result.message
+
+        if cmd in ("del", "delete", "rm"):
+            if not arg:
+                return "삭제할 번호를 함께 보내주세요.\n예: /del 2"
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().delete(arg)
+            except RuntimeError as e:
+                return f"삭제 실패: {e}"
+            return result.message
+
+        if cmd == "edit":
+            if not arg:
+                return "번호와 새 내용을 함께 보내주세요.\n예: /edit 2 코드 리뷰 내일까지"
+            from app.agents.task_agent import TaskAgent
+            try:
+                result = TaskAgent().edit(arg)
+            except RuntimeError as e:
+                return f"수정 실패: {e}"
+            return result.message
 
         # ── 블로그 (WikiBlogAgent) ────────────────────────────────────
         if cmd == "list":
