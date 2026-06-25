@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     openai_base_url: str = Field(default="http://localhost:8000/v1", alias="OPENAI_BASE_URL")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
+    openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")
     openai_max_tokens: int = Field(default=1024, alias="OPENAI_MAX_TOKENS")
     openai_context_window: int = Field(default=0, alias="OPENAI_CONTEXT_WINDOW")
 
