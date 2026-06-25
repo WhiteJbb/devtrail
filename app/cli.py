@@ -1057,6 +1057,60 @@ def ask(
     typer.echo(reply)
 
 
+@app.command("notify")
+def notify(
+    kind: str = typer.Argument(..., help="morning | evening"),
+) -> None:
+    """Telegram으로 아침/저녁 알림을 전송한다. Task Scheduler에서 호출하도록 설계됨."""
+    from app.messaging.telegram_provider import TelegramProvider
+
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        _fail("TELEGRAM_BOT_TOKEN이 설정되지 않았습니다.")
+    if not settings.telegram_chat_id:
+        _fail("TELEGRAM_CHAT_ID가 설정되지 않았습니다.")
+
+    provider = TelegramProvider(settings.telegram_bot_token)
+
+    # 활성 태스크 목록 수집
+    task_lines: list[str] = []
+    try:
+        from app.agents.task_agent import TaskAgent
+        tasks = TaskAgent().service.list_tasks()
+        active = [t for t in tasks if getattr(t, "status", "todo") != "done"]
+        task_lines = [f"· #{t.number} {t.text}" for t in active[:5]]
+        if len(active) > 5:
+            task_lines.append(f"  ... +{len(active) - 5}건")
+    except Exception:
+        pass
+
+    # 후보 개수
+    candidate_count = 0
+    try:
+        from app.agents.curator_agent import CuratorAgent
+        candidate_count = len(CuratorAgent().list_candidates())
+    except Exception:
+        pass
+
+    candidate_hint = f"\n\n후보 {candidate_count}개 쌓여있어요 → /review" if candidate_count else ""
+
+    if kind == "morning":
+        task_block = ("\n" + "\n".join(task_lines)) if task_lines else "\n할 일이 없습니다."
+        text = f"🌅 **오늘 할 일**{task_block}{candidate_hint}"
+    elif kind == "evening":
+        text = (
+            "🌙 **오늘 마무리 체크**\n\n"
+            "오늘 기록할 것 있으면 남겨두세요.\n"
+            "/capture <내용>  또는  /session"
+            f"{candidate_hint}"
+        )
+    else:
+        _fail(f"알 수 없는 알림 종류: {kind}  (morning | evening 중 선택)")
+
+    provider.send(settings.telegram_chat_id, text)
+    typer.secho(f"알림 전송 완료 ({kind})", fg=typer.colors.GREEN)
+
+
 @app.command("serve-bot")
 def serve_bot() -> None:
     """메신저 봇(텔레그램)을 long-polling으로 실행한다. 자연어/명령 + 알림 양방향."""
