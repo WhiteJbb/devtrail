@@ -37,7 +37,14 @@ while ($true) {
     $output = & $wa serve-bot 2>&1
     $code = $LASTEXITCODE
     if ($output) {
-        $output | ForEach-Object { Log "  $_" }
+        try {
+            $output | ForEach-Object {
+                $safe = [System.Text.RegularExpressions.Regex]::Replace("$_", "[^\x09\x0A\x0D\x20-\x7E가-힣㄰-㆏]", "?")
+                Log "  $safe"
+            }
+        } catch {
+            Log "  [output logging error: $_]"
+        }
     }
     Log "Bot exited (code=$code). Restarting in 10s..."
     Start-Sleep 10
