@@ -864,12 +864,18 @@ def push_digest(
     try:
         provider = get_messenger_provider(settings)
     except MessengerNotConfiguredError as e:
-        _fail(
+        typer.secho(
             f"메신저가 설정되지 않았습니다.\n  {e}\n"
-            "  → .env에서 MESSENGER_PROVIDER, 토큰을 설정하세요."
+            "  → .env에서 MESSENGER_PROVIDER, 토큰을 설정하세요.",
+            fg=typer.colors.YELLOW,
         )
+        raise typer.Exit(code=0)
     if not settings.telegram_chat_id:
-        _fail("보낼 대상이 없습니다. .env에서 TELEGRAM_CHAT_ID를 설정하세요.")
+        typer.secho(
+            "보낼 대상이 없습니다. .env에서 TELEGRAM_CHAT_ID를 설정하세요.",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(code=0)
 
     try:
         all_candidates = _curator_agent().list_candidates()

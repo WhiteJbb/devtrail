@@ -69,7 +69,9 @@ if (Test-Path $LockFile) {
 
 New-Item -ItemType File -Path $LockFile -Force | Out-Null
 
-$wa = "$RepoRoot\.venv\Scripts\work-agent.exe"
+$venvWa = "$RepoRoot\.venv\Scripts\work-agent.exe"
+$wa = if (Test-Path $venvWa) { $venvWa } else { (Get-Command work-agent.exe -ErrorAction SilentlyContinue).Source }
+if (-not $wa) { Log "work-agent.exe를 찾을 수 없습니다 (.venv 없고 PATH에도 없음)."; exit 1 }
 
 try {
     Log "==============================="

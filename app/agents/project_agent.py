@@ -45,7 +45,8 @@ class ProjectAgent:
         """프로젝트 Context Pack을 읽고 800자 이내 요약을 생성한다."""
         pack = self.builder.build(project)
         prompt = render_prompt("summarize_project", CONTEXT_PACK=pack.render())
-        text = self._llm().complete(prompt)
+        long_llm = self.llm or get_task_llm_provider("long_writer", self.settings)
+        text = long_llm.complete(prompt)
         return self._save(project, "summary", text, pack.source_refs)
 
     def portfolio_draft(self, project: str) -> ProjectResult:
