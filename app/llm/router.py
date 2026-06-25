@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # task_type → provider 이름 순서 (우선순위 높은 것부터)
 TASK_CHAINS: dict[str, list[str]] = {
     "light":       ["gemini_lite", "openai", "ollama"],
+    "distill":     ["gemini_lite", "openai", "ollama"],
     "writer":      ["gemini_flash", "openai", "kimi"],
     "long_writer": ["kimi", "gemini_flash", "openai"],
     "polish":      ["openai", "gemini_flash"],
@@ -38,7 +39,7 @@ TASK_CHAINS: dict[str, list[str]] = {
 # CLI 커맨드 → task_type 매핑
 COMMAND_TASK_MAP: dict[str, str] = {
     "capture":              "light",
-    "distill-today":        "light",
+    "distill-today":        "distill",
     "suggest-knowledge":    "light",
     "suggest-blog-topics":  "light",
     "suggest-memory-patch": "light",
