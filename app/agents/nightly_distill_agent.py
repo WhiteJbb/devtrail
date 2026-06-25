@@ -15,6 +15,7 @@ from app.agents.career_bullet_agent import CareerBulletAgent, CareerBulletResult
 from app.agents.distill_agent import DistillAgent, DistillResult
 from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
+from app.services.task_service import DONE_DIR
 from app.services.wiki_service import WikiNote, WikiService
 
 _WEEKLY_LOOKBACK_DAYS = 7
@@ -84,6 +85,14 @@ class NightlyDistillAgent:
         label = "Weekly Digest" if weekly else "Daily Digest"
         lines = [f"# {label} — {date}", ""]
 
+        # 완료한 태스크
+        done_tasks = self._done_tasks(weekly=weekly)
+        if done_tasks:
+            lines += ["## 완료한 태스크", ""]
+            for entry in done_tasks:
+                lines.append(f"- {entry}")
+            lines.append("")
+
         # 이번 기간 session 노트 수집 (weekly면 7일치, daily면 오늘만)
         sessions = self._week_sessions() if weekly else self._today_sessions()
         lines += ["## 오늘 한 일", ""]
@@ -147,6 +156,33 @@ class NightlyDistillAgent:
         lines.append(f"_총 후보 {total}개 생성 | distill {len(distill.written)} / career {len(career.written)}_")
 
         return "\n".join(lines)
+
+    def _done_tasks(self, weekly: bool = False) -> list[str]:
+        """70_Tasks/Done/ 에서 완료 태스크 항목을 읽어 반환한다."""
+        import re
+        done_dir = self.vault_dir / DONE_DIR
+        if not done_dir.exists():
+            return []
+
+        if weekly:
+            from datetime import timedelta
+            cutoff = ((self.now or datetime.now()) - timedelta(days=_WEEKLY_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+            files = sorted(f for f in done_dir.glob("*.md") if f.stem >= cutoff)
+        else:
+            today = self._date()
+            done_file = done_dir / f"{today}.md"
+            files = [done_file] if done_file.exists() else []
+
+        entries: list[str] = []
+        for f in files:
+            try:
+                for line in f.read_text(encoding="utf-8").splitlines():
+                    m = re.match(r"^- \[x\] (.+)$", line.strip())
+                    if m:
+                        entries.append(m.group(1).strip())
+            except OSError:
+                continue
+        return entries
 
     def _today_sessions(self) -> list[WikiNote]:
         today = self._date()

@@ -182,10 +182,12 @@ class TaskService:
         if not tasks:
             return "등록된 태스크가 없습니다.\n\n/task <내용> 으로 추가하세요."
 
+        today = date.today().isoformat()
         by_section: dict[str, list[Task]] = {}
         for t in tasks:
             by_section.setdefault(t.section, []).append(t)
 
+        overdue_count = 0
         lines = ["**할 일 목록**"]
         for section in SECTIONS:
             section_tasks = by_section.get(section, [])
@@ -193,8 +195,16 @@ class TaskService:
                 continue
             lines.append(f"\n**{section}**")
             for t in section_tasks:
-                due_str = f" `{t.due}`" if t.due else ""
+                if t.due and t.due.split("T")[0] < today:
+                    due_str = f" ⚠️ `{t.due}`"
+                    overdue_count += 1
+                elif t.due:
+                    due_str = f" `{t.due}`"
+                else:
+                    due_str = ""
                 lines.append(f"{t.number}. {t.text}{due_str}")
 
-        lines.append("\n`/done <번호>` 로 완료 처리")
+        if overdue_count:
+            lines.append(f"\n⚠️ 기한 초과 {overdue_count}개")
+        lines.append("\n`/done <번호>` · `/del <번호>` · `/edit <번호> <새내용>`")
         return "\n".join(lines)
