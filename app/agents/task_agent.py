@@ -39,38 +39,44 @@ class TaskAgent:
         tasks = self.service.list_tasks()
         return TaskResult(ok=True, message=self.service.format_list(tasks))
 
-    def done(self, number_str: str) -> TaskResult:
-        try:
-            n = int(number_str.strip())
-        except ValueError:
-            return TaskResult(ok=False, message="번호를 입력해주세요. 예: /done 2")
+    def done(self, arg: str) -> TaskResult:
+        arg = arg.strip()
+        if arg.startswith("^"):
+            task = self.service.complete_task_by_id(arg[1:])
+            if task is None:
+                return TaskResult(ok=False, message="태스크를 찾지 못했습니다.\n/tasks 로 목록 확인")
+        else:
+            try:
+                n = int(arg)
+            except ValueError:
+                return TaskResult(ok=False, message="번호를 입력해주세요. 예: /done 2")
+            task = self.service.complete_task(n)
+            if task is None:
+                total = len(self.service.list_tasks())
+                return TaskResult(
+                    ok=False,
+                    message=f"{n}번 태스크를 찾지 못했습니다. (현재 {total}개)\n/tasks 로 목록 확인",
+                )
+        return TaskResult(ok=True, message=f"완료 ✅\n~~{task.text}~~", task=task)
 
-        task = self.service.complete_task(n)
-        if task is None:
-            total = len(self.service.list_tasks())
-            return TaskResult(
-                ok=False,
-                message=f"{n}번 태스크를 찾지 못했습니다. (현재 {total}개)\n/tasks 로 목록 확인",
-            )
-        return TaskResult(
-            ok=True,
-            message=f"완료 ✅\n~~{task.text}~~",
-            task=task,
-        )
-
-    def delete(self, number_str: str) -> TaskResult:
-        try:
-            n = int(number_str.strip())
-        except ValueError:
-            return TaskResult(ok=False, message="번호를 입력해주세요. 예: /del 2")
-
-        task = self.service.delete_task(n)
-        if task is None:
-            total = len(self.service.list_tasks())
-            return TaskResult(
-                ok=False,
-                message=f"{n}번 태스크를 찾지 못했습니다. (현재 {total}개)\n/tasks 로 목록 확인",
-            )
+    def delete(self, arg: str) -> TaskResult:
+        arg = arg.strip()
+        if arg.startswith("^"):
+            task = self.service.delete_task_by_id(arg[1:])
+            if task is None:
+                return TaskResult(ok=False, message="태스크를 찾지 못했습니다.\n/tasks 로 목록 확인")
+        else:
+            try:
+                n = int(arg)
+            except ValueError:
+                return TaskResult(ok=False, message="번호를 입력해주세요. 예: /del 2")
+            task = self.service.delete_task(n)
+            if task is None:
+                total = len(self.service.list_tasks())
+                return TaskResult(
+                    ok=False,
+                    message=f"{n}번 태스크를 찾지 못했습니다. (현재 {total}개)\n/tasks 로 목록 확인",
+                )
         return TaskResult(ok=True, message=f"삭제 완료\n~~{task.text}~~", task=task)
 
     def edit(self, arg: str) -> TaskResult:

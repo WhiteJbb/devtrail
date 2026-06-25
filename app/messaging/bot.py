@@ -100,9 +100,12 @@ class MessengerBot:
             rows = []
             for t in tasks:
                 label = t.text[:20] + ("…" if len(t.text) > 20 else "")
+                # ID가 있으면 안정 ID 사용, 구형 태스크(ID 없음)는 번호 폴백
+                done_cb = f"/done ^{t.id}" if t.id else f"/done {t.number}"
+                del_cb = f"/del ^{t.id}" if t.id else f"/del {t.number}"
                 rows.append([
-                    {"text": f"✅ {t.number}. {label}", "callback_data": f"/done {t.number}"},
-                    {"text": "🗑", "callback_data": f"/del {t.number}"},
+                    {"text": f"✅ {t.number}. {label}", "callback_data": done_cb},
+                    {"text": "🗑", "callback_data": del_cb},
                 ])
             return rows
         except Exception:
