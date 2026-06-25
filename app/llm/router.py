@@ -53,6 +53,10 @@ COMMAND_TASK_MAP: dict[str, str] = {
     "weekly-distill":       "long_writer",
     "summarize-project":    "long_writer",
     "revise-blog":          "polish",
+    "suggest-career-bullets": "writer",
+    "capture-commit":       "light",
+    "update-open-loops":    "light",
+    "todo":                 "writer",
 }
 
 
