@@ -4,7 +4,21 @@
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $PS    = "powershell.exe"
 $Flags = "-NonInteractive -ExecutionPolicy Bypass -File"
-$wa    = "$RepoRoot\.venv\Scripts\work-agent.exe"
+
+# work-agent.exe 경로: PATH 탐색 → .venv → 시스템 Python Scripts 순으로 찾는다
+$wa = $null
+$waCandidates = @(
+    (Get-Command work-agent -ErrorAction SilentlyContinue)?.Source,
+    "$RepoRoot\.venv\Scripts\work-agent.exe",
+    "$env:LOCALAPPDATA\Programs\Python\Python311\Scripts\work-agent.exe",
+    "$env:LOCALAPPDATA\Programs\Python\Python312\Scripts\work-agent.exe"
+)
+foreach ($c in $waCandidates) {
+    if ($c -and (Test-Path $c)) { $wa = $c; break }
+}
+if (-not $wa) {
+    Write-Host "  [!!] work-agent.exe 를 찾을 수 없습니다. notify 스케줄은 등록되지 않습니다." -ForegroundColor Red
+}
 
 function Register($name, $triggerStr, $script, $extraArgs = @()) {
     $cmd         = "$PS $Flags `"$script`""
@@ -34,9 +48,29 @@ Register "work-agent-nightly" "/SC DAILY /ST 23:30" "$RepoRoot\scripts\run-night
 # 매주 금요일 23:00: weekly distill
 Register "work-agent-weekly" "/SC WEEKLY /D FRI /ST 23:00" "$RepoRoot\scripts\run-weekly-safe.ps1"
 
+# 매일 08:00: 아침 할 일 알림
+if ($wa) {
+    $morningCmd = "`"$wa`" notify morning"
+    $result = & schtasks /Create /TN "work-agent-notify-morning" /TR $morningCmd /SC DAILY /ST 08:00 /RL HIGHEST /F 2>&1
+    if ($LASTEXITCODE -eq 0) { Write-Host "  [OK] work-agent-notify-morning" -ForegroundColor Green }
+    else { Write-Host "  [!!] work-agent-notify-morning - $($result -join ' ')" -ForegroundColor Red }
+} else {
+    Write-Host "  [SKIP] work-agent-notify-morning (work-agent.exe 없음)" -ForegroundColor Yellow
+}
+
+# 매일 21:30: 저녁 마무리 알림
+if ($wa) {
+    $eveningCmd = "`"$wa`" notify evening"
+    $result = & schtasks /Create /TN "work-agent-notify-evening" /TR $eveningCmd /SC DAILY /ST 21:30 /RL HIGHEST /F 2>&1
+    if ($LASTEXITCODE -eq 0) { Write-Host "  [OK] work-agent-notify-evening" -ForegroundColor Green }
+    else { Write-Host "  [!!] work-agent-notify-evening - $($result -join ' ')" -ForegroundColor Red }
+} else {
+    Write-Host "  [SKIP] work-agent-notify-evening (work-agent.exe 없음)" -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "등록 결과 확인:" -ForegroundColor White
-foreach ($tn in @("work-agent-bot", "work-agent-update", "work-agent-vault-sync", "work-agent-nightly", "work-agent-weekly")) {
+foreach ($tn in @("work-agent-bot", "work-agent-update", "work-agent-vault-sync", "work-agent-nightly", "work-agent-weekly", "work-agent-notify-morning", "work-agent-notify-evening")) {
     schtasks /Query /TN $tn 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] $tn" -ForegroundColor Green
@@ -47,8 +81,10 @@ foreach ($tn in @("work-agent-bot", "work-agent-update", "work-agent-vault-sync"
 
 Write-Host ""
 Write-Host "삭제하려면:" -ForegroundColor DarkGray
-Write-Host "  schtasks /Delete /TN work-agent-bot        /F" -ForegroundColor DarkGray
-Write-Host "  schtasks /Delete /TN work-agent-update     /F" -ForegroundColor DarkGray
-Write-Host "  schtasks /Delete /TN work-agent-vault-sync /F" -ForegroundColor DarkGray
-Write-Host "  schtasks /Delete /TN work-agent-nightly    /F" -ForegroundColor DarkGray
-Write-Host "  schtasks /Delete /TN work-agent-weekly     /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-bot             /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-update          /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-vault-sync      /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-nightly         /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-weekly          /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-notify-morning  /F" -ForegroundColor DarkGray
+Write-Host "  schtasks /Delete /TN work-agent-notify-evening  /F" -ForegroundColor DarkGray

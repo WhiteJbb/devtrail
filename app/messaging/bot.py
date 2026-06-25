@@ -16,6 +16,14 @@ from app.messaging.router import CommandRouter
 _YES = {"예", "네", "ㅇ", "응", "ok", "오케이", "yes", "y"}
 _NO = {"아니", "아니오", "ㄴ", "취소", "cancel", "no", "n"}
 _TASKS_CMDS = {"tasks", "할일", "할_일"}  # /tasks 명령 별칭 집합
+_REVIEW_CMDS = {"/review", "/review_promote", "/review_skip", "/review_stop"}
+
+_KIND_EMOJI = {
+    "knowledge": "📚",
+    "decision": "⚖️",
+    "memory_patch": "🧠",
+    "blog_idea": "✍️",
+}
 
 
 def _is_tasks_cmd(text: str) -> bool:
@@ -24,6 +32,24 @@ def _is_tasks_cmd(text: str) -> bool:
         return False
     cmd = t.lstrip("/").split()[0].lower()
     return cmd in _TASKS_CMDS
+
+
+def _is_review_cmd(text: str) -> bool:
+    return text.strip().lower() in _REVIEW_CMDS
+
+
+def _extract_preview(raw: str, max_chars: int = 280) -> str:
+    """frontmatter와 첫 H1을 제거한 본문 앞부분을 반환한다."""
+    text = raw
+    if text.startswith("---"):
+        end = text.find("---", 3)
+        if end > 0:
+            text = text[end + 3:].lstrip("\n")
+    lines = [l for l in text.splitlines() if not l.startswith("# ")]
+    text = "\n".join(lines).strip()
+    if len(text) > max_chars:
+        return text[:max_chars].rstrip() + "…"
+    return text
 
 
 class MessengerBot:
@@ -44,6 +70,7 @@ class MessengerBot:
         self.default_chat_id = default_chat_id
         self._offset: int | None = None
         self._pending: dict[str, object] = {}  # chat_id → 확인 대기 중인 Intent
+        self._review_queue: dict[str, list] = {}  # chat_id → CandidateItem 목록
 
     def _is_allowed(self, chat_id: str) -> bool:
         return not self.allowed_chat_ids or chat_id in self.allowed_chat_ids
@@ -111,6 +138,91 @@ class MessengerBot:
         except Exception:
             return None
 
+    # ── 후보 검토 (review) ────────────────────────────────────────────
+
+    def _handle_review(self, chat_id: str, cmd: str) -> None:
+        """review 명령을 처리하고 send_with_buttons로 직접 응답한다."""
+        if cmd == "/review":
+            try:
+                from app.agents.curator_agent import CuratorAgent
+                items = CuratorAgent().list_candidates()
+            except Exception as e:
+                self.provider.send(chat_id, f"후보 로딩 실패: {e}")
+                return
+            if not items:
+                self.provider.send(chat_id, "검토할 후보가 없습니다.")
+                return
+            self._review_queue[chat_id] = list(items)
+            self._send_review_card(chat_id)
+            return
+
+        if cmd == "/review_stop":
+            self._review_queue.pop(chat_id, None)
+            self.provider.send(chat_id, "검토를 종료했습니다.")
+            return
+
+        # promote / skip
+        queue = self._review_queue.get(chat_id)
+        if not queue:
+            self.provider.send(chat_id, "검토 세션이 없습니다. /review 로 시작하세요.")
+            return
+
+        item = queue[0]
+        if cmd == "/review_promote":
+            try:
+                from app.agents.curator_agent import CuratorAgent
+                agent = CuratorAgent()
+                if item.kind == "memory_patch":
+                    result = agent.apply_memory_patch(item.rel_path)
+                else:
+                    result = agent.promote_candidate(item.rel_path)
+                self.provider.send(chat_id, f"✅ 승격 완료: {result.promoted_path}")
+            except Exception as e:
+                self.provider.send(chat_id, f"승격 실패: {e}")
+                return
+
+        self._review_queue[chat_id] = queue[1:]
+        if not self._review_queue[chat_id]:
+            self._review_queue.pop(chat_id, None)
+            self.provider.send(chat_id, "🎉 모든 후보 검토 완료!")
+            return
+        self._send_review_card(chat_id)
+
+    def _send_review_card(self, chat_id: str) -> None:
+        """현재 큐의 첫 번째 후보를 인라인 버튼 카드로 전송한다."""
+        queue = self._review_queue.get(chat_id, [])
+        if not queue:
+            return
+        item = queue[0]
+        remaining = len(queue)
+
+        preview = ""
+        try:
+            from app.agents.curator_agent import CuratorAgent
+            raw = CuratorAgent().preview_candidate(item.rel_path)
+            preview = _extract_preview(raw)
+        except Exception:
+            pass
+
+        emoji = _KIND_EMOJI.get(item.kind, "📄")
+        stale_mark = " ⚠️" if item.is_stale else ""
+        meta = item.created_at + (f" · {item.project}" if item.project else "")
+        text = (
+            f"{emoji} **{item.title}**{stale_mark}\n"
+            f"[{item.kind}] {meta}\n\n"
+            f"{preview}\n\n"
+            f"({remaining}개 남음)"
+        )
+        buttons = [[
+            {"text": "✅ 승격", "callback_data": "/review_promote"},
+            {"text": "⏭ 건너뛰기", "callback_data": "/review_skip"},
+            {"text": "⛔ 종료", "callback_data": "/review_stop"},
+        ]]
+        if hasattr(self.provider, "send_with_buttons"):
+            self.provider.send_with_buttons(chat_id, text, buttons)
+        else:
+            self.provider.send(chat_id, text)
+
     def process_once(self) -> int:
         """한 번 폴링해 들어온 메시지를 처리한다. 처리한 메시지 수를 반환."""
         messages, next_offset = self.provider.get_updates(self._offset)
@@ -119,6 +231,13 @@ class MessengerBot:
         for msg in messages:
             if not self._is_allowed(msg.chat_id):
                 continue
+
+            # review 명령 — 버튼 포함 응답을 직접 전송하므로 여기서 처리 후 continue
+            if not (msg.voice_file_id or msg.photo_file_id) and _is_review_cmd(msg.text):
+                self._handle_review(msg.chat_id, msg.text.strip().lower())
+                handled += 1
+                continue
+
             if msg.voice_file_id or msg.photo_file_id:
                 if self.media_handler is not None:
                     reply = self.media_handler.handle(msg)
