@@ -66,14 +66,19 @@ try {
     taskkill /F /IM work-agent.exe /T 2>&1 | ForEach-Object { Log "taskkill: $_" }
     Start-Sleep -Seconds 3
 
-    # 이전 실패로 남은 pip 임시 디렉터리 정리
+    # 이전 실패로 남은 pip 임시 디렉터리 정리 (.venv가 있을 때만)
     $sitePackages = "$RepoRoot\.venv\Lib\site-packages"
-    Get-ChildItem "$sitePackages\~*" -ErrorAction SilentlyContinue | ForEach-Object {
-        Remove-Item $_.FullName -Recurse -Force
-        Log "Cleaned stale pip temp: $($_.Name)"
+    if (Test-Path $sitePackages) {
+        Get-ChildItem "$sitePackages\~*" -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-Item $_.FullName -Recurse -Force
+            Log "Cleaned stale pip temp: $($_.Name)"
+        }
     }
 
-    & "$RepoRoot\.venv\Scripts\python.exe" -m pip install -e "$RepoRoot" 2>&1 | ForEach-Object { Log "pip: $_" }
+    $venvPy = "$RepoRoot\.venv\Scripts\python.exe"
+    $pipExe = if (Test-Path $venvPy) { $venvPy } else { (Get-Command python.exe -ErrorAction SilentlyContinue).Source }
+    if (-not $pipExe) { Log "ERROR: python.exe를 찾을 수 없습니다"; exit 1 }
+    & $pipExe -m pip install -e "$RepoRoot" 2>&1 | ForEach-Object { Log "pip: $_" }
     if ($LASTEXITCODE -ne 0) {
         Log "ERROR: pip install failed (exit $LASTEXITCODE)"
         exit 1
