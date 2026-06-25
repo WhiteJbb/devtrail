@@ -14,6 +14,7 @@ class IncomingMessage(BaseModel):
     voice_file_id: str = ""
     photo_file_id: str = ""
     caption: str = ""
+    callback_query_id: str = ""  # non-empty when message originated from an inline button tap
 
 
 class MessengerNotConfiguredError(RuntimeError):
