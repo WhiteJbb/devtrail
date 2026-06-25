@@ -71,7 +71,7 @@ if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
 git fetch origin 2>&1 | ForEach-Object { Log "fetch: $_" }
 
 # ── 로컬 변경 확인 (AI 폴더만) ───────────────────────────────────────
-$aiFolders = @("00_Inbox", "10_Worklog", "50_Outputs", "60_Candidates")
+$aiFolders = @("00_Inbox", "10_Worklog", "20_Knowledge", "30_Projects", "50_Outputs", "60_Candidates", "70_Tasks")
 $hasLocal = $false
 foreach ($folder in $aiFolders) {
     if ((Test-Path $folder) -and (git status --porcelain $folder 2>&1)) {
