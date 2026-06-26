@@ -78,20 +78,19 @@ if ($hasLocal) {
     Log "Committed local changes."
 }
 
-# Pull --rebase
+# Pull --no-rebase (merge)
 if ($hasRemote -or $hasLocal) {
-    git pull --rebase 2>&1 | ForEach-Object { Log "pull: $_" }
+    git pull --no-rebase 2>&1 | ForEach-Object { Log "pull: $_" }
 
     if ($LASTEXITCODE -ne 0) {
-        $msg = "[work-agent] Vault rebase failed. Manual fix needed: $VaultDir"
+        $msg = "[work-agent] Vault merge failed. Manual fix needed: $VaultDir"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
-        git rebase --abort 2>&1 | Out-Null
         exit 1
     }
 
     if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
-        $msg = "[work-agent] Vault rebase conflict detected. Manual fix needed: $VaultDir"
+        $msg = "[work-agent] Vault merge conflict detected. Manual fix needed: $VaultDir"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
         exit 1

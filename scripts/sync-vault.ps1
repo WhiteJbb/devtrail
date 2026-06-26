@@ -112,20 +112,21 @@ if ($hasLocal) {
     Log "Committed local changes."
 }
 
-# ── pull --rebase ──────────────────────────────────────────────────────
+# ── pull --no-rebase (merge) ───────────────────────────────────────────
+# rebase 대신 merge 사용: 노트 파일은 대부분 신규 추가라 충돌이 드물고,
+# log.md는 merge=union으로 처리되므로 merge가 더 안전하다.
 if ($hasRemote -or $hasLocal) {
-    git pull --rebase 2>&1 | ForEach-Object { Log "pull: $_" }
+    git pull --no-rebase 2>&1 | ForEach-Object { Log "pull: $_" }
 
     if ($LASTEXITCODE -ne 0) {
-        $msg = "[work-agent] Vault rebase 실패. 수동 해결 필요: $VaultDir"
+        $msg = "[work-agent] Vault merge 실패. 수동 해결 필요: $VaultDir"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
-        git rebase --abort 2>&1 | Out-Null
         exit 1
     }
 
     if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
-        $msg = "[work-agent] Vault rebase 충돌 감지. 수동 해결 필요: $VaultDir"
+        $msg = "[work-agent] Vault merge 충돌 감지. 수동 해결 필요: $VaultDir"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
         exit 1
