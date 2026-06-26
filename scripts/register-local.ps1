@@ -1,5 +1,5 @@
-# 로컬 개발 머신용 Task Scheduler 등록
-# 관리자 권한으로 실행 필요
+# Local machine Task Scheduler registration (vault sync only)
+# Run as Administrator
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $PS       = "powershell.exe"
@@ -22,19 +22,19 @@ function Set-PowerPolicy($name) {
         $task.Settings.DisallowStartIfOnBatteries = $false
         $task.Settings.StopIfGoingOnBatteries     = $false
         Set-ScheduledTask -InputObject $task | Out-Null
-        Write-Host "  [OK] $name 전원 설정 해제" -ForegroundColor Cyan
+        Write-Host "  [OK] $name power policy cleared" -ForegroundColor Cyan
     } catch {
-        Write-Host "  [!!] $name 전원 설정 실패: $_" -ForegroundColor Yellow
+        Write-Host "  [!!] $name power policy failed: $_" -ForegroundColor Yellow
     }
 }
 
-Write-Host "`n로컬 Task Scheduler 등록 중...`n" -ForegroundColor White
+Write-Host "`nRegistering local Task Scheduler tasks...`n" -ForegroundColor White
 
-# 10분마다: vault git 동기화
+# Every 10 min: vault git sync
 Register "work-agent-vault-sync" "/SC MINUTE /MO 10" "$RepoRoot\scripts\sync-vault.ps1"
 
 Set-PowerPolicy "work-agent-vault-sync"
 
 Write-Host ""
-Write-Host "삭제하려면:" -ForegroundColor DarkGray
+Write-Host "To remove:" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN work-agent-vault-sync /F" -ForegroundColor DarkGray
