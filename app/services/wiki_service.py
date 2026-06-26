@@ -28,7 +28,6 @@ VAULT_DIRS = [
     "10_Worklog/Sessions",
     "10_Worklog/Daily",
     "10_Worklog/Weekly",
-    "10_Worklog/GitSummaries",
     "20_Knowledge/AI",
     "20_Knowledge/RAG",
     "20_Knowledge/Agent",

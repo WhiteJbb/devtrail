@@ -18,7 +18,6 @@ from app.services.wiki_service import WikiNote, WikiService
 _SOURCE_PREFIXES = (
     "10_Worklog/Sessions/",
     "10_Worklog/Daily/",
-    "10_Worklog/GitSummaries/",
     "00_Inbox/URLs/",
     "00_Inbox/Memos/",
     "10_Worklog/Summaries/",
