@@ -36,7 +36,21 @@ function Send-TelegramAlert($text) {
     }
 }
 
-$wa = "$RepoRoot\.venv\Scripts\work-agent.exe"
+$wa       = "$RepoRoot\.venv\Scripts\work-agent.exe"
+$LockFile = "$RepoRoot\.weekly.lock"
+
+# 중복 실행 방지
+if (Test-Path $LockFile) {
+    $age = (Get-Date) - (Get-Item $LockFile).LastWriteTime
+    if ($age.TotalHours -lt 4) {
+        Log "Lock exists ($($age.TotalMinutes.ToString('0'))min ago). Exit."
+        exit 0
+    }
+    Log "Stale lock (over 4h). Removing and continuing."
+    Remove-Item $LockFile -Force
+}
+
+New-Item -ItemType File -Path $LockFile -Force | Out-Null
 
 Log "=== run-weekly-safe start ==="
 
@@ -53,4 +67,6 @@ try {
     Log "ERROR: $msg"
     Send-TelegramAlert $msg
     exit 1
+} finally {
+    Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
 }

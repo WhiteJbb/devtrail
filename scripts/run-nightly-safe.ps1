@@ -61,6 +61,25 @@ function Invoke-Step($name, $scriptBlock) {
     }
 }
 
+# ── weekly 실행 중이면 대기 ──────────────────────────────────────────
+$weeklyLock = "$RepoRoot\.weekly.lock"
+if (Test-Path $weeklyLock) {
+    $age = (Get-Date) - (Get-Item $weeklyLock).LastWriteTime
+    if ($age.TotalHours -lt 4) {
+        Log "Weekly distill 실행 중 ($($age.TotalMinutes.ToString('0'))min). 완료까지 대기..."
+        $waited = 0
+        while ((Test-Path $weeklyLock) -and $waited -lt 60) {
+            Start-Sleep 60
+            $waited++
+        }
+        if (Test-Path $weeklyLock) {
+            Log "WARNING: Weekly lock 60분 초과. 강제 진행."
+        } else {
+            Log "Weekly 완료 확인. Nightly 시작."
+        }
+    }
+}
+
 # ── 중복 실행 방지 ────────────────────────────────────────────────────
 if (Test-Path $LockFile) {
     $created = (Get-Item $LockFile).LastWriteTime
