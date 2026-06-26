@@ -17,6 +17,19 @@ function Register($name, $triggerStr, $script, $extraArgs = @()) {
     }
 }
 
+function Set-PowerPolicy($name) {
+    # 배터리 제한 해제 — 절전 복귀 시에도 태스크가 정상 실행되도록
+    try {
+        $task = Get-ScheduledTask -TaskName $name -ErrorAction Stop
+        $task.Settings.DisallowStartIfOnBatteries = $false
+        $task.Settings.StopIfGoingOnBatteries     = $false
+        Set-ScheduledTask -InputObject $task | Out-Null
+        Write-Host "  [OK] $name 전원 설정 해제" -ForegroundColor Cyan
+    } catch {
+        Write-Host "  [!!] $name 전원 설정 실패: $_" -ForegroundColor Yellow
+    }
+}
+
 Write-Host "`nTask Scheduler 등록 중...`n" -ForegroundColor White
 
 # 시작 시: Telegram 봇 (SYSTEM으로 실행 — 로그인 없이도 동작)
@@ -44,6 +57,12 @@ else { Write-Host "  [!!] work-agent-notify-morning - $($result -join ' ')" -For
 $result = & schtasks /Create /TN "work-agent-notify-evening" /TR "$PS $Flags `"$notifyScript`" -Kind evening" /SC DAILY /ST 21:30 /RL HIGHEST /F 2>&1
 if ($LASTEXITCODE -eq 0) { Write-Host "  [OK] work-agent-notify-evening" -ForegroundColor Green }
 else { Write-Host "  [!!] work-agent-notify-evening - $($result -join ' ')" -ForegroundColor Red }
+
+Write-Host ""
+Write-Host "전원 설정 해제 중 (배터리/절전 제한 제거)..." -ForegroundColor White
+foreach ($tn in @("work-agent-bot", "work-agent-update", "work-agent-vault-sync", "work-agent-nightly", "work-agent-weekly", "work-agent-notify-morning", "work-agent-notify-evening")) {
+    Set-PowerPolicy $tn
+}
 
 Write-Host ""
 Write-Host "등록 결과 확인:" -ForegroundColor White

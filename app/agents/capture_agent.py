@@ -420,19 +420,47 @@ class CaptureAgent:
 
     @staticmethod
     def _fetch_url_content(url: str) -> tuple[str, str]:
-        """URL에서 title과 본문 텍스트를 추출한다. (title, text) 반환. 실패하면 ('', '')."""
+        """URL에서 title과 본문 텍스트를 추출한다. (title, text) 반환. 실패하면 ('', '').
+
+        Jina Reader API(r.jina.ai)를 우선 시도해 JS 렌더링 페이지(Notion, Twitter 등)도 처리한다.
+        Jina 실패 시 직접 fetch로 폴백한다.
+        """
         import re as _re
-        try:
-            import httpx
-            resp = httpx.get(url, timeout=15.0, follow_redirects=True)
+        import httpx
+
+        def _via_jina(u: str) -> tuple[str, str]:
+            resp = httpx.get(
+                f"https://r.jina.ai/{u}",
+                headers={"Accept": "text/plain"},
+                timeout=20.0,
+                follow_redirects=True,
+            )
+            resp.raise_for_status()
+            text = resp.text.strip()
+            # Jina 응답 첫 줄: "Title: <제목>"
+            title = ""
+            if text.startswith("Title:"):
+                first_line = text.splitlines()[0]
+                title = first_line.removeprefix("Title:").strip()
+                text = text[len(first_line):].strip()
+            return title, text[:4000]
+
+        def _via_direct(u: str) -> tuple[str, str]:
+            resp = httpx.get(u, timeout=15.0, follow_redirects=True)
             html = resp.text
             m = _re.search(r"<title[^>]*>(.*?)</title>", html, _re.IGNORECASE | _re.DOTALL)
             fetched_title = m.group(1).strip() if m else ""
-            # script/style 제거 후 태그 strip
             text = _re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=_re.IGNORECASE | _re.DOTALL)
             text = _re.sub(r"<[^>]+>", " ", text)
             text = _re.sub(r"\s+", " ", text).strip()
             return fetched_title, text[:4000]
+
+        try:
+            return _via_jina(url)
+        except Exception:
+            pass
+        try:
+            return _via_direct(url)
         except Exception:
             return "", ""
 
