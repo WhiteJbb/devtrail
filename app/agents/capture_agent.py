@@ -499,6 +499,7 @@ class CaptureAgent:
             "tags": [],
             "source": "daily-log",
             "status": "raw",
+            "needs_distill": True,
         }
         body = f"# Daily Log - {date}\n\n{sections}\n"
         result = self._write_note(rel_path, metadata, body, kind="daily_log")
