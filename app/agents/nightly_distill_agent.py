@@ -224,7 +224,7 @@ class NightlyDistillAgent:
         notes = self.wiki_service.scan_notes()
         return [
             n for n in notes
-            if n.path.startswith("10_Worklog/Daily/")
+            if n.path.startswith("10_Worklog/Sessions/")
             and "session" in Path(n.path).name.lower()
             and str(n.metadata.get("created_at") or n.metadata.get("date") or "")[:10] == today
         ]
@@ -235,7 +235,7 @@ class NightlyDistillAgent:
         notes = self.wiki_service.scan_notes()
         return [
             n for n in notes
-            if n.path.startswith("10_Worklog/Daily/")
+            if n.path.startswith("10_Worklog/Sessions/")
             and "session" in Path(n.path).name.lower()
             and str(n.metadata.get("created_at") or n.metadata.get("date") or "")[:10] >= cutoff
         ]

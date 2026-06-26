@@ -91,7 +91,7 @@ class WeeklyReviewAgent:
 
     def _save_review(self, text: str) -> tuple[Path | None, str]:
         date = self._date()
-        rel_path = f"50_Outputs/Digest/{date}-weekly-review.md"
+        rel_path = f"50_Outputs/WeeklyReview/{date}-weekly-review.md"
         path = self.vault_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         metadata = {

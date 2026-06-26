@@ -138,7 +138,7 @@ body에 쓰는 모든 구체적 주장은 "# Raw Source" 텍스트에서 직접 
       "body": "위 knowledge body 구조를 따른 상세 Markdown (200자 이상)",
       "project": "관련 프로젝트명 또는 빈 문자열",
       "tags": ["tag"],
-      "source_refs": ["10_Worklog/Daily/2026-06-23.md"]
+      "source_refs": ["10_Worklog/Sessions/2026-06-23-work-agent-session.md"]
     }
   ],
   "decisions": [
@@ -148,7 +148,7 @@ body에 쓰는 모든 구체적 주장은 "# Raw Source" 텍스트에서 직접 
       "body": "위 decision body 구조를 따른 상세 Markdown (200자 이상)",
       "project": "관련 프로젝트명 또는 빈 문자열",
       "tags": ["decision"],
-      "source_refs": ["00_Inbox/Captures/...md"]
+      "source_refs": ["00_Inbox/URLs/...md"]
     }
   ],
   "memory_patches": [

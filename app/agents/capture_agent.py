@@ -42,7 +42,7 @@ class CaptureAgent:
             raise ValueError("capture text is empty.")
 
         stamp = self._timestamp()
-        rel_path = f"00_Inbox/Captures/{stamp}-{self._slug(project or 'memo')}.md"
+        rel_path = f"00_Inbox/Memos/{stamp}-{self._slug(project or 'memo')}.md"
         title = f"Capture - {project}" if project else "Capture"
         metadata = {
             "type": "capture",
@@ -138,14 +138,14 @@ class CaptureAgent:
         source: str = "agent_session",
         title: str | None = None,
     ) -> CaptureResult:
-        """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Daily/에 저장한다."""
+        """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Sessions/에 저장한다."""
         date = self._date()
         project = (project or "").strip()
         slug_parts = [date, self._slug(project) if project else None, "session"]
         base_name = "-".join(p for p in slug_parts if p)
 
         # 파일명 충돌 해소
-        rel_path = self._unique_rel_path(f"10_Worklog/Daily/{base_name}.md")
+        rel_path = self._unique_rel_path(f"10_Worklog/Sessions/{base_name}.md")
 
         # Git snapshot
         snap: RepoSnapshot | None = None
@@ -306,7 +306,7 @@ class CaptureAgent:
         source: str = "telegram",
         caption: str = "",
     ) -> CaptureResult:
-        """voice/image attachment를 00_Inbox/Captures/에 노트로 저장한다.
+        """voice/image attachment를 00_Inbox/Memos/에 노트로 저장한다.
 
         파일 자체는 이미 00_Inbox/Raw/Attachments/에 저장돼 있어야 한다.
         """
@@ -318,7 +318,7 @@ class CaptureAgent:
         is_voice = "voice" in source.lower()
         kind_str = "voice" if is_voice else "image"
         note_slug = self._slug(f"{kind_str}-{file_path.stem[:30]}")
-        rel_path = f"00_Inbox/Captures/{stamp}-{note_slug}.md"
+        rel_path = f"00_Inbox/Memos/{stamp}-{note_slug}.md"
         title = "음성 Capture" if is_voice else "이미지 Capture"
 
         metadata: dict[str, Any] = {
@@ -362,13 +362,13 @@ class CaptureAgent:
         source: str = "telegram_url",
         llm: LLMProvider | None = None,
     ) -> CaptureResult:
-        """URL을 00_Inbox/Captures/에 노트로 저장한다."""
+        """URL을 00_Inbox/URLs/에 노트로 저장한다."""
         import json
         import urllib.parse
 
         stamp = self._timestamp()
         domain = urllib.parse.urlparse(url).netloc or "url"
-        rel_path = f"00_Inbox/Captures/{stamp}-{self._slug(domain)}.md"
+        rel_path = f"00_Inbox/URLs/{stamp}-{self._slug(domain)}.md"
 
         fetched_title, page_text = self._fetch_url_content(url)
         if title:
@@ -510,13 +510,14 @@ class CaptureAgent:
         """오늘의 작업 컨텍스트를 수집한다: 캡처, git 요약, open loops."""
         parts: list[str] = []
 
-        captures_dir = self.vault_dir / "00_Inbox" / "Captures"
-        if captures_dir.exists():
-            for f in sorted(captures_dir.glob(f"{date}*.md"))[:10]:
-                try:
-                    parts.append(f"[캡처] {f.stem}\n{f.read_text(encoding='utf-8')[:300]}")
-                except Exception:
-                    pass
+        for inbox_sub in ("URLs", "Memos"):
+            sub_dir = self.vault_dir / "00_Inbox" / inbox_sub
+            if sub_dir.exists():
+                for f in sorted(sub_dir.glob(f"{date}*.md"))[:5]:
+                    try:
+                        parts.append(f"[캡처/{inbox_sub}] {f.stem}\n{f.read_text(encoding='utf-8')[:300]}")
+                    except Exception:
+                        pass
 
         git_dir = self.vault_dir / "10_Worklog" / "GitSummaries"
         if git_dir.exists():

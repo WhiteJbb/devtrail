@@ -219,7 +219,7 @@ def capture_note(
     project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
     source: str = typer.Option("manual", "--source", help="원본 출처"),
 ) -> None:
-    """메모를 00_Inbox/Captures에 raw Markdown으로 저장한다."""
+    """메모를 00_Inbox/Memos에 raw Markdown으로 저장한다."""
     try:
         result = _capture_agent().capture(text=text, project=project, source=source)
     except ValueError as e:
@@ -256,7 +256,7 @@ def daily_log(
     project: str = typer.Option("", "--project", "-p", help="프로젝트별 daily log가 필요할 때 지정"),
     from_agent: bool = typer.Option(False, "--from-agent", help="LLM으로 오늘 컨텍스트를 읽어 내용을 미리 채운다"),
 ) -> None:
-    """오늘 daily worklog 파일을 10_Worklog/Daily에 만든다."""
+    """오늘 daily worklog 파일을 10_Worklog/Daily에 만든다 (세션 노트는 10_Worklog/Sessions)."""
     llm = None
     if from_agent:
         from app.llm.factory import get_task_llm_provider
@@ -278,7 +278,7 @@ def capture_session(
     source: str = typer.Option("agent_session", "--source", help="소스 식별자"),
     title: str = typer.Option("", "--title", help="세션 노트 제목 수동 지정"),
 ) -> None:
-    """작업 세션을 구조화된 노트로 10_Worklog/Daily에 저장한다.
+    """작업 세션을 구조화된 노트로 10_Worklog/Sessions에 저장한다.
 
     --from-agent 플래그는 Claude Code / Codex가 실행할 때 현재 세션을 요약해야 한다는
     워크플로우 신호다. --summary-file로 요약 파일을 전달하는 것을 권장한다.

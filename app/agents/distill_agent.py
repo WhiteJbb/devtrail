@@ -112,9 +112,9 @@ class DistillAgent:
             cutoff = ((self.now or datetime.now()) - timedelta(days=days)).strftime("%Y-%m-%d")
             notes = [note for note in notes if self._note_date(note) >= cutoff]
 
-        # session 노트를 가장 먼저 배치 (10_Worklog/Daily/*session*.md)
+        # session 노트를 가장 먼저 배치 (10_Worklog/Sessions/)
         session_notes = [n for n in notes if "session" in Path(n.path).name.lower()
-                         and n.path.startswith("10_Worklog/Daily/")]
+                         and n.path.startswith("10_Worklog/Sessions/")]
         other_notes = [n for n in notes if n not in session_notes]
         session_notes.sort(key=lambda n: n.path, reverse=True)
         other_notes.sort(key=lambda n: n.path, reverse=True)

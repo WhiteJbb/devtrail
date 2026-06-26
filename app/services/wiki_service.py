@@ -22,8 +22,10 @@ _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣_+-]+")
 
 
 VAULT_DIRS = [
-    "00_Inbox/Captures",
+    "00_Inbox/URLs",
+    "00_Inbox/Memos",
     "00_Inbox/Raw",
+    "10_Worklog/Sessions",
     "10_Worklog/Daily",
     "10_Worklog/Weekly",
     "10_Worklog/GitSummaries",
@@ -39,6 +41,8 @@ VAULT_DIRS = [
     "30_Projects/WorkAgent/Logs",
     "40_AgentMemory/Core",
     "40_AgentMemory/ProjectSummaries",
+    "50_Outputs/Digest",
+    "50_Outputs/WeeklyReview",
     "50_Outputs/Blog/Ideas",
     "50_Outputs/Blog/Drafts",
     "50_Outputs/Blog/Review",
@@ -50,6 +54,7 @@ VAULT_DIRS = [
     "60_Candidates/Decisions",
     "60_Candidates/MemoryPatches",
     "60_Candidates/BlogIdeas",
+    "60_Candidates/CareerBullets",
 ]
 
 

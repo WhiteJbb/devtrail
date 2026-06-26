@@ -22,7 +22,7 @@ from app.services.wiki_service import WikiNote, WikiService
 
 
 _TARGET_FILE = "40_AgentMemory/05_OpenLoops.md"
-_SOURCE_PREFIXES = ("10_Worklog/Daily/", "00_Inbox/Captures/", "50_Outputs/Todo/")
+_SOURCE_PREFIXES = ("10_Worklog/Sessions/", "10_Worklog/Daily/", "00_Inbox/URLs/", "00_Inbox/Memos/", "50_Outputs/Todo/")
 _MAX_NOTE_CHARS = 3000
 _MAX_NOTES = 15
 
@@ -78,7 +78,7 @@ class OpenLoopsAgent:
         notes = [n for n in all_notes if n.path.startswith(_SOURCE_PREFIXES)]
         # session 노트 우선, 최신순
         session = [n for n in notes if "session" in Path(n.path).name.lower()
-                   and n.path.startswith("10_Worklog/Daily/")]
+                   and n.path.startswith("10_Worklog/Sessions/")]
         others = [n for n in notes if n not in session]
         session.sort(key=lambda n: n.path, reverse=True)
         others.sort(key=lambda n: n.path, reverse=True)
