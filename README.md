@@ -115,17 +115,30 @@ OPENAI_MODEL=Qwen/Qwen2.5-14B-Instruct
 
 ```
 <vault>/
-├─ 00_Inbox/         # capture로 쌓이는 raw 메모
-│  └─ Captures/
-├─ 10_Worklog/       # 작업 흔적
-│  ├─ Daily/         #   capture-session, daily-log
-│  ├─ GitSummaries/  #   capture-commit (수동 실행)
-│  └─ Summaries/     #   worklog 출력
+├─ 00_Inbox/
+│  ├─ URLs/          # URL 캡처 (Telegram URL 전송, capture-url)
+│  ├─ Memos/         # 텍스트·음성·이미지 캡처
+│  └─ Raw/           # 첨부 바이너리 파일
+├─ 10_Worklog/
+│  ├─ Sessions/      # capture-session 출력 (AI 세션 요약)
+│  ├─ Daily/         # daily-log (사람이 채우는 일지)
+│  └─ Summaries/     # worklog 출력
 ├─ 20_Knowledge/     # 확정된 지식 ← promote-candidate 목적지
 ├─ 30_Projects/      # 프로젝트별 Context.md
 ├─ 40_AgentMemory/   # AI 공용 메모리 (Core/, OpenLoops 등)
-├─ 50_Outputs/       # 최종 출력물 (Blog, Portfolio, Resume, Digest, Todo)
+├─ 50_Outputs/
+│  ├─ Digest/        # daily digest (nightly 자동 생성)
+│  ├─ WeeklyReview/  # 주간 회고 (weekly 자동 생성)
+│  ├─ Blog/          # 블로그 초안·발행본
+│  ├─ Portfolio/
+│  ├─ Resume/
+│  └─ Todo/
 ├─ 60_Candidates/    # distill 후보 — 사람 검토 전 임시 영역
+│  ├─ Knowledge/
+│  ├─ Decisions/
+│  ├─ MemoryPatches/
+│  ├─ BlogIdeas/
+│  └─ CareerBullets/
 ├─ index.md
 └─ log.md
 ```
@@ -150,18 +163,17 @@ work-agent index-vault                            # index.md 갱신
 ### Capture — raw 기록 저장
 
 ```bash
-work-agent capture "메모"                                         # → 00_Inbox/Captures/
-work-agent capture-commit [-r repo] [--from-agent]               # → 10_Worklog/GitSummaries/
-work-agent capture-session [-p project] [--from-repo]            # → 10_Worklog/Daily/
+work-agent capture "메모"                                         # → 00_Inbox/Memos/
+work-agent capture-session [-p project] [--from-repo]            # → 10_Worklog/Sessions/
 work-agent capture-session [-p project] --from-agent             # AI 세션 요약 포함
 work-agent capture-session [-p project] --summary-file <md>      # AI 요약 파일 삽입
-work-agent daily-log [-p project]                                # 오늘 데일리 로그 생성
+work-agent daily-log [-p project]                                # 오늘 데일리 로그 → 10_Worklog/Daily/
 work-agent daily-log [-p project] --from-agent                   # LLM이 오늘 컨텍스트 미리 채움
 ```
 
-`--from-agent` 플래그: capture-commit은 커밋 의도를 LLM으로 요약. daily-log는 오늘 캡처·커밋·OpenLoops를 읽어 Done/Next 등 미리 채움.
+`--from-agent` 플래그: daily-log는 오늘 캡처·OpenLoops를 읽어 Done/Next 등 미리 채움.
 
-`capture-commit`은 수동으로 실행하거나 `--from-agent`로 LLM 요약을 포함할 수 있습니다. post-commit hook은 현재 비활성화 상태입니다(커밋 속도 저하 문제로 제거).
+> **참고**: `capture-commit`과 post-commit hook은 제거되었습니다. 커밋마다 LLM 호출로 속도가 저하되고 실질적 가치가 낮았기 때문입니다.
 
 ### Distill — 정제 후보 생성 (LLM 필요)
 
@@ -276,9 +288,9 @@ work-agent capture-session --project <name> --from-repo --from-agent --summary-f
 
 ```
 [세션 시작]  build-context → AI에 파일 추가 → 작업
-[세션 중]    커밋 (hook 비활성화 — capture-commit 자동 실행 없음)
-[세션 종료]  capture-session --from-agent → 10_Worklog/Daily/ 저장
+[세션 종료]  capture-session --from-agent → 10_Worklog/Sessions/ 저장
 [야간]       nightly-distill → 60_Candidates/ 후보 생성
+[매주 일요일] weekly-distill → 50_Outputs/WeeklyReview/ 주간 회고
 [다음 날]    list-candidates → promote-candidate → 20_Knowledge/ 누적
 ```
 
@@ -287,13 +299,15 @@ work-agent capture-session --project <name> --from-repo --from-agent --summary-f
 ## 야간 자동화
 
 ```
+[08:00] notify morning        → Telegram 아침 알림
 [23:30] nightly-distill
   ├─ DistillAgent       → 60_Candidates/ (Knowledge / Decisions / MemPatches / BlogIdeas)
   ├─ CareerBulletAgent  → 60_Candidates/CareerBullets/
-  ├─ 50_Outputs/Digest/ 저장
+  ├─ 50_Outputs/Digest/{date}-daily-digest.md 저장
   └─ Telegram 설정 시 digest 자동 전송
-
-[08:30] push-digest --daily   (어제 요약 아침 확인)
+[21:30] notify evening        → Telegram 저녁 알림
+[일요일 18:00] weekly-distill
+  └─ WeeklyReviewAgent  → 50_Outputs/WeeklyReview/{date}-weekly-review.md + Telegram
 ```
 
 ```bash
