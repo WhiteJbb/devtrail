@@ -3,7 +3,7 @@
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $PS       = "powershell.exe"
-$Flags    = "-NonInteractive -ExecutionPolicy Bypass -File"
+$Flags    = "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File"
 
 function Register($name, $triggerStr, $script) {
     $cmd         = "$PS $Flags `"$script`""
