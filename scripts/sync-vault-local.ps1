@@ -24,20 +24,6 @@ function Get-EnvVar($key) {
     ($line -split "=", 2)[1].Trim().Trim('"').Trim("'")
 }
 
-function Send-TelegramAlert($text) {
-    $token  = Get-EnvVar "TELEGRAM_BOT_TOKEN"
-    $chatId = Get-EnvVar "TELEGRAM_CHAT_ID"
-    if (-not $token -or -not $chatId) { return }
-    $body      = @{ chat_id = $chatId; text = $text } | ConvertTo-Json -Compress
-    $bodyBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($body)
-    try {
-        Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" `
-            -Method Post -Body $bodyBytes -ContentType "application/json; charset=utf-8" | Out-Null
-    } catch {
-        Log "Telegram alert failed: $_"
-    }
-}
-
 $VaultDir = Get-EnvVar "OBSIDIAN_VAULT_PATH"
 if (-not $VaultDir -or -not (Test-Path $VaultDir)) {
     Log "ERROR: OBSIDIAN_VAULT_PATH not set or not found: '$VaultDir'"
@@ -48,9 +34,7 @@ Set-Location $VaultDir
 
 # Conflict check
 if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
-    $msg = "[work-agent] Vault conflict detected. Manual fix needed: $VaultDir"
-    Log "ERROR: $msg"
-    Send-TelegramAlert $msg
+    Log "ERROR: Vault conflict detected. Manual fix needed: $VaultDir"
     exit 1
 }
 
@@ -83,16 +67,12 @@ if ($hasRemote -or $hasLocal) {
     git pull --no-rebase 2>&1 | ForEach-Object { Log "pull: $_" }
 
     if ($LASTEXITCODE -ne 0) {
-        $msg = "[work-agent] Vault merge failed. Manual fix needed: $VaultDir"
-        Log "ERROR: $msg"
-        Send-TelegramAlert $msg
+        Log "ERROR: Vault merge failed. Manual fix needed: $VaultDir"
         exit 1
     }
 
     if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
-        $msg = "[work-agent] Vault merge conflict detected. Manual fix needed: $VaultDir"
-        Log "ERROR: $msg"
-        Send-TelegramAlert $msg
+        Log "ERROR: Vault merge conflict detected. Manual fix needed: $VaultDir"
         exit 1
     }
 }
@@ -102,9 +82,7 @@ if ($hasLocal) {
     git push 2>&1 | ForEach-Object { Log "push: $_" }
 
     if ($LASTEXITCODE -ne 0) {
-        $msg = "[work-agent] Vault push failed (exit $LASTEXITCODE)"
-        Log "ERROR: $msg"
-        Send-TelegramAlert $msg
+        Log "ERROR: Vault push failed (exit $LASTEXITCODE)"
         exit 1
     }
 }
