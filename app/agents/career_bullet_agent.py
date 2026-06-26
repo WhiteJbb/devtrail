@@ -66,16 +66,26 @@ class CareerBulletAgent:
         data = complete_json(self._llm(), prompt)
         specs = self._parse_specs(data, source_refs=[n.path for n in notes])
         written = self.writer.write_many(specs)
+        from app.services.wiki_service import mark_distilled
+        mark_distilled(self.vault_dir, notes)
         return CareerBulletResult(written=written, source_refs=[n.path for n in notes])
 
     def _llm(self) -> LLMProvider:
         return self.llm or get_task_llm_provider("writer", self.settings)
 
+    def _note_date(self, note: WikiNote) -> str:
+        value = note.metadata.get("date") or note.metadata.get("created_at") or ""
+        return str(value)[:10]
+
     def _collect_notes(self, project: str) -> list[WikiNote]:
+        from datetime import timedelta
+        cutoff = ((self.now or datetime.now()) - timedelta(days=7)).strftime("%Y-%m-%d")
         all_notes = self.wiki_service.scan_notes()
         notes = [
             n for n in all_notes
             if n.path.startswith(_SOURCE_PREFIXES)
+            and self._note_date(n) >= cutoff
+            and n.metadata.get("needs_distill") is not False
         ]
         if project:
             notes = [n for n in notes if str(n.metadata.get("project") or "").lower() == project.lower()

@@ -63,6 +63,20 @@ AGENT_MEMORY_FILES = {
 }
 
 
+def mark_distilled(vault_dir: Path, notes: list) -> None:
+    """needs_distill: True 인 노트를 처리 완료(False)로 표시한다."""
+    for note in notes:
+        if not note.metadata.get("needs_distill"):
+            continue
+        path = vault_dir / note.path
+        try:
+            post = frontmatter.load(str(path))
+            post["needs_distill"] = False
+            path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        except Exception:
+            pass
+
+
 @dataclass(frozen=True)
 class VaultInitResult:
     vault_dir: Path
