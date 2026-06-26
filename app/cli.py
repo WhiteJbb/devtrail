@@ -728,28 +728,29 @@ def nightly_distill() -> None:
 
 @app.command("weekly-distill")
 def weekly_distill() -> None:
-    """최근 7일 raw 기록을 종합 정제하고 weekly digest를 생성한다.
+    """이번 주 daily digest를 종합해 주간 회고를 생성한다.
 
     금요일 마감 시 한 주를 정리하는 용도로 사용한다.
-    MESSENGER_PROVIDER=telegram이면 digest를 자동 전송한다.
+    MESSENGER_PROVIDER=telegram이면 회고를 자동 전송한다.
     """
+    from app.agents.weekly_review_agent import WeeklyReviewAgent
+
     settings = get_settings()
     if not settings.obsidian_vault_root:
         _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
     try:
-        agent = NightlyDistillAgent(settings=settings)
+        agent = WeeklyReviewAgent(settings=settings)
     except RuntimeError as e:
         _fail(str(e))
 
-    result = _handle_llm_errors(lambda: agent.run(weekly=True))
+    result = _handle_llm_errors(lambda: agent.run())
 
-    total = len(result.distill.written) + len(result.career.written)
-    typer.secho(f"\nweekly-distill 완료: 후보 {total}개 생성", fg=typer.colors.GREEN, bold=True)
-    for w in result.distill.written:
-        typer.echo(f"  [{w.spec.kind}] {w.spec.title}")
-    for w in result.career.written:
-        typer.echo(f"  [career_bullet] {w.spec.title}")
-    typer.echo(f"\n  digest: {result.digest_rel_path}")
+    if not result.review_text:
+        typer.secho("이번 주 daily digest가 없습니다. nightly-distill이 먼저 실행됐는지 확인하세요.", fg=typer.colors.YELLOW)
+        return
+
+    typer.secho(f"\nweekly-distill 완료: digest {result.digest_count}개 → 주간 회고 생성", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  review: {result.review_rel_path}")
     if result.sent_telegram:
         typer.secho("  → Telegram 전송 완료", fg=typer.colors.CYAN)
 
