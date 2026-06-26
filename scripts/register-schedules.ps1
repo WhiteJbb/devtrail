@@ -44,8 +44,8 @@ Register "work-agent-vault-sync" "/SC MINUTE /MO 10" "$RepoRoot\scripts\sync-vau
 # 매일 23:30: nightly 전체 파이프라인
 Register "work-agent-nightly" "/SC DAILY /ST 23:30" "$RepoRoot\scripts\run-nightly-safe.ps1"
 
-# 매주 금요일 23:00: weekly distill
-Register "work-agent-weekly" "/SC WEEKLY /D FRI /ST 23:00" "$RepoRoot\scripts\run-weekly-safe.ps1"
+# 매주 금요일 21:00: weekly distill (nightly 23:30보다 충분히 앞서 실행)
+Register "work-agent-weekly" "/SC WEEKLY /D FRI /ST 21:00" "$RepoRoot\scripts\run-weekly-safe.ps1"
 
 # 매일 08:00: 아침 할 일 알림
 $notifyScript = "$RepoRoot\scripts\run-notify.ps1"
