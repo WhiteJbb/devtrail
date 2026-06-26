@@ -30,8 +30,8 @@ function Set-PowerPolicy($name) {
 
 Write-Host "`nRegistering local Task Scheduler tasks...`n" -ForegroundColor White
 
-# Every 10 min: vault git sync
-Register "work-agent-vault-sync" "/SC MINUTE /MO 10" "$RepoRoot\scripts\sync-vault.ps1"
+# Every 10 min: vault git sync (local variant - tracks all files)
+Register "work-agent-vault-sync" "/SC MINUTE /MO 10" "$RepoRoot\scripts\sync-vault-local.ps1"
 
 Set-PowerPolicy "work-agent-vault-sync"
 
