@@ -38,18 +38,17 @@ def _is_review_cmd(text: str) -> bool:
     return text.strip().lower() in _REVIEW_CMDS
 
 
-def _extract_preview(raw: str, max_chars: int = 280) -> str:
-    """frontmatter와 첫 H1을 제거한 본문 앞부분을 반환한다."""
+_CARD_BODY_MAX = 1800  # 카드에 본문을 직접 담을 수 있는 최대 길이
+
+def _extract_body(raw: str) -> str:
+    """frontmatter와 첫 H1을 제거한 전체 본문을 반환한다."""
     text = raw
     if text.startswith("---"):
         end = text.find("---", 3)
         if end > 0:
             text = text[end + 3:].lstrip("\n")
     lines = [l for l in text.splitlines() if not l.startswith("# ")]
-    text = "\n".join(lines).strip()
-    if len(text) > max_chars:
-        return text[:max_chars].rstrip() + "…"
-    return text
+    return "\n".join(lines).strip()
 
 
 class MessengerBot:
@@ -189,28 +188,39 @@ class MessengerBot:
         self._send_review_card(chat_id)
 
     def _send_review_card(self, chat_id: str) -> None:
-        """현재 큐의 첫 번째 후보를 인라인 버튼 카드로 전송한다."""
+        """현재 큐의 첫 번째 후보를 인라인 버튼 카드로 전송한다.
+
+        본문이 짧으면 카드에 직접 포함, 길면 전문을 먼저 별도 메시지로 보내고
+        버튼 카드에는 "(전문은 위 메시지 참조)"만 표시한다.
+        """
         queue = self._review_queue.get(chat_id, [])
         if not queue:
             return
         item = queue[0]
         remaining = len(queue)
 
-        preview = ""
+        body = ""
         try:
             from app.agents.curator_agent import CuratorAgent
             raw = CuratorAgent().preview_candidate(item.rel_path)
-            preview = _extract_preview(raw)
+            body = _extract_body(raw)
         except Exception:
             pass
 
         emoji = _KIND_EMOJI.get(item.kind, "📄")
         stale_mark = " ⚠️" if item.is_stale else ""
         meta = item.created_at + (f" · {item.project}" if item.project else "")
+
+        if len(body) > _CARD_BODY_MAX:
+            self.provider.send(chat_id, body)
+            inline_body = "(전문은 위 메시지 참조)"
+        else:
+            inline_body = body
+
         text = (
             f"{emoji} **{item.title}**{stale_mark}\n"
             f"[{item.kind}] {meta}\n\n"
-            f"{preview}\n\n"
+            f"{inline_body}\n\n"
             f"({remaining}개 남음)"
         )
         buttons = [[
