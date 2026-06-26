@@ -25,11 +25,13 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 5단계 자동 처리: Python 버전 감지 → `.venv` 생성 → 패키지 설치 → PATH 등록 → `.env` 초기화.
 
-다른 프로젝트 레포에 git hook도 같이 설치하려면:
+다른 프로젝트 레포에 git hook을 설치하려면:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1 -Repo C:\path\to\repo -Project myproject
 ```
+
+> **참고**: post-commit hook은 현재 비활성화 상태입니다(`exit 0` 처리). 커밋마다 LLM 호출로 커밋 속도가 저하되고 diff가 800자로 잘려 실질적 가치가 낮았기 때문입니다. `capture-commit` 명령 자체는 보존돼 있어 수동 실행은 가능합니다. 재활성화하려면 `scripts/hooks/post-commit`에서 `exit 0` 줄을 제거하세요.
 
 ---
 
@@ -117,7 +119,7 @@ OPENAI_MODEL=Qwen/Qwen2.5-14B-Instruct
 │  └─ Captures/
 ├─ 10_Worklog/       # 작업 흔적
 │  ├─ Daily/         #   capture-session, daily-log
-│  ├─ GitSummaries/  #   capture-commit (git hook 자동)
+│  ├─ GitSummaries/  #   capture-commit (수동 실행)
 │  └─ Summaries/     #   worklog 출력
 ├─ 20_Knowledge/     # 확정된 지식 ← promote-candidate 목적지
 ├─ 30_Projects/      # 프로젝트별 Context.md
@@ -159,7 +161,7 @@ work-agent daily-log [-p project] --from-agent                   # LLM이 오늘
 
 `--from-agent` 플래그: capture-commit은 커밋 의도를 LLM으로 요약. daily-log는 오늘 캡처·커밋·OpenLoops를 읽어 Done/Next 등 미리 채움.
 
-post-commit hook 설치 시 커밋마다 `capture-commit` 자동 실행.
+`capture-commit`은 수동으로 실행하거나 `--from-agent`로 LLM 요약을 포함할 수 있습니다. post-commit hook은 현재 비활성화 상태입니다(커밋 속도 저하 문제로 제거).
 
 ### Distill — 정제 후보 생성 (LLM 필요)
 
@@ -274,7 +276,7 @@ work-agent capture-session --project <name> --from-repo --from-agent --summary-f
 
 ```
 [세션 시작]  build-context → AI에 파일 추가 → 작업
-[세션 중]    커밋 → post-commit hook → capture-commit (자동)
+[세션 중]    커밋 (hook 비활성화 — capture-commit 자동 실행 없음)
 [세션 종료]  capture-session --from-agent → 10_Worklog/Daily/ 저장
 [야간]       nightly-distill → 60_Candidates/ 후보 생성
 [다음 날]    list-candidates → promote-candidate → 20_Knowledge/ 누적
