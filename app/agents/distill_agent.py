@@ -89,6 +89,8 @@ class DistillAgent:
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
         written = self.writer.write_many(specs)
         self._inject_related_links(written, related)
+        from app.services.wiki_service import mark_distilled
+        mark_distilled(self.vault_dir, notes)
         return DistillResult(written=written, source_refs=[n.path for n in notes])
 
     def _llm(self) -> LLMProvider:
@@ -100,7 +102,9 @@ class DistillAgent:
         notes = [
             note
             for note in self.wiki_service.scan_notes()
-            if note.path.startswith(_RAW_PREFIXES) and not note.path.startswith("10_Worklog/GitSummaries/index")
+            if note.path.startswith(_RAW_PREFIXES)
+            and not note.path.startswith("10_Worklog/GitSummaries/index")
+            and note.metadata.get("needs_distill") is not False
         ]
         if today_only:
             notes = [note for note in notes if self._note_date(note) == today]
