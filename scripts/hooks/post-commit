@@ -2,6 +2,14 @@
 # work-agent post-commit hook
 # Captures git commit to Obsidian vault automatically.
 # Install via: work-agent install-hooks --repo <path>
+#
+# [비활성화] 커밋마다 LLM을 호출해 GitSummaries에 노트를 생성하는 방식이었으나
+# 두 가지 문제로 제거:
+#   1. 커밋마다 LLM 호출 → 커밋 속도 저하 (수 초 블로킹)
+#   2. diff가 800자로 잘려 LLM이 실질적으로 커밋 메시지만 재해석 → 정보 품질 낮음
+# nightly-distill이 session 노트 기반으로 하루치를 한 번에 처리하는 것으로 대체.
+# capture-commit CLI 명령 자체는 app/agents/capture_agent.py에 보존돼 있음.
+exit 0
 
 WORK_AGENT_HOME=$(git config --local work-agent.home 2>/dev/null)
 [ -z "$WORK_AGENT_HOME" ] && exit 0
