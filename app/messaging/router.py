@@ -39,6 +39,7 @@ _HELP = (
     "/write <주제>  — 블로그 초안 작성\n"
     "/resume  — 이력서 초안 생성\n"
     "/portfolio  — 포트폴리오 초안 생성\n"
+    "/restart  — 봇 프로세스 재시작 (코드 반영 시)\n"
 )
 
 
@@ -64,6 +65,12 @@ class CommandRouter:
     def _dispatch(self, cmd: str, arg: str) -> str:
         if cmd in ("help", "start", ""):
             return _HELP
+
+        if cmd == "restart":
+            import os
+            import threading
+            threading.Timer(1.5, lambda: os._exit(0)).start()
+            return "🔄 재시작합니다. 10초 후 복구됩니다."
 
         # ── 태스크 관리 ───────────────────────────────────────────────
         if cmd == "task":
