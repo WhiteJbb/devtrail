@@ -16,7 +16,7 @@ from app.messaging.router import CommandRouter
 _YES = {"예", "네", "ㅇ", "응", "ok", "오케이", "yes", "y"}
 _NO = {"아니", "아니오", "ㄴ", "취소", "cancel", "no", "n"}
 _TASKS_CMDS = {"tasks", "할일", "할_일"}  # /tasks 명령 별칭 집합
-_REVIEW_CMDS = {"/review", "/review_promote", "/review_skip", "/review_stop"}
+_REVIEW_CMDS = {"/review", "/review_promote", "/review_skip", "/review_delete", "/review_stop"}
 
 _KIND_EMOJI = {
     "knowledge": "📚",
@@ -160,7 +160,7 @@ class MessengerBot:
             self.provider.send(chat_id, "검토를 종료했습니다.")
             return
 
-        # promote / skip
+        # promote / skip / delete
         queue = self._review_queue.get(chat_id)
         if not queue:
             self.provider.send(chat_id, "검토 세션이 없습니다. /review 로 시작하세요.")
@@ -178,6 +178,15 @@ class MessengerBot:
                 self.provider.send(chat_id, f"✅ 승격 완료: {result.promoted_path}")
             except Exception as e:
                 self.provider.send(chat_id, f"승격 실패: {e}")
+                return
+
+        elif cmd == "/review_delete":
+            try:
+                from app.agents.curator_agent import CuratorAgent
+                CuratorAgent().delete_candidate(item.rel_path)
+                self.provider.send(chat_id, f"🗑 삭제: {item.title}")
+            except Exception as e:
+                self.provider.send(chat_id, f"삭제 실패: {e}")
                 return
 
         self._review_queue[chat_id] = queue[1:]
@@ -226,6 +235,7 @@ class MessengerBot:
         buttons = [[
             {"text": "✅ 승격", "callback_data": "/review_promote"},
             {"text": "⏭ 건너뛰기", "callback_data": "/review_skip"},
+            {"text": "🗑 삭제", "callback_data": "/review_delete"},
             {"text": "⛔ 종료", "callback_data": "/review_stop"},
         ]]
         if hasattr(self.provider, "send_with_buttons"):
