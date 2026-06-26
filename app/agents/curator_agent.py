@@ -87,6 +87,13 @@ class CuratorAgent:
             raise ValueError(f"후보를 찾지 못했습니다: {rel_path}")
         return path.read_text(encoding="utf-8")
 
+    def delete_candidate(self, rel_path: str) -> None:
+        """후보 노트를 영구 삭제한다."""
+        path = self.vault_dir / rel_path
+        if not path.exists():
+            raise ValueError(f"후보를 찾지 못했습니다: {rel_path}")
+        path.unlink()
+
     # ── 승격 ─────────────────────────────────────────────────────────
 
     def promote_candidate(self, rel_path: str) -> PromoteResult:
