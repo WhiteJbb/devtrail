@@ -87,11 +87,6 @@ if (Test-Path $VenvPython) {
 
 step "[ 3 / 5 ]  패키지 설치 (pip install -e .)"
 
-$installed = & $VenvPip show work-agent 2>&1
-if ($installed -match "Version:") {
-    ok "work-agent 이미 설치됨 - 업그레이드 확인 중..."
-}
-
 & $VenvPip install -e $Root -q
 if ($LASTEXITCODE -ne 0) { fail "pip install 실패" }
 ok "설치 완료"

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     """환경 기반 설정. 필드명은 대소문자 구분 없이 환경변수와 매핑된다."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
