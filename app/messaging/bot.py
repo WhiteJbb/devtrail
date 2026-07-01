@@ -15,7 +15,7 @@ from app.messaging.base import MessengerProvider
 from app.messaging.media_handler import TelegramMediaHandler, is_url
 from app.messaging.router import CommandRouter
 
-_OFFSET_FILE = Path(__file__).parent / ".bot_offset"
+_OFFSET_FILE = Path.home() / ".work-agent" / "bot_offset"
 
 
 def _load_offset() -> int | None:
@@ -28,9 +28,10 @@ def _load_offset() -> int | None:
 
 def _save_offset(offset: int) -> None:
     try:
+        _OFFSET_FILE.parent.mkdir(parents=True, exist_ok=True)
         _OFFSET_FILE.write_text(str(offset))
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[bot] offset 저장 실패: {exc}", flush=True)
 
 _YES = {"예", "네", "ㅇ", "응", "ok", "오케이", "yes", "y"}
 _NO = {"아니", "아니오", "ㄴ", "취소", "cancel", "no", "n"}
@@ -265,8 +266,9 @@ class MessengerBot:
     def process_once(self) -> int:
         """한 번 폴링해 들어온 메시지를 처리한다. 처리한 메시지 수를 반환."""
         messages, next_offset = self.provider.get_updates(self._offset)
-        self._offset = next_offset
-        _save_offset(next_offset)
+        if next_offset != self._offset:
+            self._offset = next_offset
+            _save_offset(next_offset)
         handled = 0
         for msg in messages:
             if not self._is_allowed(msg.chat_id):

@@ -167,11 +167,8 @@ class WikiService:
 
     def related_notes(self, rel_path: str, limit: int = 10) -> list[WikiSearchResult]:
         """주어진 노트와 관련된 노트를 태그·위키링크·제목 기반으로 찾는다."""
-        target = None
-        for note in self.scan_notes():
-            if note.path == rel_path:
-                target = note
-                break
+        notes = self.scan_notes()
+        target = next((n for n in notes if n.path == rel_path), None)
         if target is None:
             return []
 
@@ -181,17 +178,20 @@ class WikiService:
         if not query.strip():
             return []
 
-        results = [r for r in self.search(query, limit=limit + 1) if r.note.path != rel_path]
+        results = [r for r in self._search_notes(notes, query, limit=limit + 1) if r.note.path != rel_path]
         return results[:limit]
 
     def search(self, query: str, limit: int = 10) -> list[WikiSearchResult]:
         """Simple keyword search over parsed vault notes."""
+        return self._search_notes(self.scan_notes(), query, limit=limit)
+
+    def _search_notes(self, notes: list[WikiNote], query: str, limit: int = 10) -> list[WikiSearchResult]:
         terms = self._tokenize(query)
         if not terms:
             return []
 
         results: list[WikiSearchResult] = []
-        for note in self.scan_notes():
+        for note in notes:
             score, matched = self._score_note(note, query, terms)
             if score > 0:
                 results.append(WikiSearchResult(note=note, score=score, matched_terms=matched))

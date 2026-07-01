@@ -125,10 +125,20 @@ class CuratorAgent:
         today = (self.now or datetime.now()).strftime("%Y-%m-%d")
         metadata["promoted_at"] = today
 
-        promoted_post = frontmatter.Post(body, **metadata)
-        promoted_path.write_text(frontmatter.dumps(promoted_post), encoding="utf-8")
+        base_content = frontmatter.dumps(frontmatter.Post(body, **metadata))
 
-        # 원본 candidate 삭제 — promoted 사본이 20_Knowledge에 존재하므로 중복 stem 방지
+        # 관련 노트 자동 링크 삽입 — 원본 삭제 전에 처리해 실패 시 롤백 가능
+        related = self.wiki_service.related_notes(promoted_rel, limit=5)
+        if related:
+            link_lines = ["\n\n## 관련 노트\n"]
+            for r in related:
+                link_title = r.note.title or Path(r.note.path).stem
+                link_lines.append(f"- [[{link_title}]]")
+            base_content = base_content + "\n".join(link_lines) + "\n"
+
+        promoted_path.write_text(base_content, encoding="utf-8")
+
+        # 원본 candidate 삭제 — promoted 사본이 공식 영역에 저장된 뒤 삭제
         src_path.unlink()
 
         title = str(metadata.get("title") or src_path.stem)

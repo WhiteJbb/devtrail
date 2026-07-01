@@ -135,12 +135,12 @@ class TelegramProvider:
             # 다른 인스턴스가 이미 polling 중 — 30초 대기 후 재시도
             print("[bot] 409 Conflict: 다른 봇 인스턴스가 실행 중입니다. 30초 후 재시도...", flush=True)
             time.sleep(30)
-            return [], offset or 0
+            return [], offset if offset is not None else 0
         resp.raise_for_status()
         data = resp.json()
 
         messages: list[IncomingMessage] = []
-        next_offset = offset or 0
+        next_offset = offset if offset is not None else 0
         for upd in data.get("result", []):
             update_id = upd.get("update_id", 0)
             next_offset = max(next_offset, update_id + 1)
