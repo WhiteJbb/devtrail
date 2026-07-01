@@ -9,9 +9,28 @@ process_once는 네트워크 한 번 폴링 단위라 테스트하기 쉽다.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.messaging.base import MessengerProvider
 from app.messaging.media_handler import TelegramMediaHandler, is_url
 from app.messaging.router import CommandRouter
+
+_OFFSET_FILE = Path(__file__).parent / ".bot_offset"
+
+
+def _load_offset() -> int | None:
+    try:
+        val = _OFFSET_FILE.read_text().strip()
+        return int(val) if val else None
+    except Exception:
+        return None
+
+
+def _save_offset(offset: int) -> None:
+    try:
+        _OFFSET_FILE.write_text(str(offset))
+    except Exception:
+        pass
 
 _YES = {"예", "네", "ㅇ", "응", "ok", "오케이", "yes", "y"}
 _NO = {"아니", "아니오", "ㄴ", "취소", "cancel", "no", "n"}
@@ -67,7 +86,7 @@ class MessengerBot:
         self.media_handler = media_handler
         self.allowed_chat_ids = set(allowed_chat_ids or [])
         self.default_chat_id = default_chat_id
-        self._offset: int | None = None
+        self._offset: int | None = _load_offset()
         self._pending: dict[str, object] = {}  # chat_id → 확인 대기 중인 Intent
         self._review_queue: dict[str, list] = {}  # chat_id → CandidateItem 목록
 
@@ -247,6 +266,7 @@ class MessengerBot:
         """한 번 폴링해 들어온 메시지를 처리한다. 처리한 메시지 수를 반환."""
         messages, next_offset = self.provider.get_updates(self._offset)
         self._offset = next_offset
+        _save_offset(next_offset)
         handled = 0
         for msg in messages:
             if not self._is_allowed(msg.chat_id):
