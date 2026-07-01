@@ -289,8 +289,17 @@ class MessengerBot:
         return handled
 
     def run(self) -> None:  # pragma: no cover - 무한 루프(수동 실행)
+        import time
         while True:
-            self.process_once()
+            try:
+                self.process_once()
+            except Exception as exc:
+                # ReadTimeout은 long-polling 정상 동작 범위 — 즉시 재시도
+                name = type(exc).__name__
+                if "Timeout" in name:
+                    continue
+                print(f"[bot] 오류 발생({name}): {exc}", flush=True)
+                time.sleep(3)
 
     def notify(self, text: str, chat_id: str = "") -> None:
         target = chat_id or self.default_chat_id
