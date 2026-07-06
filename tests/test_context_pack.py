@@ -132,10 +132,10 @@ def test_context_pack_builder_assembles_pack(tmp_path):
 
 def test_context_pack_render_has_all_sections(tmp_path):
     _write_agent_memory(tmp_path, "01_CurrentFocus.md", "Current Focus", "이번 주 목표: RAG 완성")
-    _write_project_context(tmp_path, "WorkAgent", "WorkAgent 개요")
+    _write_project_context(tmp_path, "Devtrail", "Devtrail 개요")
 
     builder = ContextPackBuilder(tmp_path)
-    pack = builder.build("WorkAgent 아키텍처")
+    pack = builder.build("Devtrail 아키텍처")
     rendered = pack.render()
 
     assert "# Context Pack" in rendered
@@ -143,7 +143,7 @@ def test_context_pack_render_has_all_sections(tmp_path):
     assert "## Project Context" in rendered
     assert "## Source Refs" in rendered
     assert "## Task" in rendered
-    assert "WorkAgent 아키텍처" in rendered
+    assert "Devtrail 아키텍처" in rendered
 
 
 def test_context_pack_without_vault_returns_empty_pack(tmp_path):

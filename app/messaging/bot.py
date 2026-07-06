@@ -15,7 +15,7 @@ from app.messaging.base import MessengerProvider
 from app.messaging.media_handler import TelegramMediaHandler, is_url
 from app.messaging.router import CommandRouter
 
-_OFFSET_FILE = Path.home() / ".work-agent" / "bot_offset"
+_OFFSET_FILE = Path.home() / ".devtrail" / "bot_offset"
 
 
 def _load_offset() -> int | None:

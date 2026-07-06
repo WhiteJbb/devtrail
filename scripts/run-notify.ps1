@@ -14,10 +14,10 @@ function Log($msg) {
     Add-Content -Path $LogFile -Value $line -Encoding UTF8
 }
 
-$wa = "$RepoRoot\.venv\Scripts\work-agent.exe"
+$wa = "$RepoRoot\.venv\Scripts\devtrail.exe"
 
 if (-not (Test-Path $wa)) {
-    Log "ERROR: work-agent.exe not found: $wa"
+    Log "ERROR: devtrail.exe not found: $wa"
     exit 1
 }
 

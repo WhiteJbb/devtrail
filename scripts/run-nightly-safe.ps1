@@ -1,5 +1,5 @@
 ﻿# nightly 안전 실행 wrapper
-# update-work-agent → sync-vault(pull) → nightly-distill → push-digest → sync-vault(push)
+# update-devtrail → sync-vault(pull) → nightly-distill → push-digest → sync-vault(push)
 # 충돌/오류 발생 시 중단 + Telegram 알림
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -54,7 +54,7 @@ function Invoke-Step($name, $scriptBlock) {
         }
         Log "$name OK"
     } catch {
-        $msg = "[work-agent] nightly 실패 — $name : $($_.Exception.Message)"
+        $msg = "[devtrail] nightly 실패 — $name : $($_.Exception.Message)"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
         throw
@@ -94,18 +94,18 @@ if (Test-Path $LockFile) {
 
 New-Item -ItemType File -Path $LockFile -Force | Out-Null
 
-$venvWa = "$RepoRoot\.venv\Scripts\work-agent.exe"
-$wa = if (Test-Path $venvWa) { $venvWa } else { (Get-Command work-agent.exe -ErrorAction SilentlyContinue).Source }
-if (-not $wa) { Log "work-agent.exe를 찾을 수 없습니다 (.venv 없고 PATH에도 없음)."; exit 1 }
+$venvWa = "$RepoRoot\.venv\Scripts\devtrail.exe"
+$wa = if (Test-Path $venvWa) { $venvWa } else { (Get-Command devtrail.exe -ErrorAction SilentlyContinue).Source }
+if (-not $wa) { Log "devtrail.exe를 찾을 수 없습니다 (.venv 없고 PATH에도 없음)."; exit 1 }
 
 try {
     Log "==============================="
     Log "=== run-nightly-safe start ==="
     Log "==============================="
 
-    # 1. work-agent 코드 업데이트
-    Invoke-Step "update-work-agent" {
-        & "$RepoRoot\scripts\update-work-agent.ps1"
+    # 1. devtrail 코드 업데이트
+    Invoke-Step "update-devtrail" {
+        & "$RepoRoot\scripts\update-devtrail.ps1"
     }
 
     # 2. Vault 최신화 (pull)

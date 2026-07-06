@@ -9,7 +9,7 @@ from __future__ import annotations
 from app.llm.base import LLMError, LLMNotConfiguredError
 
 _HELP = (
-    "**Work Agent**\n"
+    "**Devtrail**\n"
     "개인 지식 관리 · 자동 정리 · 콘텐츠 생성\n"
     "\n"
     "**[ 할 일 관리 ]**\n"

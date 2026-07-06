@@ -19,7 +19,7 @@ def _settings(vault):
     return Settings(OBSIDIAN_VAULT_PATH=str(vault), LLM_PROVIDER="ollama", MESSENGER_PROVIDER="")
 
 
-def _seed_capture(vault, text="오늘 RAG 검색 정리", project="WorkAgent"):
+def _seed_capture(vault, text="오늘 RAG 검색 정리", project="Devtrail"):
     CaptureAgent(
         settings=_settings(vault),
         now=datetime(2026, 6, 23, 9, 10, 11),
@@ -34,7 +34,7 @@ def _distill_response():
                     "title": "RAG 검색 전략",
                     "summary": "검색 전략을 재사용 가능한 지식으로 정리",
                     "body": "## 요약\nBM25와 벡터 검색을 함께 검토했다.",
-                    "project": "WorkAgent",
+                    "project": "Devtrail",
                     "tags": ["rag", "search"],
                     "source_refs": ["00_Inbox/Captures/source.md"],
                 }
@@ -44,7 +44,7 @@ def _distill_response():
                     "title": "후보 기반 반영 유지",
                     "summary": "공식 Knowledge 직접 수정을 피한다.",
                     "body": "## 결정\n후보를 먼저 만든다.",
-                    "project": "WorkAgent",
+                    "project": "Devtrail",
                     "tags": ["decision"],
                     "source_refs": ["00_Inbox/Captures/source.md"],
                 }
@@ -64,7 +64,7 @@ def _distill_response():
                     "title": "RAG 검색 정리 글감",
                     "summary": "작업 기록 기반 글감",
                     "body": "- 문제\n- 해결\n- 배운 점",
-                    "project": "WorkAgent",
+                    "project": "Devtrail",
                     "tags": ["blog-idea"],
                     "source_refs": ["00_Inbox/Captures/source.md"],
                 }

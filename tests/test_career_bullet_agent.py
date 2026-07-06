@@ -16,7 +16,7 @@ def _settings(vault):
     return Settings(OBSIDIAN_VAULT_PATH=str(vault), LLM_PROVIDER="ollama", MESSENGER_PROVIDER="")
 
 
-def _seed_session(vault, project="WorkAgent"):
+def _seed_session(vault, project="Devtrail"):
     CaptureAgent(settings=_settings(vault), now=datetime(2026, 6, 23, 9, 0, 0)).capture_session(
         project=project
     )

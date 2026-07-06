@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "work-agent"
+name = "devtrail"
 version = "0.1.0"
 description = "Obsidian 기반 LLM Wiki와 개인 지식 OS CLI"
 readme = "README.md"
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [project.scripts]
-work-agent = "app.cli:app"
+devtrail = "app.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["app*"]

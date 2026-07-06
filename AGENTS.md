@@ -57,78 +57,78 @@ Content Source 계층    — ObsidianSource, GitSource, NotionSource, LocalDocSo
 
 ### Vault 관리
 ```bash
-work-agent init-vault              # Vault 기본 구조 + index.md + log.md 생성
-work-agent index-vault             # Markdown 읽어 root index.md 갱신
-work-agent install-hooks <repo>    # git post-commit hook 설치
-work-agent search "검색어"         # 키워드 검색 (LLM 불필요)
-work-agent related <path>          # 태그/wikilink 기반 관련 노트 탐색
+devtrail init-vault              # Vault 기본 구조 + index.md + log.md 생성
+devtrail index-vault             # Markdown 읽어 root index.md 갱신
+devtrail install-hooks <repo>    # git post-commit hook 설치
+devtrail search "검색어"         # 키워드 검색 (LLM 불필요)
+devtrail related <path>          # 태그/wikilink 기반 관련 노트 탐색
 ```
 
 ### Capture — raw 기록 저장
 ```bash
-work-agent capture "메모"                                   # → 00_Inbox/Captures/
-work-agent capture-commit --repo <path>                    # → 10_Worklog/GitSummaries/
-work-agent daily-log                                       # → 10_Worklog/Daily/
-work-agent capture-session --project WorkAgent             # → 10_Worklog/Daily/ (세션 단위)
-work-agent capture-session --project WorkAgent --from-repo                # git 스냅샷 포함
-work-agent capture-session --project WorkAgent --from-repo --from-agent  # AI 세션 요약 신호
-work-agent capture-session --project WorkAgent --summary-file ./s.md     # AI 요약 파일 삽입
+devtrail capture "메모"                                   # → 00_Inbox/Captures/
+devtrail capture-commit --repo <path>                    # → 10_Worklog/GitSummaries/
+devtrail daily-log                                       # → 10_Worklog/Daily/
+devtrail capture-session --project Devtrail             # → 10_Worklog/Daily/ (세션 단위)
+devtrail capture-session --project Devtrail --from-repo                # git 스냅샷 포함
+devtrail capture-session --project Devtrail --from-repo --from-agent  # AI 세션 요약 신호
+devtrail capture-session --project Devtrail --summary-file ./s.md     # AI 요약 파일 삽입
 ```
 
 ### Distill — 정제 후보 생성 (LLM 필요)
 ```bash
-work-agent distill-today           # Inbox → 60_Candidates/ 일괄 생성
-work-agent suggest-knowledge       # Knowledge 후보 제안
-work-agent suggest-blog-topics     # BlogIdea 후보 제안
-work-agent suggest-memory-patch    # AgentMemory 패치 제안
-work-agent build-context "주제"    # 주제별 ContextPack 생성
+devtrail distill-today           # Inbox → 60_Candidates/ 일괄 생성
+devtrail suggest-knowledge       # Knowledge 후보 제안
+devtrail suggest-blog-topics     # BlogIdea 후보 제안
+devtrail suggest-memory-patch    # AgentMemory 패치 제안
+devtrail build-context "주제"    # 주제별 ContextPack 생성
 ```
 
 ### Candidate 관리
 ```bash
-work-agent list-candidates              # 60_Candidates/ 목록
-work-agent preview-candidate <path>     # 후보 미리보기
-work-agent promote-candidate <path>     # → 20_Knowledge/ 승격
-work-agent apply-memory-patch <path>    # → 40_AgentMemory/ 반영
+devtrail list-candidates              # 60_Candidates/ 목록
+devtrail preview-candidate <path>     # 후보 미리보기
+devtrail promote-candidate <path>     # → 20_Knowledge/ 승격
+devtrail apply-memory-patch <path>    # → 40_AgentMemory/ 반영
 ```
 
 ### 블로그 (Vault 기반)
 ```bash
-work-agent write-blog "주제"        # ContextPack → 초안 → 50_Outputs/Blog/Drafts/
-work-agent revise-blog <vault_path> # Vault 블로그 초안 다듬기
-work-agent publish-ready <path>     # 초안 상태 → review
-work-agent suggest-topics           # 주제 추천
+devtrail write-blog "주제"        # ContextPack → 초안 → 50_Outputs/Blog/Drafts/
+devtrail revise-blog <vault_path> # Vault 블로그 초안 다듬기
+devtrail publish-ready <path>     # 초안 상태 → review
+devtrail suggest-topics           # 주제 추천
 ```
 
 ### 개인 문서
 ```bash
-work-agent worklog                         # 작업 회고
-work-agent todo                            # 다음 할 일 제안
-work-agent resume                          # 이력서/자기소개서
-work-agent portfolio                       # 포트폴리오
-work-agent summarize-project <project>     # 프로젝트 요약
-work-agent portfolio-draft <project>       # 프로젝트별 포폴 초안
-work-agent interview-questions <project>   # 면접 질문 초안
+devtrail worklog                         # 작업 회고
+devtrail todo                            # 다음 할 일 제안
+devtrail resume                          # 이력서/자기소개서
+devtrail portfolio                       # 포트폴리오
+devtrail summarize-project <project>     # 프로젝트 요약
+devtrail portfolio-draft <project>       # 프로젝트별 포폴 초안
+devtrail interview-questions <project>   # 면접 질문 초안
 ```
 
 ### 자동화 & 봇
 ```bash
-work-agent serve-bot               # Telegram 봇 실행 (voice/image/URL 캡처 포함)
-work-agent push-digest             # BlogIdea 목록 메신저 전송
-work-agent push-digest --daily     # 오늘 전 카테고리 요약 전송
-work-agent push-digest --weekly    # 최근 7일 요약 전송
-work-agent push-digest --worklog   # 작업 회고도 함께 전송
-work-agent ask "자연어"            # 의도 분류 후 커맨드 실행
+devtrail serve-bot               # Telegram 봇 실행 (voice/image/URL 캡처 포함)
+devtrail push-digest             # BlogIdea 목록 메신저 전송
+devtrail push-digest --daily     # 오늘 전 카테고리 요약 전송
+devtrail push-digest --weekly    # 최근 7일 요약 전송
+devtrail push-digest --worklog   # 작업 회고도 함께 전송
+devtrail ask "자연어"            # 의도 분류 후 커맨드 실행
 ```
 
 ### Phase 2 자동화
 ```bash
-work-agent nightly-distill                        # 하루 raw 기록 종합 정제 + daily digest 생성
-work-agent suggest-career-bullets                 # 이력서/포트폴리오 bullet 후보 생성
-work-agent suggest-career-bullets --project WorkAgent   # 특정 프로젝트 필터
-work-agent update-open-loops                      # Open Loops MemoryPatch 후보 생성
-work-agent print-schedule --windows              # Windows schtasks 등록 명령 출력
-work-agent print-schedule --cron                 # Linux/Mac crontab 등록 명령 출력
+devtrail nightly-distill                        # 하루 raw 기록 종합 정제 + daily digest 생성
+devtrail suggest-career-bullets                 # 이력서/포트폴리오 bullet 후보 생성
+devtrail suggest-career-bullets --project Devtrail   # 특정 프로젝트 필터
+devtrail update-open-loops                      # Open Loops MemoryPatch 후보 생성
+devtrail print-schedule --windows              # Windows schtasks 등록 명령 출력
+devtrail print-schedule --cron                 # Linux/Mac crontab 등록 명령 출력
 ```
 
 **자동화 루프 예시:**
@@ -228,7 +228,7 @@ curl -s -X PUT \
 
 ## capture-session rule
 
-`work-agent capture-session --from-agent` 명령을 실행할 때 Claude Code / Codex는 다음을 수행한다.
+`devtrail capture-session --from-agent` 명령을 실행할 때 Claude Code / Codex는 다음을 수행한다.
 
 1. 현재 작업 세션에서 실제로 수행한 일을 되돌아본다.
 2. 변경 파일, 설계 결정, 해결한 문제, 남은 일을 정리한다.
@@ -244,7 +244,7 @@ curl -s -X PUT \
 
 ```bash
 # 권장 패턴
-work-agent capture-session --project WorkAgent --from-repo --from-agent --summary-file ./session-summary.md
+devtrail capture-session --project Devtrail --from-repo --from-agent --summary-file ./session-summary.md
 ```
 
 ## 테스트

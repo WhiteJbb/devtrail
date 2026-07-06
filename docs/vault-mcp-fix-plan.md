@@ -325,7 +325,7 @@ CONFIRMED(트리거 입력과 잘못된 출력을 코드로 확인) 또는 PLAUS
   `scripts/hooks/stop-process-check.ps1:32`, `scripts/hooks/print_briefing.py:20-26`
 - **증상**: (a) `& python ... 2>$null`이 `$ErrorActionPreference="Stop"` 하에서 try 밖 —
   python 부재 시 CommandNotFoundException으로 훅 전체 사망, PS 5.1/pwsh<7.2에서는 stderr
-  한 줄(경고/traceback)만으로 NativeCommandError. (b) PATH python에 work-agent가 없으면
+  한 줄(경고/traceback)만으로 NativeCommandError. (b) PATH python에 devtrail이 없으면
   print_briefing.py의 모듈 레벨 import(20행)와 try 밖 `get_settings()`(26행)가
   "항상 exit 0" 계약을 깨고 traceback으로 종료. (c) stop-process-check.ps1의
   `git status --porcelain 2>$null`은 같은 이유로 PS 5.1에서 git 경고 한 줄에 catch로
@@ -334,9 +334,9 @@ CONFIRMED(트리거 입력과 잘못된 출력을 코드로 확인) 또는 PLAUS
   1. `app/cli.py`에 `project-briefing` 커맨드 추가 — print_briefing.py의 main 로직을
      그대로 옮긴 얇은 래퍼(인자: repo 경로, 기본 cwd; 모든 예외를 삼키고 안내문 출력 후
      exit 0). scripts/hooks/print_briefing.py는 삭제하고 session-start-briefing.ps1은
-     `work-agent project-briefing $cwd`를 호출한다(설치된 엔트리포인트라 인터프리터
-     문제가 사라짐). `work-agent`가 없을 때를 대비해 호출을 try/catch로 감싼다.
-  2. 두 .ps1의 네이티브 호출(work-agent, git)을 전부 try/catch로 감싸고, 해당 블록만
+     `devtrail project-briefing $cwd`를 호출한다(설치된 엔트리포인트라 인터프리터
+     문제가 사라짐). `devtrail`가 없을 때를 대비해 호출을 try/catch로 감싼다.
+  2. 두 .ps1의 네이티브 호출(devtrail, git)을 전부 try/catch로 감싸고, 해당 블록만
      `$ErrorActionPreference = "Continue"`로 낮춘 뒤 호출이 끝나면 복원한다
      (`2>$null`은 제거 — stderr는 버리지 말고 무시되도록 둔다).
   3. print_briefing.py를 남겨두는 선택을 하는 경우엔 최소한 import와 get_settings()를
@@ -352,7 +352,7 @@ CONFIRMED(트리거 입력과 잘못된 출력을 코드로 확인) 또는 PLAUS
 
 - **위치**: `app/agents/curator_agent.py` apply_memory_patch (~175행)
 - **증상**: promote_candidate는 session_handoff를 거부(122행)하지만 apply_memory_patch는
-  kind 검사가 전혀 없어 `work-agent apply-memory-patch "60_Candidates/SessionHandoffs/..."`
+  kind 검사가 전혀 없어 `devtrail apply-memory-patch "60_Candidates/SessionHandoffs/..."`
   로 Process 본문 전체가 05_OpenLoops.md에 붙는다. (main부터 있던 일반 갭이지만, 이번
   PR이 "절대 승격 금지" kind를 처음 도입하면서 비대칭이 생김.)
 - **수정**: apply_memory_patch 초입에서 candidate_type을 읽어

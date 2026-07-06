@@ -30,8 +30,8 @@ def _career_response():
         {
             "career_bullets": [
                 {
-                    "title": "WorkAgent 자동화 구현",
-                    "project": "WorkAgent",
+                    "title": "Devtrail 자동화 구현",
+                    "project": "Devtrail",
                     "source_evidence": "세션 노트",
                     "resume_bullets": ["• 자동화"],
                     "portfolio_description": "설명",
@@ -64,7 +64,7 @@ class _MultiCallLLM:
 
 def _seed_session(vault):
     CaptureAgent(settings=_settings(vault), now=datetime(2026, 6, 23, 9, 0, 0)).capture_session(
-        project="WorkAgent"
+        project="Devtrail"
     )
 
 
@@ -108,10 +108,10 @@ def test_daily_digest_includes_review_question_block(tmp_path):
     Telegram 전송본에는 붙고 50_Outputs/Digest/에 저장되는 파일에는 없어 두
     산출물이 영구히 달라졌다.
     """
-    session_path = tmp_path / "10_Worklog" / "Sessions" / "2026-06-23-workagent-session.md"
+    session_path = tmp_path / "10_Worklog" / "Sessions" / "2026-06-23-devtrail-session.md"
     session_path.parent.mkdir(parents=True, exist_ok=True)
     session_path.write_text(
-        "---\nproject: WorkAgent\ncreated_at: 2026-06-23T09:00:00\n---\n\n"
+        "---\nproject: Devtrail\ncreated_at: 2026-06-23T09:00:00\n---\n\n"
         "## Learning Recovery\n\n"
         "### 내가 아직 완전히 이해하지 못한 개념\n- MCP stdio server lifecycle\n\n"
         "### 다음에 직접 설명해봐야 할 질문\n1. MCP stdio 서버는 상시 데몬과 무엇이 다른가?\n",
@@ -128,10 +128,10 @@ def test_daily_digest_includes_review_question_block(tmp_path):
 
 def test_weekly_digest_does_not_include_review_question_block(tmp_path):
     """복습 질문은 '하루 1개' 원칙이므로 weekly digest에는 붙지 않아야 한다."""
-    session_path = tmp_path / "10_Worklog" / "Sessions" / "2026-06-23-workagent-session.md"
+    session_path = tmp_path / "10_Worklog" / "Sessions" / "2026-06-23-devtrail-session.md"
     session_path.parent.mkdir(parents=True, exist_ok=True)
     session_path.write_text(
-        "---\nproject: WorkAgent\ncreated_at: 2026-06-23T09:00:00\n---\n\n"
+        "---\nproject: Devtrail\ncreated_at: 2026-06-23T09:00:00\n---\n\n"
         "## Learning Recovery\n\n"
         "### 다음에 직접 설명해봐야 할 질문\n1. 질문 내용\n",
         encoding="utf-8",

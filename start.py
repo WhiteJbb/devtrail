@@ -1,4 +1,4 @@
-"""work-agent 시작 점검 + 대시보드 실행.
+"""devtrail 시작 점검 + 대시보드 실행.
 
 실행: python start.py
 """
@@ -81,7 +81,7 @@ def _find_bot_pid() -> int | None:
 
 def startup_checks(env: dict) -> Path | None:
     """환경 점검 후 vault Path 반환. 실패 시 None."""
-    rule("work-agent  startup")
+    rule("devtrail  startup")
 
     ok(f"Python {sys.version.split()[0]}")
 

@@ -13,7 +13,7 @@ set PYTHONIOENCODING=utf-8
 
 where wt >nul 2>&1
 if %ERRORLEVEL% == 0 (
-    wt --title "WORK AGENT" -- cmd /k "chcp 65001 > nul && "%PY%" "%ROOT%start.py""
+    wt --title "DEVTRAIL" -- cmd /k "chcp 65001 > nul && "%PY%" "%ROOT%start.py""
 ) else (
-    start "WORK AGENT" /MAX cmd /k "chcp 65001 > nul && "%PY%" "%ROOT%start.py""
+    start "DEVTRAIL" /MAX cmd /k "chcp 65001 > nul && "%PY%" "%ROOT%start.py""
 )

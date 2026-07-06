@@ -17,7 +17,7 @@ def _settings(vault):
 
 def _seed_session(vault):
     CaptureAgent(settings=_settings(vault), now=datetime(2026, 6, 23, 9, 0, 0)).capture_session(
-        project="WorkAgent"
+        project="Devtrail"
     )
 
 

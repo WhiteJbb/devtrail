@@ -138,9 +138,9 @@ source_refs: []            # 이 프롬프트가 잘 동작했던 세션/노트 
 ## 6. 수동 검증
 
 1. MCP 등록 상태에서 `record_prompt` 호출 → `60_Candidates/Prompts/`에 파일 확인.
-2. `work-agent list-candidates`에 prompt 후보가 보이는지 → `promote-candidate`로 승격.
-3. MCP 서버 재시작 후 Claude Code에서 `/` 입력 → `devtrail-vault(현재는 work-agent-vault)`
-   프롬프트가 목록에 뜨고, 선택 시 변수 입력과 본문 주입이 되는지.
+2. `devtrail list-candidates`에 prompt 후보가 보이는지 → `promote-candidate`로 승격.
+3. MCP 서버 재시작 후 Claude Code에서 `/` 입력 → `devtrail-vault` 프롬프트가 목록에
+   뜨고, 선택 시 변수 입력과 본문 주입이 되는지.
 4. "저장된 리뷰 프롬프트 찾아줘" 자연어로 ask-vault/search_vault가 찾는지.
 
 ## 범위 제외

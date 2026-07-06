@@ -1,4 +1,4 @@
-﻿# work-agent 설치 스크립트
+﻿# devtrail 설치 스크립트
 #
 # 최초 설치:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
@@ -104,7 +104,7 @@ if ($userPath -split ";" | Where-Object { $_ -eq $ScriptsDir }) {
     $newPath = ($userPath.TrimEnd(";") + ";" + $ScriptsDir)
     [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
     ok "PATH에 추가됨: $ScriptsDir"
-    warn "새 터미널을 열어야 work-agent 명령이 인식됩니다."
+    warn "새 터미널을 열어야 devtrail 명령이 인식됩니다."
 }
 
 # ── 5. .env 초기화 ────────────────────────────────────────────────────────────
@@ -149,13 +149,13 @@ if ($Repo -ne "") {
         fail "$RepoPath 는 git 레포지토리가 아닙니다."
     }
 
-    $WorkAgentExe = Join-Path $ScriptsDir "work-agent.exe"
-    if (-not (Test-Path $WorkAgentExe)) { fail "work-agent.exe를 찾을 수 없습니다: $WorkAgentExe" }
+    $DevtrailExe = Join-Path $ScriptsDir "devtrail.exe"
+    if (-not (Test-Path $DevtrailExe)) { fail "devtrail.exe를 찾을 수 없습니다: $DevtrailExe" }
 
     $projectName = if ($Project) { $Project } else { Split-Path $RepoPath -Leaf }
     info "프로젝트명: $projectName"
 
-    & $WorkAgentExe install-hooks $RepoPath --project $projectName --force
+    & $DevtrailExe install-hooks $RepoPath --project $projectName --force
     if ($LASTEXITCODE -ne 0) { fail "훅 설치 실패" }
 }
 

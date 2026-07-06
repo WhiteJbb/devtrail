@@ -1,4 +1,4 @@
-"""`work-agent project-briefing` CLI 테스트 (P4.4 — SessionStart 훅이 호출하는 명령).
+"""`devtrail project-briefing` CLI 테스트 (P4.4 — SessionStart 훅이 호출하는 명령).
 
 이 명령은 어떤 예외 상황에서도 훅 전체를 실패시키지 않도록 항상 exit code 0으로
 끝나야 한다.

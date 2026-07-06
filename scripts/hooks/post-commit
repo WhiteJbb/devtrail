@@ -1,7 +1,7 @@
 #!/bin/sh
-# work-agent post-commit hook
+# devtrail post-commit hook
 # Captures git commit to Obsidian vault automatically.
-# Install via: work-agent install-hooks --repo <path>
+# Install via: devtrail install-hooks --repo <path>
 #
 # [비활성화] 커밋마다 LLM을 호출해 GitSummaries에 노트를 생성하는 방식이었으나
 # 두 가지 문제로 제거:
@@ -11,13 +11,13 @@
 # capture-commit CLI 명령 자체는 app/agents/capture_agent.py에 보존돼 있음.
 exit 0
 
-WORK_AGENT_HOME=$(git config --local work-agent.home 2>/dev/null)
-[ -z "$WORK_AGENT_HOME" ] && exit 0
+DEVTRAIL_HOME=$(git config --local devtrail.home 2>/dev/null)
+[ -z "$DEVTRAIL_HOME" ] && exit 0
 
-PYTHON=$(git config --local work-agent.python 2>/dev/null)
+PYTHON=$(git config --local devtrail.python 2>/dev/null)
 [ -z "$PYTHON" ] && PYTHON="python"
 
-PROJECT=$(git config --local work-agent.project 2>/dev/null)
+PROJECT=$(git config --local devtrail.project 2>/dev/null)
 [ -z "$PROJECT" ] && PROJECT=$(basename "$(git rev-parse --show-toplevel)")
 
 REPO=$(git rev-parse --show-toplevel)
@@ -30,9 +30,9 @@ case "$SUBJECT" in
 esac
 
 # Convert Windows backslashes to forward slashes for Git Bash
-WORK_AGENT_HOME_UNIX=$(echo "$WORK_AGENT_HOME" | tr '\\' '/')
+DEVTRAIL_HOME_UNIX=$(echo "$DEVTRAIL_HOME" | tr '\\' '/')
 
-cd "$WORK_AGENT_HOME_UNIX" && \
+cd "$DEVTRAIL_HOME_UNIX" && \
   "$PYTHON" -m app.cli capture-commit --repo "$REPO" --project "$PROJECT" --from-agent 2>/dev/null \
-  && echo "[work-agent] captured -> $PROJECT" \
+  && echo "[devtrail] captured -> $PROJECT" \
   || true

@@ -61,7 +61,7 @@ Set-Location $VaultDir
 
 # ── 충돌 상태 체크 ────────────────────────────────────────────────────
 if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
-    $msg = "[work-agent] Vault 충돌 상태 감지. 수동 해결 필요: $VaultDir"
+    $msg = "[devtrail] Vault 충돌 상태 감지. 수동 해결 필요: $VaultDir"
     Log "ERROR: $msg"
     Send-TelegramAlert $msg
     exit 1
@@ -119,14 +119,14 @@ if ($hasRemote -or $hasLocal) {
     git pull --no-rebase 2>&1 | ForEach-Object { Log "pull: $_" }
 
     if ($LASTEXITCODE -ne 0) {
-        $msg = "[work-agent] Vault merge 실패. 수동 해결 필요: $VaultDir"
+        $msg = "[devtrail] Vault merge 실패. 수동 해결 필요: $VaultDir"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
         exit 1
     }
 
     if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
-        $msg = "[work-agent] Vault merge 충돌 감지. 수동 해결 필요: $VaultDir"
+        $msg = "[devtrail] Vault merge 충돌 감지. 수동 해결 필요: $VaultDir"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
         exit 1
@@ -138,7 +138,7 @@ if ($hasLocal) {
     git push 2>&1 | ForEach-Object { Log "push: $_" }
 
     if ($LASTEXITCODE -ne 0) {
-        $msg = "[work-agent] Vault push 실패 (exit $LASTEXITCODE)"
+        $msg = "[devtrail] Vault push 실패 (exit $LASTEXITCODE)"
         Log "ERROR: $msg"
         Send-TelegramAlert $msg
         exit 1
