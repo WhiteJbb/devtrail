@@ -31,7 +31,7 @@ class TaskAgent:
         due_str = f"\n기한: `{due}`" if due else ""
         return TaskResult(
             ok=True,
-            message=f"태스크 추가 ✅\n**[{section}]** {task_text}{due_str}",
+            message=f"✅ 할 일에 추가했어요\n**[{section}]** {task_text}{due_str}",
             task=task,
         )
 
@@ -44,40 +44,40 @@ class TaskAgent:
         if arg.startswith("^"):
             task = self.service.complete_task_by_id(arg[1:])
             if task is None:
-                return TaskResult(ok=False, message="태스크를 찾지 못했습니다.\n/tasks 로 목록 확인")
+                return TaskResult(ok=False, message="그 태스크를 못 찾았어요.\n/tasks 로 목록을 확인해주세요.")
         else:
             try:
                 n = int(arg)
             except ValueError:
-                return TaskResult(ok=False, message="번호를 입력해주세요. 예: /done 2")
+                return TaskResult(ok=False, message="번호로 알려주세요. 예: /done 2")
             task = self.service.complete_task(n)
             if task is None:
                 total = len(self.service.list_tasks())
                 return TaskResult(
                     ok=False,
-                    message=f"{n}번 태스크를 찾지 못했습니다. (현재 {total}개)\n/tasks 로 목록 확인",
+                    message=f"{n}번 태스크를 못 찾았어요. (현재 {total}개)\n/tasks 로 목록을 확인해주세요.",
                 )
-        return TaskResult(ok=True, message=f"완료 ✅\n~~{task.text}~~", task=task)
+        return TaskResult(ok=True, message=f"✅ 완료 처리했어요. 수고했어요!\n~~{task.text}~~", task=task)
 
     def delete(self, arg: str) -> TaskResult:
         arg = arg.strip()
         if arg.startswith("^"):
             task = self.service.delete_task_by_id(arg[1:])
             if task is None:
-                return TaskResult(ok=False, message="태스크를 찾지 못했습니다.\n/tasks 로 목록 확인")
+                return TaskResult(ok=False, message="그 태스크를 못 찾았어요.\n/tasks 로 목록을 확인해주세요.")
         else:
             try:
                 n = int(arg)
             except ValueError:
-                return TaskResult(ok=False, message="번호를 입력해주세요. 예: /del 2")
+                return TaskResult(ok=False, message="번호로 알려주세요. 예: /del 2")
             task = self.service.delete_task(n)
             if task is None:
                 total = len(self.service.list_tasks())
                 return TaskResult(
                     ok=False,
-                    message=f"{n}번 태스크를 찾지 못했습니다. (현재 {total}개)\n/tasks 로 목록 확인",
+                    message=f"{n}번 태스크를 못 찾았어요. (현재 {total}개)\n/tasks 로 목록을 확인해주세요.",
                 )
-        return TaskResult(ok=True, message=f"삭제 완료\n~~{task.text}~~", task=task)
+        return TaskResult(ok=True, message=f"🗑 삭제했어요\n~~{task.text}~~", task=task)
 
     def edit(self, arg: str) -> TaskResult:
         """`arg` = '2 새내용' 형식."""
@@ -85,14 +85,14 @@ class TaskAgent:
         if len(parts) < 2:
             return TaskResult(
                 ok=False,
-                message="번호와 새 내용을 함께 입력해주세요.\n예: /edit 2 코드 리뷰 내일까지",
+                message="어떻게 바꿀까요? 번호와 새 내용을 함께 보내주세요.\n예: /edit 2 코드 리뷰 내일까지",
             )
         try:
             n = int(parts[0])
         except ValueError:
             return TaskResult(
                 ok=False,
-                message="첫 번째 인자는 번호여야 합니다.\n예: /edit 2 코드 리뷰 내일까지",
+                message="맨 앞은 태스크 번호여야 해요.\n예: /edit 2 코드 리뷰 내일까지",
             )
 
         new_raw = parts[1].strip()
@@ -103,7 +103,7 @@ class TaskAgent:
         if old_task is None:
             return TaskResult(
                 ok=False,
-                message=f"{n}번 태스크를 찾지 못했습니다. (현재 {len(tasks)}개)\n/tasks 로 목록 확인",
+                message=f"{n}번 태스크를 못 찾았어요. (현재 {len(tasks)}개)\n/tasks 로 목록을 확인해주세요.",
             )
 
         # 날짜 키워드가 없으면 기존 섹션 유지
@@ -112,12 +112,12 @@ class TaskAgent:
 
         new_task = self.service.edit_task(n, new_text, new_due, new_section)
         if new_task is None:
-            return TaskResult(ok=False, message=f"{n}번 태스크 수정에 실패했습니다.")
+            return TaskResult(ok=False, message=f"{n}번 태스크를 수정하지 못했어요. 다시 시도해주세요.")
 
         due_str = f"\n기한: `{new_due}`" if new_due else ""
         return TaskResult(
             ok=True,
-            message=f"수정 완료 ✅\n~~{old_task.text}~~ → **{new_text}**\n**[{new_section}]**{due_str}",
+            message=f"✅ 이렇게 바꿔뒀어요\n~~{old_task.text}~~ → **{new_text}**\n**[{new_section}]**{due_str}",
             task=new_task,
         )
 

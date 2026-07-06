@@ -32,7 +32,7 @@ class TelegramMediaHandler:
             return self._handle_voice(msg)
         if msg.photo_file_id:
             return self._handle_image(msg)
-        return "알 수 없는 미디어 타입입니다."
+        return "이 형식은 아직 처리하지 못해요. 텍스트·음성·사진·URL을 보내주세요."
 
     def handle_url(self, url: str) -> str:
         llm = None
@@ -44,10 +44,16 @@ class TelegramMediaHandler:
             pass
         try:
             result = self.capture_agent.capture_url(url, source="telegram_url", llm=llm)
-            label = "URL 캡처 + 요약 완료" if llm else "URL 캡처 완료"
-            return f"{label}\n노트: {result.rel_path}"
+            if llm:
+                label = "🔗 링크 읽고 요약까지 해뒀어요 (URL 캡처 + 요약 완료)"
+            else:
+                label = "🔗 링크 저장해뒀어요 (URL 캡처 완료 — LLM 미설정이라 요약은 건너뛰었어요)"
+            return (
+                f"{label}\n└ {result.rel_path}\n\n"
+                "오늘 밤 정제할 때 지식 후보로 같이 살펴볼게요."
+            )
         except Exception as e:
-            return f"URL 캡처 실패: {e}"
+            return f"링크를 저장하지 못했어요: {e}"
 
     def _handle_voice(self, msg: IncomingMessage) -> str:
         dest_dir = self.vault_dir / "00_Inbox" / "Raw" / "Attachments"
@@ -56,7 +62,7 @@ class TelegramMediaHandler:
         try:
             file_path = self.provider.download_file(msg.voice_file_id, dest_dir, filename)
         except Exception as e:
-            return f"음성 파일 다운로드 실패: {e}"
+            return f"음성 파일을 받지 못했어요: {e}"
 
         transcript = ""
         if self.stt is not None:
@@ -69,24 +75,25 @@ class TelegramMediaHandler:
             try:
                 result = self.capture_agent.capture(text=transcript, source="telegram_voice")
                 return (
-                    f"음성 캡처 완료\n"
-                    f"텍스트: {transcript[:200]}\n"
-                    f"노트: {result.rel_path}"
+                    f"🎙 음성 메모, 받아적어서 저장해뒀어요\n"
+                    f"└ {result.rel_path}\n\n"
+                    f"들은 내용: {transcript[:200]}"
                 )
             except Exception as e:
-                return f"캡처 저장 실패: {e}"
+                return f"받아적었는데 저장에 실패했어요: {e}"
         else:
             try:
                 result = self.capture_agent.capture_attachment(
                     file_path=file_path, source="telegram_voice"
                 )
                 return (
-                    f"음성 파일 저장 완료.\n\n"
-                    f"STT provider가 설정되지 않아 텍스트 변환은 건너뜀.\n"
-                    f"노트: {result.rel_path}"
+                    f"🎙 음성 파일은 저장해뒀어요\n"
+                    f"└ {result.rel_path}\n\n"
+                    f"다만 STT provider가 설정되지 않아 텍스트 변환은 건너뛰었어요.\n"
+                    f".env에 STT 설정을 추가하면 다음부터는 자동으로 받아적어드릴게요."
                 )
             except Exception as e:
-                return f"attachment 저장 실패: {e}"
+                return f"음성 파일 저장에 실패했어요: {e}"
 
     def _handle_image(self, msg: IncomingMessage) -> str:
         dest_dir = self.vault_dir / "00_Inbox" / "Raw" / "Attachments"
@@ -95,7 +102,7 @@ class TelegramMediaHandler:
         try:
             file_path = self.provider.download_file(msg.photo_file_id, dest_dir, filename)
         except Exception as e:
-            return f"이미지 다운로드 실패: {e}"
+            return f"이미지를 받지 못했어요: {e}"
 
         try:
             result = self.capture_agent.capture_attachment(
@@ -103,6 +110,9 @@ class TelegramMediaHandler:
                 source="telegram_image",
                 caption=msg.caption or msg.text,
             )
-            return f"이미지 캡처 완료\n노트: {result.rel_path}"
+            return (
+                f"🖼 이미지 캡처 완료 — 노트로 저장해뒀어요\n└ {result.rel_path}\n\n"
+                "캡션을 같이 보내주시면 나중에 검색하기 좋아요."
+            )
         except Exception as e:
-            return f"이미지 캡처 저장 실패: {e}"
+            return f"이미지 저장에 실패했어요: {e}"

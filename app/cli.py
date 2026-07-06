@@ -1112,15 +1112,23 @@ def notify(
     except Exception:
         pass
 
-    candidate_hint = f"\n\n후보 {candidate_count}개 쌓여있어요 → /review" if candidate_count else ""
+    candidate_hint = (
+        f"\n\n📥 검토를 기다리는 후보가 {candidate_count}개 있어요 → /review"
+        if candidate_count
+        else ""
+    )
 
     if kind == "morning":
-        task_block = ("\n" + "\n".join(task_lines)) if task_lines else "\n할 일이 없습니다."
-        text = f"🌅 **오늘 할 일**{task_block}{candidate_hint}"
+        task_block = (
+            ("\n" + "\n".join(task_lines))
+            if task_lines
+            else "\n등록된 할 일이 없어요. /task 로 추가할 수 있어요."
+        )
+        text = f"🌅 좋은 아침이에요! 오늘 할 일 정리해뒀어요.{task_block}{candidate_hint}"
     elif kind == "evening":
         text = (
-            "🌙 **오늘 마무리 체크**\n\n"
-            "오늘 기록할 것 있으면 남겨두세요.\n"
+            "🌙 오늘 하루 마무리할 시간이에요.\n\n"
+            "기록해둘 게 있다면 지금 남겨주세요 — 밤에 제가 지식 후보로 정제해둘게요.\n"
             "/capture <내용>  또는  /session"
             f"{candidate_hint}"
         )

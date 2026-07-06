@@ -318,7 +318,8 @@ def test_router_session_no_arg(tmp_path):
 
     with patch("app.agents.CaptureAgent", mock_agent):
         out = router.handle("/session")
-    assert "세션 노트 생성 완료" in out or "실패" in out
+    assert "세션 노트" in out
+    assert fake_result.rel_path in out
 
 
 def test_router_session_with_project(tmp_path):

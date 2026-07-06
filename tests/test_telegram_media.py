@@ -137,7 +137,10 @@ def test_handle_url(tmp_path):
     )
     reply = handler.handle_url("https://example.com/article")
 
-    assert "URL 캡처 완료" in reply
+    # .env의 실제 LLM 키 유무에 따라 "URL 캡처 완료" / "URL 캡처 + 요약 완료"로 갈리므로
+    # 공통 접두어와 노트 경로만 검증한다.
+    assert "URL 캡처" in reply
+    assert "00_Inbox/Captures/url.md" in reply
     mock_capture.capture_url.assert_called_once()
 
 

@@ -64,7 +64,7 @@ def test_nl_cancel():
     )
     bot.process_once()
     bot.process_once()
-    assert provider.sent[-1][1] == "취소했습니다."
+    assert provider.sent[-1][1] == "취소했어요."
 
 
 def test_unknown_intent_shows_help():

@@ -52,24 +52,21 @@ _ROUTER_CMD = {
 
 _HELP = (
     "**Devtrail**\n"
-    "안녕하세요. 개인 지식 관리 에이전트입니다.\n"
+    "안녕하세요, 당신의 기록을 지식으로 바꾸는 에이전트예요.\n"
+    "명령어를 외울 필요 없이 자유롭게 말해보세요 — 의도를 파악해서 실행해드려요.\n"
     "\n"
-    "**[ 할 일 ]**\n"
-    "/tasks  — 목록 + 완료·삭제 버튼\n"
-    "/task <내용>  — 추가  (예: /task 코드리뷰 내일까지)\n"
-    "/done <번호> · /del <번호> · /edit <번호> <새내용>\n"
+    "예를 들면 이런 식으로요:\n"
+    "· \"오늘 RAG 인덱싱 고친 거 메모해줘\"\n"
+    "· \"코드리뷰 내일까지, 할 일에 추가해줘\"\n"
+    "· \"오늘 할 일 뭐 있지?\"\n"
+    "· \"작업 회고 써줘\" / \"블로그 주제 추천해줘\"\n"
+    "· URL을 붙여넣으면 요약해서 저장해둘게요\n"
     "\n"
-    "**[ 매일 쓰는 요청 ]**\n"
-    "\"[내용] 메모해줘\" / \"기록해줘\"\n"
-    "URL 붙여넣기 → 자동 요약 저장\n"
-    "\"오늘 할 일 알려줘\"\n"
+    "빠르게 쓰고 싶을 땐 슬래시 명령도 있어요:\n"
+    "/tasks — 할 일 목록 · /task <내용> — 추가\n"
+    "/capture <메모> · /distill · /review\n"
     "\n"
-    "**[ 가끔 쓰는 요청 ]**\n"
-    "\"작업 회고 써줘\"\n"
-    "\"[주제] 초안 써줘\"\n"
-    "\"블로그 주제 추천해줘\"\n"
-    "\n"
-    "슬래시 명령 전체 목록은 /help"
+    "전체 명령 목록은 /help 에서 볼 수 있어요."
 )
 
 # 확장 Agent 팩토리(테스트에서 주입 가능)
@@ -116,14 +113,17 @@ class Assistant:
 
         if cmd == "capture":
             if not intent.arg:
-                return "저장할 내용을 함께 말씀해 주세요."
+                return "어떤 내용을 저장할까요? 내용을 함께 말씀해 주세요."
             from app.agents import CaptureAgent
             try:
                 result = CaptureAgent().capture(text=intent.arg)
             except RuntimeError as e:
-                return f"저장 실패: {e}"
-            verb = "저장" if result.created else "기존 파일 유지"
-            return f"메모 {verb} 완료\n{result.rel_path}"
+                return f"저장하지 못했어요: {e}"
+            verb = "저장했어요" if result.created else "같은 노트가 있어서 그대로 뒀어요"
+            return (
+                f"📝 메모 {verb}\n└ {result.rel_path}\n\n"
+                "오늘 밤에 제가 지식 후보로 정제해둘게요."
+            )
 
         if cmd == "capture-session":
             from app.agents import CaptureAgent
@@ -132,12 +132,12 @@ class Assistant:
                 agent = CaptureAgent()
                 result = agent.capture_session(project=project, from_agent=True)
             except RuntimeError as e:
-                return f"실행 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
+                return f"세션 노트를 만들지 못했어요: {e}\n→ 서버 .env의 OBSIDIAN_VAULT_PATH를 설정해주세요."
             proj_label = f" ({project})" if project else ""
             return (
-                f"작업 세션 노트 저장 완료{proj_label}\n"
-                f"vault: {result.rel_path}\n\n"
-                "현재 세션 작업 내용을 --summary-file로 전달하면 노트에 자동 포함됩니다."
+                f"📓 작업 세션 노트를 저장해뒀어요{proj_label}\n"
+                f"└ {result.rel_path}\n\n"
+                "작업 내용을 --summary-file로 전달하면 노트에 자동으로 담아드려요."
             )
 
         if cmd == "ask-vault":
@@ -147,10 +147,10 @@ class Assistant:
             try:
                 hits = vault_tools.search_vault(intent.arg, limit=5)
             except RuntimeError as e:
-                return f"검색 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
+                return f"검색하지 못했어요: {e}\n→ 서버 .env의 OBSIDIAN_VAULT_PATH를 설정해주세요."
             if not hits:
-                return "관련된 노트를 찾지 못했습니다."
-            lines = ["Vault 검색 결과:"]
+                return "관련된 노트를 못 찾았어요. 다른 키워드로 물어봐주시겠어요?"
+            lines = [f"Vault에서 {len(hits)}건 찾았어요:"]
             for h in hits:
                 label = "초안에 따르면" if h.status == "candidate" else "확정 지식"
                 lines.append(f"· [{label}] {h.title} ({h.path})")
@@ -161,18 +161,18 @@ class Assistant:
                 agent = self.doc_agents[cmd]()
                 result = agent.generate()
             except RuntimeError as e:
-                return f"실행 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
+                return f"실행하지 못했어요: {e}\n→ 서버 .env의 OBSIDIAN_VAULT_PATH를 설정해주세요."
             head = DESCRIPTIONS.get(cmd, cmd)
             return f"{head} 완료: {result.path.name}\n\n{result.text[:1500]}"
 
         if cmd == "task-add":
             if not intent.arg:
-                return "추가할 할 일 내용을 말씀해 주세요."
+                return "어떤 할 일인가요? 내용을 함께 말씀해 주세요."
             from app.agents.task_agent import TaskAgent
             try:
                 result = TaskAgent().add(intent.arg)
             except RuntimeError as e:
-                return f"태스크 추가 실패: {e}"
+                return f"할 일을 추가하지 못했어요: {e}"
             return result.message
 
         if cmd == "task-list":
@@ -180,37 +180,37 @@ class Assistant:
             try:
                 result = TaskAgent().list_tasks()
             except RuntimeError as e:
-                return f"목록 조회 실패: {e}"
+                return f"목록을 가져오지 못했어요: {e}"
             return result.message
 
         if cmd == "task-done":
             if not intent.arg:
-                return "완료할 번호를 말씀해 주세요. 예: '2번 완료'"
+                return "몇 번을 완료 처리할까요? 예: '2번 완료'"
             from app.agents.task_agent import TaskAgent
             try:
                 result = TaskAgent().done(intent.arg)
             except RuntimeError as e:
-                return f"완료 처리 실패: {e}"
+                return f"완료 처리하지 못했어요: {e}"
             return result.message
 
         if cmd == "task-delete":
             if not intent.arg:
-                return "삭제할 번호를 말씀해 주세요. 예: '2번 삭제'"
+                return "몇 번을 삭제할까요? 예: '2번 삭제'"
             from app.agents.task_agent import TaskAgent
             try:
                 result = TaskAgent().delete(intent.arg)
             except RuntimeError as e:
-                return f"삭제 실패: {e}"
+                return f"삭제하지 못했어요: {e}"
             return result.message
 
         if cmd == "task-edit":
             if not intent.arg:
-                return "번호와 새 내용을 말씀해 주세요. 예: '2번 코드 리뷰 내일까지로 바꿔'"
+                return "어떻게 바꿀까요? 번호와 새 내용을 말씀해 주세요. 예: '2번 코드 리뷰 내일까지로 바꿔'"
             from app.agents.task_agent import TaskAgent
             try:
                 result = TaskAgent().edit(intent.arg)
             except RuntimeError as e:
-                return f"수정 실패: {e}"
+                return f"수정하지 못했어요: {e}"
             return result.message
 
         if cmd in _ROUTER_CMD:

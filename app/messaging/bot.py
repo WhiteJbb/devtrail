@@ -110,10 +110,10 @@ class MessengerBot:
                 try:
                     return self.assistant.execute(intent)
                 except Exception as e:
-                    return f"실행 중 오류: {e}"
+                    return f"실행하다가 문제가 생겼어요: {e}"
             if low in _NO:
                 self._pending.pop(chat_id)
-                return "취소했습니다."
+                return "취소했어요."
             # 그 외 입력은 새 요청으로 본다(대기 해제 후 계속)
             self._pending.pop(chat_id)
 
@@ -128,13 +128,13 @@ class MessengerBot:
         try:
             intent = self.assistant.interpret(t)
         except Exception as e:
-            return f"이해하지 못했습니다: {e}"
+            return f"제가 잘 이해하지 못했어요. 다르게 말씀해주시겠어요?\n({e})"
 
         if intent.command in ("unknown", "help", ""):
             return self.assistant.help_text()
 
         self._pending[chat_id] = intent
-        return f"해석: {self.assistant.describe(intent)}\n실행할까요? (예/아니오)"
+        return f"이렇게 이해했어요: {self.assistant.describe(intent)}\n실행할까요? (예/아니오)"
 
     def _build_task_buttons(self) -> list[list[dict]] | None:
         """현재 할 일 목록을 기반으로 인라인 버튼 행을 만든다."""
@@ -166,24 +166,30 @@ class MessengerBot:
                 from app.agents.curator_agent import CuratorAgent
                 items = CuratorAgent().list_candidates()
             except Exception as e:
-                self.provider.send(chat_id, f"후보 로딩 실패: {e}")
+                self.provider.send(chat_id, f"후보를 불러오지 못했어요: {e}")
                 return
             if not items:
-                self.provider.send(chat_id, "검토할 후보가 없습니다.")
+                self.provider.send(
+                    chat_id,
+                    "지금은 검토할 후보가 없어요.\n"
+                    "/distill 로 오늘 기록을 정제하면 후보가 생겨요. 밤에는 제가 자동으로 해둘게요.",
+                )
                 return
             self._review_queue[chat_id] = list(items)
+            self.provider.send(chat_id, f"검토할 후보가 {len(items)}건 있어요. 하나씩 보여드릴게요.")
             self._send_review_card(chat_id)
             return
 
         if cmd == "/review_stop":
-            self._review_queue.pop(chat_id, None)
-            self.provider.send(chat_id, "검토를 종료했습니다.")
+            remaining = len(self._review_queue.pop(chat_id, []) or [])
+            tail = f"\n남은 {remaining}건은 다음 /review 때 이어서 볼 수 있어요." if remaining else ""
+            self.provider.send(chat_id, f"검토를 여기서 마칠게요.{tail}")
             return
 
         # promote / skip / delete
         queue = self._review_queue.get(chat_id)
         if not queue:
-            self.provider.send(chat_id, "검토 세션이 없습니다. /review 로 시작하세요.")
+            self.provider.send(chat_id, "진행 중인 검토가 없어요. /review 로 시작해볼까요?")
             return
 
         item = queue[0]
@@ -195,24 +201,27 @@ class MessengerBot:
                     result = agent.apply_memory_patch(item.rel_path)
                 else:
                     result = agent.promote_candidate(item.rel_path)
-                self.provider.send(chat_id, f"✅ 승격 완료: {result.promoted_path}")
+                self.provider.send(chat_id, f"✅ 승격했어요 → {result.promoted_path}")
             except Exception as e:
-                self.provider.send(chat_id, f"승격 실패: {e}")
+                self.provider.send(chat_id, f"승격하지 못했어요: {e}")
                 return
 
         elif cmd == "/review_delete":
             try:
                 from app.agents.curator_agent import CuratorAgent
                 CuratorAgent().delete_candidate(item.rel_path)
-                self.provider.send(chat_id, f"🗑 삭제: {item.title}")
+                self.provider.send(chat_id, f"🗑 삭제했어요: {item.title}")
             except Exception as e:
-                self.provider.send(chat_id, f"삭제 실패: {e}")
+                self.provider.send(chat_id, f"삭제하지 못했어요: {e}")
                 return
 
         self._review_queue[chat_id] = queue[1:]
         if not self._review_queue[chat_id]:
             self._review_queue.pop(chat_id, None)
-            self.provider.send(chat_id, "🎉 모든 후보 검토 완료!")
+            self.provider.send(
+                chat_id,
+                "🎉 후보 검토를 모두 끝냈어요!\n승격한 지식은 20_Knowledge/에 차곡차곡 쌓였어요.",
+            )
             return
         self._send_review_card(chat_id)
 
@@ -242,7 +251,7 @@ class MessengerBot:
 
         if len(body) > _CARD_BODY_MAX:
             self.provider.send(chat_id, body)
-            inline_body = "(전문은 위 메시지 참조)"
+            inline_body = "(전문은 위 메시지에 보냈어요)"
         else:
             inline_body = body
 
@@ -250,7 +259,7 @@ class MessengerBot:
             f"{emoji} **{item.title}**{stale_mark}\n"
             f"[{item.kind}] {meta}\n\n"
             f"{inline_body}\n\n"
-            f"({remaining}개 남음)"
+            f"이 후보, 지식으로 승격할까요? ({remaining}개 남음)"
         )
         buttons = [[
             {"text": "✅ 승격", "callback_data": "/review_promote"},
@@ -284,7 +293,7 @@ class MessengerBot:
                 if self.media_handler is not None:
                     reply = self.media_handler.handle(msg)
                 else:
-                    reply = "미디어 처리가 설정되지 않았습니다. 텍스트 메시지를 사용해 주세요."
+                    reply = "음성·이미지 처리가 아직 설정되지 않았어요. 텍스트로 보내주시면 바로 처리할게요."
             elif msg.callback_query_id:
                 # 버튼 탭은 pending 확인 대화를 취소하지 않고 바로 명령으로 처리
                 reply = self.router.handle(msg.text)
