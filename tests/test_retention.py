@@ -51,6 +51,15 @@ def test_undistilled_old_session_is_preserved(tmp_path):
     assert (tmp_path / "10_Worklog/Sessions/raw.md").exists()
 
 
+def test_full_timestamp_created_at_is_parsed_correctly(tmp_path):
+    """created_at이 초 단위 ISO 타임스탬프(P2.1)여도 날짜 계산이 올바라야 한다."""
+    _write_session(tmp_path, "old.md", "2026-05-01T23:59:59", needs_distill=False)
+    _write_session(tmp_path, "recent.md", "2026-07-01T00:00:01", needs_distill=False)
+    result = cleanup_vault(tmp_path, now=_NOW)
+    assert "10_Worklog/Sessions/old.md" in result.deleted_worklog
+    assert "10_Worklog/Sessions/recent.md" not in result.deleted_worklog
+
+
 def test_recent_distilled_session_is_preserved(tmp_path):
     _write_session(tmp_path, "recent.md", "2026-07-01", needs_distill=False)
     result = cleanup_vault(tmp_path, now=_NOW)

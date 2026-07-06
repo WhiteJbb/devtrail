@@ -389,6 +389,41 @@ def test_get_project_briefing_matches_registered_project(tmp_path):
     assert "Devtrail 프로젝트 컨텍스트 본문" in briefing.text
 
 
+def test_get_project_briefing_orders_handoffs_by_time_not_filename(tmp_path):
+    """같은 날 만들어진 handoff는 파일명 알파벳순이 아니라 실제 생성 시각순이어야 한다(P2.1).
+
+    날짜만(%Y-%m-%d) 기록되면 같은 날 handoff끼리 동점 처리되어, stable sort가
+    파일명(글롭 열거 순서, 곧 알파벳순) 순서를 그대로 유지해버린다. 아침 Plan을
+    알파벳상 앞선("AAA") 제목으로, 저녁 Plan을 뒤선("ZZZ") 제목으로 만들어
+    시간순(저녁이 최신)과 알파벳순(아침이 먼저)이 어긋나게 한다.
+    """
+    from datetime import datetime as _dt
+
+    from app.services.candidate_writer import CandidateSpec, CandidateWriter
+
+    _write(tmp_path, "30_Projects/Devtrail/Context.md", body="컨텍스트")
+    morning_writer = CandidateWriter(tmp_path, now=_dt(2026, 7, 6, 9, 0, 0))
+    evening_writer = CandidateWriter(tmp_path, now=_dt(2026, 7, 6, 18, 0, 0))
+    morning_writer.write(
+        CandidateSpec(
+            kind="session_handoff", title="AAA 아침 세션", body="아침 작업",
+            project="Devtrail", handoff_type="plan", session_id="s-morning",
+        )
+    )
+    evening_writer.write(
+        CandidateSpec(
+            kind="session_handoff", title="ZZZ 저녁 세션", body="저녁 작업",
+            project="Devtrail", handoff_type="plan", session_id="s-evening",
+        )
+    )
+
+    settings = _settings(tmp_path)
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=settings)
+    idx_evening = briefing.text.index("ZZZ 저녁 세션")
+    idx_morning = briefing.text.index("AAA 아침 세션")
+    assert idx_evening < idx_morning, "실제 최신(저녁) handoff가 먼저 나와야 한다"
+
+
 def test_get_project_briefing_includes_recent_plan_process(tmp_path):
     _write(tmp_path, "30_Projects/Devtrail/Context.md", body="컨텍스트")
     settings = _settings(tmp_path)

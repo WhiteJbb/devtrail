@@ -118,7 +118,7 @@ class CandidateWriter:
             "candidate_type": kind,
             "title": spec.title.strip(),
             "status": "candidate",
-            "created_at": self._now().strftime("%Y-%m-%d"),
+            "created_at": self._now().strftime("%Y-%m-%dT%H:%M:%S"),
             "project": spec.project,
             "tags": spec.tags,
             "source_refs": spec.source_refs,

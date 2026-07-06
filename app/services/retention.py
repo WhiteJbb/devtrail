@@ -28,6 +28,10 @@ def _parse_created_at(meta: dict, fallback_mtime: float) -> datetime:
     raw = str(meta.get("created_at", "") or "")
     if raw:
         try:
+            return datetime.fromisoformat(raw[:19].replace(" ", "T"))
+        except ValueError:
+            pass
+        try:
             return datetime.strptime(raw[:10], "%Y-%m-%d")
         except ValueError:
             pass
