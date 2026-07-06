@@ -187,6 +187,12 @@ class CuratorAgent:
             metadata = {}
             patch_body = raw.strip()
 
+        kind = self._normalize_kind(str(metadata.get("candidate_type") or metadata.get("type") or ""))
+        if kind != "memory_patch":
+            raise ValueError(
+                f"memory_patch 후보만 적용할 수 있습니다: {rel_path} (kind={kind or '(알 수 없음)'})"
+            )
+
         # 대상 AgentMemory 파일 결정 (없으면 05_OpenLoops.md에 append)
         target_file = str(metadata.get("target_file") or "").strip()
         if not target_file:

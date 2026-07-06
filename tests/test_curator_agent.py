@@ -204,6 +204,36 @@ def test_apply_memory_patch_marks_original_applied(tmp_path):
     assert post.metadata.get("status") == "applied"
 
 
+def test_apply_memory_patch_rejects_knowledge_candidate(tmp_path):
+    """memory_patch가 아닌 kind는 apply_memory_patch로 40_AgentMemory/에 append되면 안 된다(P5.1)."""
+    rel = _write_candidate(tmp_path, "knowledge", "RAG 지식")
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    with pytest.raises(ValueError, match="memory_patch 후보만"):
+        agent.apply_memory_patch(rel)
+
+
+def test_apply_memory_patch_rejects_session_handoff(tmp_path):
+    """promote_candidate는 session_handoff를 거부하는데 apply_memory_patch는 kind 검사가
+    없어 Process 본문 전체가 05_OpenLoops.md에 append될 수 있었다.
+    """
+    path = tmp_path / "60_Candidates" / "SessionHandoffs" / "Devtrail" / "process.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "type": "candidate",
+        "candidate_type": "session_handoff",
+        "handoff_type": "process",
+        "status": "candidate",
+        "created_at": "2026-06-23",
+    }
+    post = frontmatter.Post("# Process\n\n민감한 세션 내용", **metadata)
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    rel = str(path.relative_to(tmp_path)).replace("\\", "/")
+
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    with pytest.raises(ValueError, match="memory_patch 후보만"):
+        agent.apply_memory_patch(rel)
+
+
 # ── CLI 테스트 ───────────────────────────────────────────────────────
 
 
