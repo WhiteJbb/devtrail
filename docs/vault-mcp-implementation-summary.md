@@ -36,8 +36,7 @@
 | `app/mcp_server.py` | `FastMCP("work-agent-vault")`로 7개 tool을 stdio 노출, session_id 자동 생성·주입 |
 | `app/services/retention.py` | `10_Worklog/Sessions/`·`60_Candidates/SessionHandoffs/` 보존 정책 |
 | `app/services/review_question.py` | 최근 세션의 Learning Recovery에서 복습 질문 1개 추출 |
-| `scripts/hooks/print_briefing.py` | SessionStart 훅이 호출하는 briefing 출력 스크립트 |
-| `scripts/hooks/session-start-briefing.ps1` | Claude Code SessionStart 훅 (참고용, 미등록) |
+| `scripts/hooks/session-start-briefing.ps1` | Claude Code SessionStart 훅 (참고용, 미등록). briefing 출력은 `work-agent project-briefing` CLI로 받는다(코드 리뷰 후 `print_briefing.py`를 대체) |
 | `scripts/hooks/stop-process-check.ps1` | Claude Code Stop/PreCompact 훅 (참고용, 미등록) |
 | `docs/vault-mcp-implementation-summary.md` | 본 문서 |
 | `tests/test_vault_tools.py`, `test_candidate_writer.py`, `test_mcp_server.py`, `test_retention.py`, `test_review_question.py` | 신규 기능 테스트 |
