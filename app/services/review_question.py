@@ -1,7 +1,7 @@
 """오늘의 복습 질문 — 10_Worklog/Sessions/의 최신 Learning Recovery에서 질문 1개를 뽑는다.
 
-docs/service-improvement-plan.md P6. 새 커맨드를 만들지 않고 push-digest --daily에
-값만 얹기 위한 순수 조회 헬퍼다.
+docs/service-improvement-plan.md P6. 새 커맨드를 만들지 않고 push-digest --daily와
+nightly-distill의 daily digest에 값만 얹기 위한 순수 조회 헬퍼다.
 """
 
 from __future__ import annotations
@@ -62,6 +62,29 @@ def pick_review_question(vault_dir: Path) -> ReviewQuestion | None:
             source_rel_path=rel,
         )
     return None
+
+
+def format_review_block(vault_dir: Path) -> str:
+    """복습 질문을 digest 본문에 그대로 붙일 수 있는 Markdown 블록으로 만든다.
+
+    질문을 찾지 못하거나 조회 중 문제가 있으면(vault 미구성 등) 빈 문자열을
+    반환한다 — digest 생성 자체를 막아서는 안 된다.
+    """
+    try:
+        review_question = pick_review_question(vault_dir)
+    except Exception:
+        review_question = None
+    if not review_question:
+        return ""
+
+    lines = ["**오늘의 학습 회수**"]
+    if review_question.project:
+        lines.append(f"프로젝트: {review_question.project}")
+    if review_question.unclear_concept:
+        lines.append(f"미해결 개념: {review_question.unclear_concept}")
+    lines.append("복습 질문:")
+    lines.append(f"1. {review_question.question}")
+    return "\n".join(lines)
 
 
 def _extract_section_first_line(body: str, heading_contains: str, numbered: bool) -> str:
