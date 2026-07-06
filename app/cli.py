@@ -1208,7 +1208,7 @@ def serve_bot() -> None:
 @app.command("vault-cleanup")
 def vault_cleanup(
     dry_run: bool = typer.Option(False, "--dry-run", help="삭제하지 않고 대상만 표시"),
-    keep: int = typer.Option(3, "--keep", help="프로젝트당 보존할 최신 SessionHandoffs 개수"),
+    keep: int = typer.Option(3, "--keep", help="프로젝트당 보존할 최신 세션(Plan+Process 짝) 수"),
     worklog_days: int = typer.Option(30, "--worklog-days", help="distill된 worklog 세션 보존 기간(일)"),
     handoff_days: int = typer.Option(30, "--handoff-days", help="최신 N개를 넘는 SessionHandoffs 보존 기간(일)"),
 ) -> None:
