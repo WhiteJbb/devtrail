@@ -214,7 +214,7 @@ def test_cli_list_candidates_shows_items(monkeypatch, tmp_path):
     ]
 
     class _FakeCurator:
-        def list_candidates(self):
+        def list_candidates(self, include_session_handoffs=False):
             return items
 
     monkeypatch.setattr(cli, "_curator_agent", lambda: _FakeCurator())

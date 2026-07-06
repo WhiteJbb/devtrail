@@ -23,7 +23,10 @@ _CANDIDATE_DIRS = {
     "memory_patch": "60_Candidates/MemoryPatches",
     "blog_idea": "60_Candidates/BlogIdeas",
     "career_bullet": "60_Candidates/CareerBullets",
+    "session_handoff": "60_Candidates/SessionHandoffs",
 }
+
+_NO_DEDUP_KINDS = {"session_handoff"}
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,11 @@ class CandidateSpec:
     project: str = ""
     tags: list[str] = field(default_factory=list)
     source_refs: list[str] = field(default_factory=list)
+    handoff_type: str = ""
+    session_id: str = ""
+    evidence: str = ""
+    confidence: str = ""
+    requires_user_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,14 +100,15 @@ class CandidateWriter:
         if not spec.title.strip():
             raise ValueError("candidate title is empty")
 
-        if dedup:
+        effective_dedup = dedup and kind not in _NO_DEDUP_KINDS
+        if effective_dedup:
             existing = self.find_duplicate(spec)
             if existing:
                 # 기존 후보 경로를 반환 (새로 쓰지 않음)
                 existing_path = self.vault_dir / existing
                 return CandidateWriteResult(spec=spec, path=existing_path, rel_path=existing)
 
-        rel_path = self._unique_rel_path(kind, spec.title)
+        rel_path = self._unique_rel_path(kind, spec.title, project=spec.project)
         path = self.vault_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -114,6 +123,13 @@ class CandidateWriter:
             "source_refs": spec.source_refs,
             "summary": spec.summary,
         }
+        if kind == "session_handoff":
+            metadata["handoff_type"] = spec.handoff_type
+            metadata["session_id"] = spec.session_id
+        if kind == "memory_patch":
+            metadata["evidence"] = spec.evidence
+            metadata["confidence"] = spec.confidence
+            metadata["requires_user_review"] = spec.requires_user_review
 
         body = self._render_body(spec)
         post = frontmatter.Post(body, **metadata)
@@ -123,8 +139,8 @@ class CandidateWriter:
         self.wiki_service.append_vault_log("distill", spec.title, [rel_path])
         return result
 
-    def write_many(self, specs: list[CandidateSpec]) -> list[CandidateWriteResult]:
-        return [self.write(spec) for spec in specs]
+    def write_many(self, specs: list[CandidateSpec], dedup: bool = True) -> list[CandidateWriteResult]:
+        return [self.write(spec, dedup=dedup) for spec in specs]
 
     def _render_body(self, spec: CandidateSpec) -> str:
         body = spec.body.strip()
@@ -139,8 +155,11 @@ class CandidateWriter:
             rendered += f"\n\n## Source Refs\n\n{refs}"
         return rendered.strip() + "\n"
 
-    def _unique_rel_path(self, kind: str, title: str) -> str:
+    def _unique_rel_path(self, kind: str, title: str, project: str = "") -> str:
         base_dir = _CANDIDATE_DIRS[kind]
+        if kind == "session_handoff":
+            sub = self._slug(project) if project.strip() else "_Unassigned"
+            base_dir = f"{base_dir}/{sub}"
         name = self._slug(title)
         rel = f"{base_dir}/{name}.md"
         if not (self.vault_dir / rel).exists():
@@ -164,6 +183,8 @@ class CandidateWriter:
             "blog_ideas": "blog_idea",
             "career_bullets": "career_bullet",
             "career": "career_bullet",
+            "session_handoffs": "session_handoff",
+            "handoff": "session_handoff",
         }
         return aliases.get(value, value)
 

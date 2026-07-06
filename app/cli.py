@@ -369,9 +369,17 @@ def _curator_agent() -> CuratorAgent:
 
 
 @app.command("list-candidates")
-def list_candidates() -> None:
-    """60_Candidates/ 하위 후보 노트 목록을 보여준다."""
-    items = _curator_agent().list_candidates()
+def list_candidates(
+    include_handoffs: bool = typer.Option(
+        False, "--include-handoffs", help="SessionHandoffs(Plan/Process) candidate도 함께 표시"
+    ),
+) -> None:
+    """60_Candidates/ 하위 후보 노트 목록을 보여준다.
+
+    session_handoff(Plan/Process)은 promote 대상이 아니라 다음 세션 briefing 전용
+    운영 메모리이므로 기본 출력에서 제외한다. --include-handoffs로 함께 볼 수 있다.
+    """
+    items = _curator_agent().list_candidates(include_session_handoffs=include_handoffs)
     if not items:
         typer.echo("60_Candidates/ 에 후보가 없습니다.")
         return
