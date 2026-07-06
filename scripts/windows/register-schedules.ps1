@@ -2,12 +2,12 @@
 # 관리자 권한으로 실행 필요
 
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$PS    = "powershell.exe"
-$Flags = "-NonInteractive -ExecutionPolicy Bypass -File"
 
+# wscript(VBS) 래퍼 경유 실행 — 콘솔 창 깜빡임 없이 완전 백그라운드 실행
+$Hidden = "wscript.exe //B //Nologo `"$PSScriptRoot\run-hidden.vbs`""
 
 function Register($name, $triggerStr, $script, $extraArgs = @()) {
-    $cmd         = "$PS $Flags `"$script`""
+    $cmd         = "$Hidden `"$script`""
     $triggerArgs = $triggerStr -split '\s+'
     $result = & schtasks /Create /TN $name /TR $cmd /RL HIGHEST /F @triggerArgs @extraArgs 2>&1
     if ($LASTEXITCODE -eq 0) {
@@ -49,12 +49,12 @@ Register "devtrail-weekly" "/SC WEEKLY /D SUN /ST 18:00" "$RepoRoot\scripts\wind
 
 # 매일 08:00: 아침 할 일 알림
 $notifyScript = "$RepoRoot\scripts\windows\run-notify.ps1"
-$result = & schtasks /Create /TN "devtrail-notify-morning" /TR "$PS $Flags `"$notifyScript`" -Kind morning" /SC DAILY /ST 08:00 /RL HIGHEST /F 2>&1
+$result = & schtasks /Create /TN "devtrail-notify-morning" /TR "$Hidden `"$notifyScript`" -Kind morning" /SC DAILY /ST 08:00 /RL HIGHEST /F 2>&1
 if ($LASTEXITCODE -eq 0) { Write-Host "  [OK] devtrail-notify-morning" -ForegroundColor Green }
 else { Write-Host "  [!!] devtrail-notify-morning - $($result -join ' ')" -ForegroundColor Red }
 
 # 매일 21:30: 저녁 마무리 알림
-$result = & schtasks /Create /TN "devtrail-notify-evening" /TR "$PS $Flags `"$notifyScript`" -Kind evening" /SC DAILY /ST 21:30 /RL HIGHEST /F 2>&1
+$result = & schtasks /Create /TN "devtrail-notify-evening" /TR "$Hidden `"$notifyScript`" -Kind evening" /SC DAILY /ST 21:30 /RL HIGHEST /F 2>&1
 if ($LASTEXITCODE -eq 0) { Write-Host "  [OK] devtrail-notify-evening" -ForegroundColor Green }
 else { Write-Host "  [!!] devtrail-notify-evening - $($result -join ' ')" -ForegroundColor Red }
 

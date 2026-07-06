@@ -5,15 +5,18 @@ $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 
 function Register($name, $intervalMinutes, $script) {
     try {
+        # wscript(VBS) 래퍼 경유 실행 — powershell.exe -WindowStyle Hidden은
+        # 콘솔 창이 생성된 뒤 숨겨서 깜빡임이 남지만, WshShell.Run(cmd, 0)은
+        # 창을 아예 만들지 않는다.
         $action = New-ScheduledTaskAction `
-            -Execute "powershell.exe" `
-            -Argument "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`""
+            -Execute "wscript.exe" `
+            -Argument "//B //Nologo `"$PSScriptRoot\run-hidden.vbs`" `"$script`""
 
         $trigger = New-ScheduledTaskTrigger `
             -RepetitionInterval (New-TimeSpan -Minutes $intervalMinutes) `
             -Once -At (Get-Date)
 
-        # Hidden: 태스크 스케줄러가 창을 완전히 숨김 (WindowStyle Hidden만으론 부족)
+        # -Hidden은 창이 아니라 작업 스케줄러 목록에서 태스크를 숨기는 옵션
         $settings = New-ScheduledTaskSettingsSet `
             -Hidden `
             -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
