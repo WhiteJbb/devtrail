@@ -920,6 +920,23 @@ def push_digest(
             if len(items) > 3:
                 lines.append(f"  · ... +{len(items) - 3}개")
             lines.append("")
+
+        if daily:
+            from app.services.review_question import pick_review_question
+
+            try:
+                review_question = pick_review_question(Path(settings.obsidian_vault_root))
+            except Exception:
+                review_question = None
+            if review_question:
+                lines.append("**오늘의 학습 회수**")
+                if review_question.project:
+                    lines.append(f"프로젝트: {review_question.project}")
+                if review_question.unclear_concept:
+                    lines.append(f"미해결 개념: {review_question.unclear_concept}")
+                lines.append("복습 질문:")
+                lines.append(f"1. {review_question.question}")
+                lines.append("")
     else:
         # 기본 동작: BlogIdea 목록
         blog_ideas = [c for c in all_candidates if c.kind == "blog_idea"]
