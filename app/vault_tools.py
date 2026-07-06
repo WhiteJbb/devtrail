@@ -117,6 +117,19 @@ def _project_dir_slug(project: str) -> str:
     return slug_component(project) if project.strip() else "_Unassigned"
 
 
+def _canonicalize_project(vault_dir: Path, project: str) -> str:
+    """등록된 ProjectMemory와 대소문자 무시로 일치하면 레지스트리 표기로 치환한다.
+
+    쓰기(project 원본 표기)와 읽기(get_project_briefing의 레지스트리 확정 표기)가
+    다른 대소문자/철자로 slug되면 SessionHandoffs 폴더가 갈린다(Linux는 대소문자를
+    구분하므로 실제로 분리됨). 항상 같은 표기로 쓰도록 정규화한다.
+    """
+    if not project.strip():
+        return project
+    match = ProjectMemoryLoader(vault_dir).load().find(project)
+    return match.project if match else project
+
+
 def _list_session_handoffs(vault_dir: Path, project: str) -> list[dict]:
     """60_Candidates/SessionHandoffs/<project>/의 candidate를 frontmatter와 함께 반환한다."""
     handoff_dir = vault_dir / "60_Candidates" / "SessionHandoffs" / _project_dir_slug(project)
@@ -284,18 +297,32 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
             resolved_project = ""
 
     if not resolved_project:
-        candidates = [ctx.project for ctx in project_memory.contexts]
-        return ProjectBriefing(
-            project=project_or_repo,
-            matched=False,
-            candidates=candidates,
-            text=(
-                "확신할 수 있는 프로젝트 매칭이 없습니다. 아래 후보 중 하나를 확정하면 "
-                "`.claude/vault.json`에 저장해 다음 세션에서 같은 질문을 반복하지 않을 수 있습니다.\n\n"
-                + ("\n".join(f"- {c}" for c in candidates) if candidates else "(등록된 프로젝트 없음)")
-            ),
-            source_refs=[],
+        # ProjectMemory 등록이 없어도 write_work_plan이 이미 SessionHandoffs 폴더를
+        # 만들어둔 프로젝트라면 그 폴더명으로 매칭한다 — 그렇지 않으면 등록 없이
+        # write_work_plan만 호출된 프로젝트의 handoff가 briefing에 영원히 안 보인다.
+        handoffs_root = vault_dir / "60_Candidates" / "SessionHandoffs"
+        handoff_project_dirs = (
+            [d.name for d in handoffs_root.iterdir() if d.is_dir() and d.name != "_Unassigned"]
+            if handoffs_root.exists()
+            else []
         )
+        folder_match = next((d for d in handoff_project_dirs if d.lower() == probe_name.lower()), None)
+        if folder_match:
+            resolved_project = folder_match
+        else:
+            registered = [ctx.project for ctx in project_memory.contexts]
+            candidates = registered + [d for d in handoff_project_dirs if d not in registered]
+            return ProjectBriefing(
+                project=project_or_repo,
+                matched=False,
+                candidates=candidates,
+                text=(
+                    "확신할 수 있는 프로젝트 매칭이 없습니다. 아래 후보 중 하나를 확정하면 "
+                    "`.claude/vault.json`에 저장해 다음 세션에서 같은 질문을 반복하지 않을 수 있습니다.\n\n"
+                    + ("\n".join(f"- {c}" for c in candidates) if candidates else "(등록된 프로젝트 없음)")
+                ),
+                source_refs=[],
+            )
 
     project_ctx = project_memory.find(resolved_project)
     handoffs = _list_session_handoffs(vault_dir, resolved_project)
@@ -437,6 +464,7 @@ def write_work_plan(
 ) -> CandidateWriteResult:
     """작업 시작 전 Plan을 session_handoff candidate로 기록한다."""
     vault_dir = _vault_dir(settings)
+    project = _canonicalize_project(vault_dir, project)
     writer = CandidateWriter(vault_dir)
     date = datetime.now().strftime("%Y-%m-%d")
     title = f"Plan — {project or '미지정'} — {date} — {session_id[:8]}"
@@ -546,6 +574,7 @@ def write_session_process(
     프로젝트의 최근 미짝 Plan에 재귀속한다.
     """
     vault_dir = _vault_dir(settings)
+    project = _canonicalize_project(vault_dir, project)
     writer = CandidateWriter(vault_dir)
     capture_agent = CaptureAgent(settings=settings)
 

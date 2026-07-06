@@ -484,6 +484,47 @@ def test_get_project_briefing_cold_start_returns_global_memory_only(tmp_path):
     assert briefing.matched is False
 
 
+def test_get_project_briefing_finds_unregistered_project_via_handoff_folder(tmp_path):
+    """ProjectMemory 등록 없이 write_work_plan만 호출한 프로젝트도 briefing에 보여야 한다(P3.5).
+
+    write_work_plan은 임의 project 문자열을 받아 SessionHandoffs/<slug>/에 쓰지만,
+    기존 briefing은 30_Projects 등록 또는 vault.json이 있어야만 그 폴더를 읽어
+    핸드오프가 briefing에 영원히 노출되지 않았다.
+    """
+    settings = _settings(tmp_path)
+    vault_tools.write_work_plan(
+        project="NewProject", goal="목표", context_read="c", scope="s", approach="a", risks="r",
+        session_id="sess-new", settings=settings,
+    )
+    briefing = vault_tools.get_project_briefing("NewProject", settings=settings)
+    assert briefing.matched is True
+    assert briefing.project == "NewProject"
+    assert "Recent Session Handoff" in briefing.text
+
+
+def test_write_and_read_project_name_case_insensitive_same_folder(tmp_path):
+    """소문자로 쓰고 다른 대소문자로 조회해도 같은 SessionHandoffs 폴더를 봐야 한다(P3.5)."""
+    settings = _settings(tmp_path)
+    vault_tools.write_work_plan(
+        project="devtrail", goal="목표", context_read="c", scope="s", approach="a", risks="r",
+        session_id="sess-case", settings=settings,
+    )
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=settings)
+    assert briefing.matched is True
+    assert "Recent Session Handoff" in briefing.text
+
+
+def test_write_session_process_canonicalizes_project_casing_when_registered(tmp_path):
+    """registry에 "Devtrail"이 있으면 project="devtrail"로 써도 같은 폴더에 기록돼야 한다(P3.5)."""
+    _write(tmp_path, "30_Projects/Devtrail/Context.md", body="컨텍스트")
+    settings = _settings(tmp_path)
+    result = vault_tools.write_work_plan(
+        project="devtrail", goal="목표", context_read="c", scope="s", approach="a", risks="r",
+        session_id="sess-canon", settings=settings,
+    )
+    assert result.rel_path.startswith("60_Candidates/SessionHandoffs/Devtrail/")
+
+
 def test_get_project_briefing_matches_registered_project(tmp_path):
     _write(tmp_path, "30_Projects/Devtrail/Context.md", body="Devtrail 프로젝트 컨텍스트 본문")
     settings = _settings(tmp_path)
