@@ -23,7 +23,12 @@ _CANDIDATE_DIRS = {
     "memory_patch": "60_Candidates/MemoryPatches",
     "blog_idea": "60_Candidates/BlogIdeas",
     "career_bullet": "60_Candidates/CareerBullets",
+    "session_handoff": "60_Candidates/SessionHandoffs",
 }
+
+_NO_DEDUP_KINDS = {"session_handoff"}
+
+SESSION_HANDOFF_DIR = _CANDIDATE_DIRS["session_handoff"]
 
 
 @dataclass(frozen=True)
@@ -35,6 +40,12 @@ class CandidateSpec:
     project: str = ""
     tags: list[str] = field(default_factory=list)
     source_refs: list[str] = field(default_factory=list)
+    handoff_type: str = ""
+    session_id: str = ""
+    evidence: str = ""
+    scope: str = ""
+    confidence: str = ""
+    requires_user_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -92,14 +103,15 @@ class CandidateWriter:
         if not spec.title.strip():
             raise ValueError("candidate title is empty")
 
-        if dedup:
+        effective_dedup = dedup and kind not in _NO_DEDUP_KINDS
+        if effective_dedup:
             existing = self.find_duplicate(spec)
             if existing:
                 # 기존 후보 경로를 반환 (새로 쓰지 않음)
                 existing_path = self.vault_dir / existing
                 return CandidateWriteResult(spec=spec, path=existing_path, rel_path=existing)
 
-        rel_path = self._unique_rel_path(kind, spec.title)
+        rel_path = self._unique_rel_path(kind, spec.title, project=spec.project)
         path = self.vault_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -108,12 +120,20 @@ class CandidateWriter:
             "candidate_type": kind,
             "title": spec.title.strip(),
             "status": "candidate",
-            "created_at": self._now().strftime("%Y-%m-%d"),
+            "created_at": self._now().strftime("%Y-%m-%dT%H:%M:%S"),
             "project": spec.project,
             "tags": spec.tags,
             "source_refs": spec.source_refs,
             "summary": spec.summary,
         }
+        if kind == "session_handoff":
+            metadata["handoff_type"] = spec.handoff_type
+            metadata["session_id"] = spec.session_id
+        if kind == "memory_patch":
+            metadata["evidence"] = spec.evidence
+            metadata["scope"] = spec.scope
+            metadata["confidence"] = spec.confidence
+            metadata["requires_user_review"] = spec.requires_user_review
 
         body = self._render_body(spec)
         post = frontmatter.Post(body, **metadata)
@@ -123,8 +143,8 @@ class CandidateWriter:
         self.wiki_service.append_vault_log("distill", spec.title, [rel_path])
         return result
 
-    def write_many(self, specs: list[CandidateSpec]) -> list[CandidateWriteResult]:
-        return [self.write(spec) for spec in specs]
+    def write_many(self, specs: list[CandidateSpec], dedup: bool = True) -> list[CandidateWriteResult]:
+        return [self.write(spec, dedup=dedup) for spec in specs]
 
     def _render_body(self, spec: CandidateSpec) -> str:
         body = spec.body.strip()
@@ -139,8 +159,10 @@ class CandidateWriter:
             rendered += f"\n\n## Source Refs\n\n{refs}"
         return rendered.strip() + "\n"
 
-    def _unique_rel_path(self, kind: str, title: str) -> str:
+    def _unique_rel_path(self, kind: str, title: str, project: str = "") -> str:
         base_dir = _CANDIDATE_DIRS[kind]
+        if kind == "session_handoff":
+            base_dir = handoff_project_dir(project)
         name = self._slug(title)
         rel = f"{base_dir}/{name}.md"
         if not (self.vault_dir / rel).exists():
@@ -164,6 +186,8 @@ class CandidateWriter:
             "blog_ideas": "blog_idea",
             "career_bullets": "career_bullet",
             "career": "career_bullet",
+            "session_handoffs": "session_handoff",
+            "handoff": "session_handoff",
         }
         return aliases.get(value, value)
 
@@ -176,8 +200,24 @@ class CandidateWriter:
 
     def _slug(self, value: str) -> str:
         """파일시스템 금지 문자만 제거하고 제목을 그대로 파일명으로 사용한다."""
-        text = re.sub(r'[\\/:*?"<>|]', "", value.strip())
-        return re.sub(r"\s+", " ", text).strip() or "candidate"
+        return slug_component(value)
 
     def _now(self) -> datetime:
         return self.now or datetime.now()
+
+
+def slug_component(value: str) -> str:
+    """경로 한 조각(파일명/폴더명)에 쓸 수 있게 파일시스템 금지 문자만 제거한다."""
+    text = re.sub(r'[\\/:*?"<>|]', "", value.strip())
+    return re.sub(r"\s+", " ", text).strip() or "candidate"
+
+
+def handoff_project_dir(project: str) -> str:
+    """session_handoff의 <Project> 하위 폴더 상대경로를 계산한다.
+
+    CandidateWriter(쓰기), vault_tools(조회), retention(정리) 세 곳이 각자
+    비슷한 계산을 하면 한 곳만 바뀌어도 briefing/cleanup이 조용히 빈 결과를
+    내므로, 이 함수 하나로 통일한다.
+    """
+    sub = slug_component(project) if project.strip() else "_Unassigned"
+    return f"{SESSION_HANDOFF_DIR}/{sub}"

@@ -100,6 +100,60 @@ def test_capture_session_missing_summary_file(tmp_path):
     assert result.path.exists()
 
 
+def test_capture_session_summary_text_used_directly(tmp_path):
+    """summary_text가 주어지면 임시 파일 없이 그대로 본문에 반영된다."""
+    agent = _agent(tmp_path)
+    result = agent.capture_session(summary_text="MCP에서 바로 전달한 요약")
+    body = result.path.read_text(encoding="utf-8")
+    assert "MCP에서 바로 전달한 요약" in body
+
+
+def test_capture_session_summary_text_wins_over_summary_file(tmp_path):
+    summary = tmp_path / "summary.md"
+    summary.write_text("파일 기반 요약", encoding="utf-8")
+    agent = _agent(tmp_path)
+    result = agent.capture_session(summary_text="직접 전달 요약", summary_file=str(summary))
+    body = result.path.read_text(encoding="utf-8")
+    assert "직접 전달 요약" in body
+    assert "파일 기반 요약" not in body
+
+
+def test_capture_session_id_stored_in_frontmatter(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.capture_session(session_id="abc-123")
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["session_id"] == "abc-123"
+
+
+def test_capture_session_id_defaults_to_empty(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.capture_session()
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["session_id"] == ""
+
+
+def test_capture_session_needs_distill_defaults_true(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.capture_session()
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["needs_distill"] is True
+
+
+def test_capture_session_needs_distill_can_be_disabled(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.capture_session(needs_distill=False)
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["needs_distill"] is False
+
+
+def test_capture_session_fallback_template_includes_learning_recovery(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.capture_session()
+    body = result.path.read_text(encoding="utf-8")
+    assert "## 9. Learning Recovery" in body
+    assert "다음에 직접 설명해봐야 할 질문" in body
+
+
 # ── --from-repo 없을 때 ────────────────────────────────────────────────────────
 
 def test_capture_session_without_from_repo(tmp_path):

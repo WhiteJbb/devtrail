@@ -31,6 +31,7 @@ DESCRIPTIONS = {
     "portfolio": "포트폴리오 초안 생성",
     "resume": "이력서/자기소개서 초안 생성",
     "capture-session": "작업 세션 노트 저장",
+    "ask-vault": "Vault 검색 기반 답변",
     "task-add": "할 일 추가",
     "task-list": "할 일 목록 조회",
     "task-done": "할 일 완료 처리",
@@ -138,6 +139,22 @@ class Assistant:
                 f"vault: {result.rel_path}\n\n"
                 "현재 세션 작업 내용을 --summary-file로 전달하면 노트에 자동 포함됩니다."
             )
+
+        if cmd == "ask-vault":
+            if not intent.arg:
+                return "무엇을 찾고 싶은지 함께 말씀해 주세요."
+            from app import vault_tools
+            try:
+                hits = vault_tools.search_vault(intent.arg, limit=5)
+            except RuntimeError as e:
+                return f"검색 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
+            if not hits:
+                return "관련된 노트를 찾지 못했습니다."
+            lines = ["Vault 검색 결과:"]
+            for h in hits:
+                label = "초안에 따르면" if h.status == "candidate" else "확정 지식"
+                lines.append(f"· [{label}] {h.title} ({h.path})")
+            return "\n".join(lines)
 
         if cmd in self.doc_agents:
             try:

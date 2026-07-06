@@ -27,6 +27,7 @@ _HELP = (
     "/todo  — 오늘 할 일 추천\n"
     "/sync  — Vault 수동 동기화\n"
     "/search <검색어>  — Vault 전체 검색\n"
+    "/briefing  — 현재 프로필·포커스·Open Loops 요약\n"
     "\n"
     "**[ 기록 → 지식화 플로우 ]**\n"
     "/distill  — 오늘 기록 분석 → 후보 생성\n"
@@ -232,6 +233,17 @@ class CommandRouter:
                 return "⏱ 동기화 타임아웃 (120초 초과)"
             except Exception as e:
                 return f"❌ 동기화 실패: {e}"
+
+        # ── Vault Briefing ────────────────────────────────────────────
+        if cmd == "briefing":
+            from app import vault_tools
+            try:
+                text = vault_tools.get_briefing()
+            except RuntimeError as e:
+                return f"Briefing 조회 실패: {e}\n→ .env에서 OBSIDIAN_VAULT_PATH를 설정하세요."
+            if not text.strip():
+                return "40_AgentMemory/에 아직 채워진 내용이 없습니다."
+            return text[:1500]
 
         # ── Session ───────────────────────────────────────────────────
         if cmd == "session":

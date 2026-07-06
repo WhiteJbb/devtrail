@@ -369,9 +369,17 @@ def _curator_agent() -> CuratorAgent:
 
 
 @app.command("list-candidates")
-def list_candidates() -> None:
-    """60_Candidates/ 하위 후보 노트 목록을 보여준다."""
-    items = _curator_agent().list_candidates()
+def list_candidates(
+    include_handoffs: bool = typer.Option(
+        False, "--include-handoffs", help="SessionHandoffs(Plan/Process) candidate도 함께 표시"
+    ),
+) -> None:
+    """60_Candidates/ 하위 후보 노트 목록을 보여준다.
+
+    session_handoff(Plan/Process)은 promote 대상이 아니라 다음 세션 briefing 전용
+    운영 메모리이므로 기본 출력에서 제외한다. --include-handoffs로 함께 볼 수 있다.
+    """
+    items = _curator_agent().list_candidates(include_session_handoffs=include_handoffs)
     if not items:
         typer.echo("60_Candidates/ 에 후보가 없습니다.")
         return
@@ -912,6 +920,14 @@ def push_digest(
             if len(items) > 3:
                 lines.append(f"  · ... +{len(items) - 3}개")
             lines.append("")
+
+        if daily:
+            from app.services.review_question import format_review_block
+
+            review_block = format_review_block(Path(settings.obsidian_vault_root))
+            if review_block:
+                lines.append(review_block)
+                lines.append("")
     else:
         # 기본 동작: BlogIdea 목록
         blog_ideas = [c for c in all_candidates if c.kind == "blog_idea"]
@@ -1178,6 +1194,87 @@ def serve_bot() -> None:
         bot.run()
     except KeyboardInterrupt:
         typer.echo("\n봇을 종료합니다.")
+
+
+@app.command("vault-cleanup")
+def vault_cleanup(
+    dry_run: bool = typer.Option(False, "--dry-run", help="삭제하지 않고 대상만 표시"),
+    keep: int = typer.Option(3, "--keep", help="프로젝트당 보존할 최신 세션(Plan+Process 짝) 수"),
+    worklog_days: int = typer.Option(30, "--worklog-days", help="distill된 worklog 세션 보존 기간(일)"),
+    handoff_days: int = typer.Option(30, "--handoff-days", help="최신 N개를 넘는 SessionHandoffs 보존 기간(일)"),
+) -> None:
+    """오래된 10_Worklog/Sessions/와 60_Candidates/SessionHandoffs/를 정리한다.
+
+    사람이 직접 실행하는 destructive 명령이며 MCP에는 노출하지 않는다.
+    """
+    from app.services.retention import cleanup_vault
+
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+
+    result = cleanup_vault(
+        Path(settings.obsidian_vault_root),
+        keep_per_project=keep,
+        worklog_retention_days=worklog_days,
+        handoff_retention_days=handoff_days,
+        dry_run=dry_run,
+    )
+
+    total = len(result.deleted_worklog) + len(result.deleted_handoffs)
+    if total == 0:
+        typer.echo("정리할 대상이 없습니다.")
+        return
+
+    verb = "삭제 예정 (--dry-run)" if dry_run else "삭제 완료"
+    typer.secho(
+        f"\n{verb}: worklog {len(result.deleted_worklog)}개, handoff {len(result.deleted_handoffs)}개",
+        fg=typer.colors.GREEN,
+        bold=True,
+    )
+    for rel in result.deleted_worklog:
+        typer.echo(f"  [worklog] {rel}")
+    for rel in result.deleted_handoffs:
+        typer.echo(f"  [handoff] {rel}")
+
+
+@app.command("mcp-serve")
+def mcp_serve() -> None:
+    """Vault tool 레이어를 MCP(stdio)로 노출한다 — Claude Code/Desktop에서 등록해 사용.
+
+    등록 예:
+      claude mcp add work-agent-vault -- work-agent mcp-serve
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
+    from app.mcp_server import main as run_mcp_server
+
+    run_mcp_server()
+
+
+@app.command("project-briefing")
+def project_briefing(
+    repo: str = typer.Argument(".", help="프로젝트 판별에 쓸 repo 경로 (기본: 현재 디렉터리)"),
+) -> None:
+    """get_project_briefing() 결과를 stdout에 출력한다.
+
+    Tier 1 SessionStart 훅(scripts/hooks/session-start-briefing.ps1)이 호출하는
+    용도다. Vault 미설정, 매칭 실패 등 어떤 예외 상황에서도 훅 전체를 실패시키지
+    않도록 항상 exit code 0으로 종료하고, 문제가 있으면 안내 문구만 출력한다.
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        typer.echo("(work-agent Vault가 설정되지 않아 briefing을 건너뜁니다. .env의 OBSIDIAN_VAULT_PATH를 확인하세요.)")
+        return
+    try:
+        from app import vault_tools
+
+        briefing = vault_tools.get_project_briefing(repo, settings=settings)
+    except Exception as e:
+        typer.echo(f"(briefing 조회 실패: {e})")
+        return
+    typer.echo(briefing.text)
 
 
 if __name__ == "__main__":
