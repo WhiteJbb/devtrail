@@ -340,6 +340,55 @@ def test_write_session_process_reattaches_orphan_plan_session_id(tmp_path):
     assert result.session_id == "orphan-plan-1"
 
 
+def test_write_session_process_does_not_reattach_plan_older_than_24h(tmp_path):
+    """24시간을 넘긴 미짝 Plan에는 재귀속하지 않아야 한다(P3.2).
+
+    재귀속은 "같은 세션 중 MCP 서버 재시작" 복구가 목적이므로, 상한이 없으면
+    몇 주 전 무관한 세션의 미짝 Plan에 오늘의 Process가 잘못 엮인다.
+    """
+    from datetime import datetime, timedelta
+
+    from app.services.candidate_writer import CandidateSpec, CandidateWriter
+
+    settings = _settings(tmp_path)
+    stale_time = datetime.now() - timedelta(hours=25)
+    CandidateWriter(tmp_path, now=stale_time).write(
+        CandidateSpec(
+            kind="session_handoff", title="Plan 오래된 미짝", body="x",
+            project="Devtrail", handoff_type="plan", session_id="stale-orphan",
+        )
+    )
+
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="x", files_touched="x", project_decisions={},
+        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={}, session_id="brand-new-session", settings=settings,
+    )
+    assert result.session_id == "brand-new-session"
+
+
+def test_write_session_process_reattaches_plan_within_24h(tmp_path):
+    from datetime import datetime, timedelta
+
+    from app.services.candidate_writer import CandidateSpec, CandidateWriter
+
+    settings = _settings(tmp_path)
+    recent_time = datetime.now() - timedelta(hours=1)
+    CandidateWriter(tmp_path, now=recent_time).write(
+        CandidateSpec(
+            kind="session_handoff", title="Plan 최근 미짝", body="x",
+            project="Devtrail", handoff_type="plan", session_id="recent-orphan",
+        )
+    )
+
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="x", files_touched="x", project_decisions={},
+        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={}, session_id="brand-new-session-2", settings=settings,
+    )
+    assert result.session_id == "recent-orphan"
+
+
 # ── list-candidates 기본 출력 제외 (CuratorAgent 연동) ───────────────────────
 
 

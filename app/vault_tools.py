@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import frontmatter
@@ -38,6 +38,7 @@ _RECORD_NOTE_KINDS = {"knowledge", "decision", "blog_idea", "career_bullet"}
 
 _SECTION_MAX_CHARS = 1200
 _RECENT_HANDOFF_LIMIT = 3
+_ORPHAN_REATTACH_WINDOW_HOURS = 24
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
@@ -164,6 +165,10 @@ def _reattach_orphan_plan_if_needed(vault_dir: Path, project: str, session_id: s
     """이 session_id의 Plan이 없으면, 같은 프로젝트의 최근 미짝 Plan에 재귀속한다.
 
     MCP 서버 재시작 등으로 Plan 때와 다른 session_id가 생성된 경우를 위한 안전망이다.
+    재귀속 후보는 최근 _ORPHAN_REATTACH_WINDOW_HOURS 이내에 생성된 미짝 Plan으로
+    제한한다 — "같은 세션 중 서버 재시작" 복구에는 이 정도면 충분하고, 제한이 없으면
+    이번 세션이 write_work_plan을 그냥 안 불렀을 뿐인데 몇 주 전 무관한 세션의 미짝
+    Plan에 오늘의 Process가 잘못 엮여 정당한 "미짝 Plan 경고"도 사라지게 된다.
     """
     handoffs = _list_session_handoffs(vault_dir, project)
     plans = [h for h in handoffs if h["handoff_type"] == "plan"]
@@ -173,7 +178,12 @@ def _reattach_orphan_plan_if_needed(vault_dir: Path, project: str, session_id: s
     if any(p["session_id"] == session_id for p in plans):
         return session_id
 
-    orphan_plans = [p for p in plans if p["session_id"] and p["session_id"] not in paired_ids]
+    cutoff = (datetime.now() - timedelta(hours=_ORPHAN_REATTACH_WINDOW_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
+    orphan_plans = [
+        p
+        for p in plans
+        if p["session_id"] and p["session_id"] not in paired_ids and p["created_at"] >= cutoff
+    ]
     if not orphan_plans:
         return session_id
 
