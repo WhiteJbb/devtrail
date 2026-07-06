@@ -15,6 +15,7 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.prompts import render_prompt
 from app.services.repo_snapshot import RepoSnapshot, capture_repo_snapshot
+from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
 from app.services.wiki_service import WikiService
 
 
@@ -135,10 +136,20 @@ class CaptureAgent:
         from_repo: bool = False,
         from_agent: bool = False,
         summary_file: str | None = None,
+        summary_text: str | None = None,
+        session_id: str | None = None,
         source: str = "agent_session",
         title: str | None = None,
+        needs_distill: bool = True,
     ) -> CaptureResult:
-        """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Sessions/에 저장한다."""
+        """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Sessions/에 저장한다.
+
+        summary_text가 주어지면 summary_file보다 우선한다(MCP처럼 요약 텍스트를 직접
+        전달하는 호출 경로에서 임시 파일을 만들 필요가 없게 한다).
+
+        needs_distill=False는 write_session_process처럼 이미 Decision/MemoryPatch
+        분리까지 끝낸 호출 경로가 nightly distill의 재추출·중복 생성을 막기 위해 쓴다.
+        """
         date = self._date()
         project = (project or "").strip()
         slug_parts = [date, self._slug(project) if project else None, "session"]
@@ -153,13 +164,14 @@ class CaptureAgent:
             repo_path = repo or "."
             snap = capture_repo_snapshot(repo_path)
 
-        # summary-file 읽기
-        summary_text = ""
-        if summary_file:
+        # summary_text > summary_file 순으로 요약을 확보한다
+        resolved_summary = (summary_text or "").strip()
+        if not resolved_summary and summary_file:
             try:
-                summary_text = Path(summary_file).read_text(encoding="utf-8").strip()
+                resolved_summary = Path(summary_file).read_text(encoding="utf-8").strip()
             except OSError:
-                summary_text = ""
+                resolved_summary = ""
+        summary_text = resolved_summary
 
         # ISO 타임스탬프
         now = self._now()
@@ -174,9 +186,10 @@ class CaptureAgent:
             "project": project,
             "source": source,
             "status": "raw",
-            "needs_distill": True,
+            "needs_distill": needs_distill,
             "created_at": iso_now,
             "updated_at": iso_now,
+            "session_id": session_id or "",
             "from_repo": from_repo,
             "from_agent": from_agent,
             "agent_summary_missing": from_agent and not summary_text,
@@ -256,10 +269,15 @@ class CaptureAgent:
                 "## 6. 다음 할 일", "- ", "",
                 "## 7. 블로그 / 포트폴리오 소재", "- ", "",
                 "## 8. Git / Source Refs", "- ", "",
+                "## 9. Learning Recovery", "",
+                f"### {HEADING_AI_LED}", "- ", "",
+                f"### {HEADING_UNCLEAR}", "- ", "",
+                f"### {HEADING_QUESTIONS}", "1. ", "",
+                f"### {HEADING_RELATED}", "- ", "",
             ]
 
         # Repo Snapshot 섹션
-        lines += ["## 9. Repo Snapshot", ""]
+        lines += ["## 10. Repo Snapshot", ""]
         if snap is None:
             lines += ["_repo 정보 없음 (--from-repo 없이 실행됨)_", ""]
         elif snap.error:
@@ -293,7 +311,7 @@ class CaptureAgent:
             ]
 
         lines += [
-            "## 10. Notes",
+            "## 11. Notes",
             "- 실제로 하지 않은 일은 적지 말 것.",
             "- 불확실한 내용은 `확실하지 않음`으로 표시할 것.",
         ]

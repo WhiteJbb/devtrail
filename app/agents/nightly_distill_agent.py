@@ -163,6 +163,13 @@ class NightlyDistillAgent:
         total = len(distill.written) + len(career.written)
         lines.append(f"_총 후보 {total}개 생성 | distill {len(distill.written)} / career {len(career.written)}_")
 
+        if not weekly:
+            from app.services.review_question import format_review_block
+
+            review_block = format_review_block(self.vault_dir)
+            if review_block:
+                lines += ["", review_block]
+
         return "\n".join(lines)
 
     def _overdue_tasks(self) -> list[tuple[str, str, int]]:

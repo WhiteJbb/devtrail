@@ -18,6 +18,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "markdown>=3.5",
     "textual>=0.60",
+    "mcp>=1.2",
 ]
 
 [project.optional-dependencies]

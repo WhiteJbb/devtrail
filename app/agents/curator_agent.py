@@ -67,8 +67,12 @@ class CuratorAgent:
 
     # ── 조회 ─────────────────────────────────────────────────────────
 
-    def list_candidates(self) -> list[CandidateItem]:
-        """60_Candidates/ 하위 모든 후보를 반환한다."""
+    def list_candidates(self, include_session_handoffs: bool = False) -> list[CandidateItem]:
+        """60_Candidates/ 하위 모든 후보를 반환한다.
+
+        session_handoff은 promote 대상이 아니라 다음 세션 briefing이 소비하는 운영
+        메모리이므로 기본 출력에서 제외한다(include_session_handoffs=True로 조회 가능).
+        """
         candidates_dir = self.vault_dir / _CANDIDATE_DIR
         if not candidates_dir.exists():
             return []
@@ -76,8 +80,11 @@ class CuratorAgent:
         items: list[CandidateItem] = []
         for md_path in sorted(candidates_dir.rglob("*.md")):
             item = self._parse_candidate(md_path)
-            if item is not None:
-                items.append(item)
+            if item is None:
+                continue
+            if item.kind == "session_handoff" and not include_session_handoffs:
+                continue
+            items.append(item)
         return items
 
     def preview_candidate(self, rel_path: str) -> str:
@@ -112,6 +119,12 @@ class CuratorAgent:
             body = raw
 
         kind = self._normalize_kind(str(metadata.get("candidate_type") or metadata.get("type") or "knowledge"))
+        if kind == "session_handoff":
+            raise ValueError(
+                "session_handoff은 promote 대상이 아닙니다 — 다음 세션 briefing이 소비하는 "
+                "운영 메모리입니다. 공식 지식으로 남길 내용은 Decisions/MemoryPatches/docs "
+                "후보로 별도 기록하세요."
+            )
         project = str(metadata.get("project") or "").strip()
         promoted_rel = self._promoted_path(kind, project, src_path.name)
 
@@ -173,6 +186,12 @@ class CuratorAgent:
         except Exception:
             metadata = {}
             patch_body = raw.strip()
+
+        kind = self._normalize_kind(str(metadata.get("candidate_type") or metadata.get("type") or ""))
+        if kind != "memory_patch":
+            raise ValueError(
+                f"memory_patch 후보만 적용할 수 있습니다: {rel_path} (kind={kind or '(알 수 없음)'})"
+            )
 
         # 대상 AgentMemory 파일 결정 (없으면 05_OpenLoops.md에 append)
         target_file = str(metadata.get("target_file") or "").strip()
@@ -257,6 +276,8 @@ class CuratorAgent:
             "blog": "blog_idea",
             "blog_ideas": "blog_idea",
             "candidate": "",
+            "session_handoffs": "session_handoff",
+            "handoff": "session_handoff",
         }
         return aliases.get(value, value)
 

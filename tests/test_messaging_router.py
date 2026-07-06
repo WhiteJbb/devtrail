@@ -43,6 +43,32 @@ def test_capture_requires_arg():
     assert "메모 내용을 함께" in router.handle("/capture")
 
 
+def test_briefing_no_vault_configured(monkeypatch):
+    from unittest.mock import patch
+    from types import SimpleNamespace
+
+    router = _router()
+    with patch("app.vault_tools.get_settings", return_value=SimpleNamespace(obsidian_vault_root="")):
+        out = router.handle("/briefing")
+    assert "OBSIDIAN_VAULT_PATH" in out
+
+
+def test_briefing_returns_agent_memory(tmp_path, monkeypatch):
+    from app.config import get_settings
+
+    (tmp_path / "40_AgentMemory").mkdir(parents=True)
+    (tmp_path / "40_AgentMemory" / "01_CurrentFocus.md").write_text(
+        "---\ntitle: Current Focus\n---\n\n지금은 vault-mcp 작업 중\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        out = _router().handle("/briefing")
+    finally:
+        get_settings.cache_clear()
+    assert "vault-mcp 작업 중" in out
+
+
 def test_capture_calls_agent(monkeypatch):
     from unittest.mock import MagicMock, patch
     from types import SimpleNamespace
