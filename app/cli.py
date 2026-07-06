@@ -1188,6 +1188,48 @@ def serve_bot() -> None:
         typer.echo("\n봇을 종료합니다.")
 
 
+@app.command("vault-cleanup")
+def vault_cleanup(
+    dry_run: bool = typer.Option(False, "--dry-run", help="삭제하지 않고 대상만 표시"),
+    keep: int = typer.Option(3, "--keep", help="프로젝트당 보존할 최신 SessionHandoffs 개수"),
+    worklog_days: int = typer.Option(30, "--worklog-days", help="distill된 worklog 세션 보존 기간(일)"),
+    handoff_days: int = typer.Option(30, "--handoff-days", help="최신 N개를 넘는 SessionHandoffs 보존 기간(일)"),
+) -> None:
+    """오래된 10_Worklog/Sessions/와 60_Candidates/SessionHandoffs/를 정리한다.
+
+    사람이 직접 실행하는 destructive 명령이며 MCP에는 노출하지 않는다.
+    """
+    from app.services.retention import cleanup_vault
+
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다.")
+
+    result = cleanup_vault(
+        Path(settings.obsidian_vault_root),
+        keep_per_project=keep,
+        worklog_retention_days=worklog_days,
+        handoff_retention_days=handoff_days,
+        dry_run=dry_run,
+    )
+
+    total = len(result.deleted_worklog) + len(result.deleted_handoffs)
+    if total == 0:
+        typer.echo("정리할 대상이 없습니다.")
+        return
+
+    verb = "삭제 예정 (--dry-run)" if dry_run else "삭제 완료"
+    typer.secho(
+        f"\n{verb}: worklog {len(result.deleted_worklog)}개, handoff {len(result.deleted_handoffs)}개",
+        fg=typer.colors.GREEN,
+        bold=True,
+    )
+    for rel in result.deleted_worklog:
+        typer.echo(f"  [worklog] {rel}")
+    for rel in result.deleted_handoffs:
+        typer.echo(f"  [handoff] {rel}")
+
+
 @app.command("mcp-serve")
 def mcp_serve() -> None:
     """Vault tool 레이어를 MCP(stdio)로 노출한다 — Claude Code/Desktop에서 등록해 사용.
