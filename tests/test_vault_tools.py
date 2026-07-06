@@ -62,6 +62,24 @@ def test_read_note_missing_file_raises(tmp_path):
         vault_tools.read_note("20_Knowledge/없음.md", settings=settings)
 
 
+def test_read_note_directory_path_raises_instead_of_os_error(tmp_path):
+    """스코프 안이지만 디렉터리인 경로는 OS 예외 대신 VaultScopeError여야 한다(P3.4)."""
+    (tmp_path / "20_Knowledge" / "AI").mkdir(parents=True)
+    settings = _settings(tmp_path)
+    with pytest.raises(vault_tools.VaultScopeError):
+        vault_tools.read_note("20_Knowledge/AI", settings=settings)
+
+
+def test_read_note_falls_back_on_non_utf8_encoding(tmp_path):
+    """cp949 등으로 저장된 노트도 UnicodeDecodeError 없이 읽혀야 한다(P3.4)."""
+    path = tmp_path / "20_Knowledge" / "legacy.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes("한글 노트".encode("cp949"))
+    settings = _settings(tmp_path)
+    content = vault_tools.read_note("20_Knowledge/legacy.md", settings=settings)
+    assert content  # 깨지더라도 예외 없이 문자열을 반환해야 한다
+
+
 # ── search_vault ─────────────────────────────────────────────────────────────
 
 

@@ -222,9 +222,14 @@ def read_note(rel_path: str, settings: Settings | None = None) -> str:
     resolved = path.resolve()
     if not resolved.is_relative_to(vault_dir.resolve()):
         raise VaultScopeError(f"vault를 벗어나는 경로입니다: {rel_path}")
-    if not resolved.exists():
+    if not resolved.exists() or not resolved.is_file():
         raise VaultScopeError(f"노트를 찾지 못했습니다: {rel_path}")
-    return resolved.read_text(encoding="utf-8")
+    try:
+        return resolved.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        # 외부 도구가 UTF-8이 아닌 인코딩으로 저장한 노트도 있을 수 있다
+        # (WikiService._parse_note는 이미 이 폴백을 쓴다).
+        return resolved.read_text(encoding="utf-8", errors="replace")
 
 
 def get_briefing(settings: Settings | None = None) -> str:
