@@ -534,7 +534,7 @@ write_scope:
 | 계층 | 대상 | 방식 |
 |---|---|---|
 | Tier 1 — 훅 강제 | Claude Code(레퍼런스 구현), Codex CLI | SessionStart 훅으로 briefing 자동 주입, PreCompact/Stop 훅으로 Process 미작성 시 리마인드·차단. 차단은 git dirty 상태이거나 세션 중 파일 편집이 있었을 때만 적용하고, 파일 변경 없는 Q&A 세션은 조용히 통과시킨다(§3d 생략 기준과 일치) |
-| Tier 2 — 훅 스크립트 자동화 | Cursor, OpenClaw | stop/session 이벤트 훅이 에이전트를 강제하지는 못하지만, 훅 스크립트가 직접 `work-agent` CLI를 호출해 git 상태 기반의 기계적 mini-Process를 생성. 시작 컨텍스트는 rules/bootstrap 파일로 주입 |
+| Tier 2 — 훅 스크립트 자동화 | Cursor, OpenClaw | stop/session 이벤트 훅이 에이전트를 강제하지는 못하지만, 훅 스크립트가 직접 `devtrail` CLI를 호출해 git 상태 기반의 기계적 mini-Process를 생성. 시작 컨텍스트는 rules/bootstrap 파일로 주입 |
 | Tier 3 — 지침 전용 | 훅 미지원 도구 | agent instruction 문서의 프로토콜 지침에만 의존 |
 | Tier 0 — 공통 안전망 | 모든 에이전트 | `get_project_briefing`이 직전 세션의 Plan-Process 쌍 누락을 감지해 브리핑 상단에 경고로 표시. 경고 피로를 막기 위해 가장 최근 미짝 Plan 1건만 표시하고, 오래된 미짝 Plan은 P4 cleanup이 정리 |
 

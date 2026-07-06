@@ -1,4 +1,4 @@
-# work-agent — Personal Knowledge OS
+# devtrail — Personal Knowledge OS
 
 Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 자동으로 캡처·정제하고, 블로그·포트폴리오·이력서 초안을 만드는 개인 생산성 CLI/봇.
 
@@ -155,20 +155,20 @@ Obsidian 템플릿은 [docs/vault-templates/](docs/vault-templates/)을 Vault의
 ### Vault 초기화
 
 ```bash
-work-agent init-vault                             # 볼트 폴더 구조 생성
-work-agent install-hooks <repo> [-p project]      # git post-commit hook 설치
-work-agent index-vault                            # index.md 갱신
+devtrail init-vault                             # 볼트 폴더 구조 생성
+devtrail install-hooks <repo> [-p project]      # git post-commit hook 설치
+devtrail index-vault                            # index.md 갱신
 ```
 
 ### Capture — raw 기록 저장
 
 ```bash
-work-agent capture "메모"                                         # → 00_Inbox/Memos/
-work-agent capture-session [-p project] [--from-repo]            # → 10_Worklog/Sessions/
-work-agent capture-session [-p project] --from-agent             # AI 세션 요약 포함
-work-agent capture-session [-p project] --summary-file <md>      # AI 요약 파일 삽입
-work-agent daily-log [-p project]                                # 오늘 데일리 로그 → 10_Worklog/Daily/
-work-agent daily-log [-p project] --from-agent                   # LLM이 오늘 컨텍스트 미리 채움
+devtrail capture "메모"                                         # → 00_Inbox/Memos/
+devtrail capture-session [-p project] [--from-repo]            # → 10_Worklog/Sessions/
+devtrail capture-session [-p project] --from-agent             # AI 세션 요약 포함
+devtrail capture-session [-p project] --summary-file <md>      # AI 요약 파일 삽입
+devtrail daily-log [-p project]                                # 오늘 데일리 로그 → 10_Worklog/Daily/
+devtrail daily-log [-p project] --from-agent                   # LLM이 오늘 컨텍스트 미리 채움
 ```
 
 `--from-agent` 플래그: daily-log는 오늘 캡처·OpenLoops를 읽어 Done/Next 등 미리 채움.
@@ -178,66 +178,66 @@ work-agent daily-log [-p project] --from-agent                   # LLM이 오늘
 ### Distill — 정제 후보 생성 (LLM 필요)
 
 ```bash
-work-agent distill-today               # 오늘 Inbox → 60_Candidates/ 후보 일괄 생성
-work-agent suggest-knowledge           # Knowledge 후보 제안
-work-agent suggest-blog-topics         # BlogIdea 후보 제안
-work-agent suggest-memory-patch        # AgentMemory 패치 제안
-work-agent suggest-career-bullets      # 이력서·포폴 bullet 후보
-work-agent update-open-loops           # OpenLoops 패치 후보
-work-agent build-context "주제"        # ContextPack 구성
+devtrail distill-today               # 오늘 Inbox → 60_Candidates/ 후보 일괄 생성
+devtrail suggest-knowledge           # Knowledge 후보 제안
+devtrail suggest-blog-topics         # BlogIdea 후보 제안
+devtrail suggest-memory-patch        # AgentMemory 패치 제안
+devtrail suggest-career-bullets      # 이력서·포폴 bullet 후보
+devtrail update-open-loops           # OpenLoops 패치 후보
+devtrail build-context "주제"        # ContextPack 구성
 ```
 
 ### Candidates 관리
 
 ```bash
-work-agent list-candidates                      # 60_Candidates/ 목록 (stale 표시 포함)
-work-agent preview-candidate <path>             # 후보 미리보기
-work-agent promote-candidate <path>             # 공식 영역으로 승격
-work-agent promote-all [--kind knowledge|decision|blog_idea]   # 타입별 일괄 승격
-work-agent apply-memory-patch [path] [-i]       # → 40_AgentMemory/ 반영
+devtrail list-candidates                      # 60_Candidates/ 목록 (stale 표시 포함)
+devtrail preview-candidate <path>             # 후보 미리보기
+devtrail promote-candidate <path>             # 공식 영역으로 승격
+devtrail promote-all [--kind knowledge|decision|blog_idea]   # 타입별 일괄 승격
+devtrail apply-memory-patch [path] [-i]       # → 40_AgentMemory/ 반영
 ```
 
 ### 탐색
 
 ```bash
-work-agent search "RAG"             # 키워드 볼트 검색
-work-agent related <path>           # 관련 노트 탐색 (태그·wikilink 기반)
+devtrail search "RAG"             # 키워드 볼트 검색
+devtrail related <path>           # 관련 노트 탐색 (태그·wikilink 기반)
 ```
 
 ### Generate — 결과물 생성 (LLM 필요)
 
 ```bash
 # 작업 회고 / 할 일
-work-agent worklog                             # 작업 회고 → 10_Worklog/Summaries/
-work-agent todo                                # 다음 할 일 분석 → 50_Outputs/Todo/
+devtrail worklog                             # 작업 회고 → 10_Worklog/Summaries/
+devtrail todo                                # 다음 할 일 분석 → 50_Outputs/Todo/
 
 # 블로그
-work-agent write-blog "주제" [-p project]      # ContextPack → 50_Outputs/Blog/Drafts/
-work-agent revise-blog <path>                  # 기존 초안 다듬기
-work-agent publish-ready <path>                # status → review
-work-agent export-tistory [target]             # 티스토리 포맷 변환
-work-agent publish-done <path> [--url <url>]   # 게시 완료 기록
-work-agent list                                # 초안 목록
-work-agent preview [target]                    # 초안 미리보기
+devtrail write-blog "주제" [-p project]      # ContextPack → 50_Outputs/Blog/Drafts/
+devtrail revise-blog <path>                  # 기존 초안 다듬기
+devtrail publish-ready <path>                # status → review
+devtrail export-tistory [target]             # 티스토리 포맷 변환
+devtrail publish-done <path> [--url <url>]   # 게시 완료 기록
+devtrail list                                # 초안 목록
+devtrail preview [target]                    # 초안 미리보기
 
 # 개인 문서
-work-agent portfolio                           # 포트폴리오 소개 → 50_Outputs/Portfolio/
-work-agent resume                              # 이력서·자소서 초안 → 50_Outputs/Resume/
-work-agent summarize-project <name>            # 프로젝트 요약 (800자)
-work-agent portfolio-draft <name>              # 프로젝트별 포폴 초안
-work-agent interview-questions <name>          # 예상 면접 질문
+devtrail portfolio                           # 포트폴리오 소개 → 50_Outputs/Portfolio/
+devtrail resume                              # 이력서·자소서 초안 → 50_Outputs/Resume/
+devtrail summarize-project <name>            # 프로젝트 요약 (800자)
+devtrail portfolio-draft <name>              # 프로젝트별 포폴 초안
+devtrail interview-questions <name>          # 예상 면접 질문
 ```
 
 ### Deliver — 자동화 · 전송
 
 ```bash
-work-agent nightly-distill                     # 하루 종합 정제 + daily digest + Telegram 전송
-work-agent distill-range --days 7              # N일치 원본 대상 distill (weekly-distill과 동일)
-work-agent weekly-distill                      # 7일치 종합 정제 + weekly digest + Telegram 전송
-work-agent push-digest [--daily|--weekly|--worklog]   # 후보 요약 Telegram 수동 전송
-work-agent print-schedule [--windows|--cron]   # OS 스케줄러 등록 명령 출력
-work-agent ask "자연어"                        # 의도 분류 후 커맨드 실행
-work-agent serve-bot                           # Telegram 봇 실행
+devtrail nightly-distill                     # 하루 종합 정제 + daily digest + Telegram 전송
+devtrail distill-range --days 7              # N일치 원본 대상 distill (weekly-distill과 동일)
+devtrail weekly-distill                      # 7일치 종합 정제 + weekly digest + Telegram 전송
+devtrail push-digest [--daily|--weekly|--worklog]   # 후보 요약 Telegram 수동 전송
+devtrail print-schedule [--windows|--cron]   # OS 스케줄러 등록 명령 출력
+devtrail ask "자연어"                        # 의도 분류 후 커맨드 실행
+devtrail serve-bot                           # Telegram 봇 실행
 ```
 
 ---
@@ -264,8 +264,8 @@ OBSIDIAN_VAULT_PATH: D:/personal-vault
 ### 2단계 — 세션 시작 시 컨텍스트 로딩
 
 ```bash
-work-agent build-context "XCoreChat RAG"   # → 50_Outputs/Context/ 에 파일 생성
-work-agent search "RAG 검색"               # 관련 노트 확인
+devtrail build-context "XCoreChat RAG"   # → 50_Outputs/Context/ 에 파일 생성
+devtrail search "RAG 검색"               # 관련 노트 확인
 ```
 
 생성된 파일을 AI 세션에 추가합니다 (Claude Code: `/add 파일명`, Cursor: `@파일명`).
@@ -281,7 +281,7 @@ capture-session 실행해줘
 Claude Code가 `CLAUDE.md`의 규칙에 따라 요약을 작성하고 실행:
 
 ```bash
-work-agent capture-session --project <name> --from-repo --from-agent --summary-file ./session-summary.md
+devtrail capture-session --project <name> --from-repo --from-agent --summary-file ./session-summary.md
 ```
 
 ### 전체 흐름
@@ -311,8 +311,8 @@ work-agent capture-session --project <name> --from-repo --from-agent --summary-f
 ```
 
 ```bash
-work-agent print-schedule --windows   # Windows Task Scheduler 등록 명령
-work-agent print-schedule --cron      # Linux / Mac crontab 등록 명령
+devtrail print-schedule --windows   # Windows Task Scheduler 등록 명령
+devtrail print-schedule --cron      # Linux / Mac crontab 등록 명령
 ```
 
 ---
@@ -327,7 +327,7 @@ TELEGRAM_CHAT_ID=<알림 받을 chat id>
 ```
 
 ```bash
-work-agent serve-bot
+devtrail serve-bot
 ```
 
 ### 할 일 관리

@@ -33,10 +33,10 @@
 | 파일 | 역할 |
 |---|---|
 | `app/vault_tools.py` | CLI/MCP/Telegram이 공유하는 서비스 레이어. P1 정본 7개 + `get_briefing`/`build_context` |
-| `app/mcp_server.py` | `FastMCP("work-agent-vault")`로 7개 tool을 stdio 노출, session_id 자동 생성·주입 |
+| `app/mcp_server.py` | `FastMCP("devtrail-vault")`로 7개 tool을 stdio 노출, session_id 자동 생성·주입 |
 | `app/services/retention.py` | `10_Worklog/Sessions/`·`60_Candidates/SessionHandoffs/` 보존 정책 |
 | `app/services/review_question.py` | 최근 세션의 Learning Recovery에서 복습 질문 1개 추출 |
-| `scripts/hooks/session-start-briefing.ps1` | Claude Code SessionStart 훅 (참고용, 미등록). briefing 출력은 `work-agent project-briefing` CLI로 받는다(코드 리뷰 후 `print_briefing.py`를 대체) |
+| `scripts/hooks/session-start-briefing.ps1` | Claude Code SessionStart 훅 (참고용, 미등록). briefing 출력은 `devtrail project-briefing` CLI로 받는다(코드 리뷰 후 `print_briefing.py`를 대체) |
 | `scripts/hooks/stop-process-check.ps1` | Claude Code Stop/PreCompact 훅 (참고용, 미등록) |
 | `docs/vault-mcp-implementation-summary.md` | 본 문서 |
 | `tests/test_vault_tools.py`, `test_candidate_writer.py`, `test_mcp_server.py`, `test_retention.py`, `test_review_question.py` | 신규 기능 테스트 |
@@ -136,14 +136,14 @@ python -m pytest -q
    ```json
    {
      "mcpServers": {
-       "work-agent-vault": {
-         "command": "work-agent",
+       "devtrail-vault": {
+         "command": "devtrail",
          "args": ["mcp-serve"]
        }
      }
    }
    ```
-   또는 Claude Code에서: `claude mcp add work-agent-vault -- work-agent mcp-serve`
+   또는 Claude Code에서: `claude mcp add devtrail-vault -- devtrail mcp-serve`
 3. 새 세션에서 `get_project_briefing`을 호출해 컨텍스트가 반환되는지 확인한다.
 4. `write_work_plan` → `record_note` → `write_session_process`를 순서대로 호출하고,
    `60_Candidates/SessionHandoffs/<Project>/`에 Plan/Process 파일 2개가 생기는지,
@@ -176,13 +176,13 @@ python -m pytest -q
 ### 6.3 push-digest --daily 복습 질문
 
 `10_Worklog/Sessions/`에 Learning Recovery 섹션이 있는 세션 노트를 만든 뒤
-`work-agent push-digest --daily`를 실행해 Telegram 메시지 끝에 "오늘의 학습 회수" 블록이
+`devtrail push-digest --daily`를 실행해 Telegram 메시지 끝에 "오늘의 학습 회수" 블록이
 붙는지 확인한다(자동 테스트는 메신저 provider를 fake로 대체해 검증했으므로, 실제 Telegram
 전송까지 확인하려면 `MESSENGER_PROVIDER=telegram`과 실제 토큰이 필요하다).
 
 ### 6.4 Telegram `/briefing`, 자연어 `ask-vault`
 
-`work-agent serve-bot` 실행 후 실제 Telegram 챗에서 `/briefing`과 "지난번에 뭐라고
+`devtrail serve-bot` 실행 후 실제 Telegram 챗에서 `/briefing`과 "지난번에 뭐라고
 결정했었지?" 같은 자연어 질문을 보내 답변과 출처 경로가 오는지 확인한다.
 
 ---

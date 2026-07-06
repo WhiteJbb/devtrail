@@ -35,9 +35,9 @@ VAULT_DIRS = [
     "20_Knowledge/Backend",
     "20_Knowledge/Frontend",
     "20_Knowledge/Career",
-    "30_Projects/WorkAgent/Decisions",
-    "30_Projects/WorkAgent/Issues",
-    "30_Projects/WorkAgent/Logs",
+    "30_Projects/Devtrail/Decisions",
+    "30_Projects/Devtrail/Issues",
+    "30_Projects/Devtrail/Logs",
     "40_AgentMemory/Core",
     "40_AgentMemory/ProjectSummaries",
     "50_Outputs/Digest",
@@ -393,12 +393,12 @@ class WikiService:
         return [t.lower() for t in _TOKEN_RE.findall(text) if len(t.strip()) > 1]
 
     def _default_root_index(self) -> str:
-        return "# Vault Index\n\n_Run `work-agent index-vault` to rebuild this catalog._\n"
+        return "# Vault Index\n\n_Run `devtrail index-vault` to rebuild this catalog._\n"
 
     def _default_vault_agents(self) -> str:
         return (
             "# AGENTS.md\n\n"
-            "This Obsidian vault is the shared memory bus for Work Agent and other AI tools.\n\n"
+            "This Obsidian vault is the shared memory bus for Devtrail and other AI tools.\n\n"
             "## Writable Areas\n\n"
             "- 00_Inbox/\n"
             "- 10_Worklog/\n"

@@ -25,16 +25,16 @@ def _git(repo, *args):
 
 
 def test_capture_writes_inbox_note_and_log(tmp_path):
-    result = _agent(tmp_path).capture("오늘 RAG 검색 정리", project="WorkAgent")
+    result = _agent(tmp_path).capture("오늘 RAG 검색 정리", project="Devtrail")
 
     assert result.rel_path.startswith("00_Inbox/Captures/")
     text = result.path.read_text(encoding="utf-8")
     assert "type: capture" in text
-    assert "project: WorkAgent" in text
+    assert "project: Devtrail" in text
     assert "오늘 RAG 검색 정리" in text
 
     log = (tmp_path / "log.md").read_text(encoding="utf-8")
-    assert "capture | WorkAgent" in log
+    assert "capture | Devtrail" in log
     assert result.rel_path in log
 
 
@@ -62,7 +62,7 @@ def test_capture_commit_writes_git_summary(tmp_path):
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "first commit")
 
-    result = _agent(tmp_path).capture_commit(repo, project="WorkAgent")
+    result = _agent(tmp_path).capture_commit(repo, project="Devtrail")
 
     assert result.rel_path.startswith("10_Worklog/GitSummaries/")
     text = result.path.read_text(encoding="utf-8")
@@ -76,7 +76,7 @@ def test_cli_capture_and_daily_log(monkeypatch, tmp_path):
     get_settings.cache_clear()
 
     try:
-        capture = runner.invoke(cli.app, ["capture", "작업 메모", "--project", "WorkAgent"])
+        capture = runner.invoke(cli.app, ["capture", "작업 메모", "--project", "Devtrail"])
         assert capture.exit_code == 0
         assert "capture 생성 완료" in capture.output
 

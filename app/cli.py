@@ -1,4 +1,4 @@
-"""work-agent CLI 진입점.
+"""devtrail CLI 진입점.
 
 얇게 유지한다 — 인자 파싱과 출력만 담당하고, 실제 로직은 각 Agent에 위임한다.
 """
@@ -25,7 +25,7 @@ from app.services.wiki_service import WikiService
 
 app = typer.Typer(
     add_completion=False,
-    help="Work Agent — 작업 기록 기반 기술 블로그 초안 생성기",
+    help="Devtrail — 작업 기록 기반 기술 블로그 초안 생성기",
     no_args_is_help=True,
 )
 
@@ -106,7 +106,7 @@ def install_hooks(
     project: str = typer.Option("", "--project", "-p", help="프로젝트 이름 (기본: 레포 폴더명)"),
     force: bool = typer.Option(False, "--force", "-f", help="기존 hook 덮어쓰기"),
 ) -> None:
-    """대상 git 레포지토리에 work-agent post-commit hook을 설치한다.
+    """대상 git 레포지토리에 devtrail post-commit hook을 설치한다.
 
     커밋할 때마다 자동으로 10_Worklog/GitSummaries/에 캡처된다.
     """
@@ -137,14 +137,14 @@ def install_hooks(
     current_mode = hook_dst.stat().st_mode
     hook_dst.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    work_agent_home = str(Path(__file__).parent.parent.resolve())
+    devtrail_home = str(Path(__file__).parent.parent.resolve())
     python_exe = sys.executable
     project_name = project or repo_path.name
 
     for key, val in [
-        ("work-agent.home", work_agent_home),
-        ("work-agent.python", python_exe),
-        ("work-agent.project", project_name),
+        ("devtrail.home", devtrail_home),
+        ("devtrail.python", python_exe),
+        ("devtrail.project", project_name),
     ]:
         subprocess.run(
             ["git", "config", "--local", key, val],
@@ -157,7 +157,7 @@ def install_hooks(
     typer.echo(f"  repo:    {repo_path}")
     typer.echo(f"  project: {project_name}")
     typer.echo(f"  python:  {python_exe}")
-    typer.echo(f"  home:    {work_agent_home}")
+    typer.echo(f"  home:    {devtrail_home}")
     typer.echo("\n커밋할 때마다 자동으로 vault에 캡처됩니다.")
 
 
@@ -832,21 +832,21 @@ def print_schedule(
         raise typer.Exit(1)
 
     if windows:
-        agent_exe = str(Path(exe).parent / "work-agent.exe")
+        agent_exe = str(Path(exe).parent / "devtrail.exe")
         typer.secho("# Windows Task Scheduler (PowerShell에서 실행)", fg=typer.colors.CYAN, bold=True)
         typer.echo(
-            f'schtasks /create /tn "work-agent-nightly" '
+            f'schtasks /create /tn "devtrail-nightly" '
             f'/tr "{agent_exe} nightly-distill" '
             f"/sc daily /st 23:30 /f"
         )
         typer.echo(
-            f'schtasks /create /tn "work-agent-digest" '
+            f'schtasks /create /tn "devtrail-digest" '
             f'/tr "{agent_exe} push-digest --daily" '
             f"/sc daily /st 08:30 /f"
         )
 
     if cron:
-        venv_bin = str(Path(exe).parent / "work-agent")
+        venv_bin = str(Path(exe).parent / "devtrail")
         typer.secho("# crontab -e 에 추가", fg=typer.colors.CYAN, bold=True)
         typer.echo(f"30 23 * * * {venv_bin} nightly-distill")
         typer.echo(f"30 8  * * * {venv_bin} push-digest --daily")
@@ -1243,7 +1243,7 @@ def mcp_serve() -> None:
     """Vault tool 레이어를 MCP(stdio)로 노출한다 — Claude Code/Desktop에서 등록해 사용.
 
     등록 예:
-      claude mcp add work-agent-vault -- work-agent mcp-serve
+      claude mcp add devtrail-vault -- devtrail mcp-serve
     """
     settings = get_settings()
     if not settings.obsidian_vault_root:
@@ -1265,7 +1265,7 @@ def project_briefing(
     """
     settings = get_settings()
     if not settings.obsidian_vault_root:
-        typer.echo("(work-agent Vault가 설정되지 않아 briefing을 건너뜁니다. .env의 OBSIDIAN_VAULT_PATH를 확인하세요.)")
+        typer.echo("(devtrail Vault가 설정되지 않아 briefing을 건너뜁니다. .env의 OBSIDIAN_VAULT_PATH를 확인하세요.)")
         return
     try:
         from app import vault_tools

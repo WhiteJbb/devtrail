@@ -36,7 +36,7 @@ function Send-TelegramAlert($text) {
     }
 }
 
-$wa       = "$RepoRoot\.venv\Scripts\work-agent.exe"
+$wa       = "$RepoRoot\.venv\Scripts\devtrail.exe"
 $LockFile = "$RepoRoot\.weekly.lock"
 
 # 중복 실행 방지
@@ -63,7 +63,7 @@ try {
     }
     Log "=== run-weekly-safe done ==="
 } catch {
-    $msg = "[work-agent] weekly-distill failed: $($_.Exception.Message)"
+    $msg = "[devtrail] weekly-distill failed: $($_.Exception.Message)"
     Log "ERROR: $msg"
     Send-TelegramAlert $msg
     exit 1

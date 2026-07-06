@@ -36,7 +36,7 @@
 
 ```bash
 # 실행 패턴
-work-agent capture-session --project <프로젝트명> --from-repo --from-agent --summary-file ./session-summary.md
+devtrail capture-session --project <프로젝트명> --from-repo --from-agent --summary-file ./session-summary.md
 ```
 
 ## Vault 구조 (작업 전 참조)

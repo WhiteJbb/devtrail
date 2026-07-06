@@ -51,7 +51,7 @@ _ROUTER_CMD = {
 }
 
 _HELP = (
-    "**Work Agent**\n"
+    "**Devtrail**\n"
     "안녕하세요. 개인 지식 관리 에이전트입니다.\n"
     "\n"
     "**[ 할 일 ]**\n"

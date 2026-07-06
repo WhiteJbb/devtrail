@@ -6,8 +6,8 @@ Claude Code/Desktop 같은 MCP 클라이언트는 세션당 이 서버 프로세
 실패 모드이므로(설계 문서 §3d), 서버가 상태를 소유하고 vault_tools의 함수들은
 session_id를 인자로만 받는 상태 없는 함수로 유지한다.
 
-등록: `work-agent mcp-serve`를 Claude Desktop의 `mcpServers` 설정 또는
-`claude mcp add work-agent-vault -- work-agent mcp-serve`로 등록한다.
+등록: `devtrail mcp-serve`를 Claude Desktop의 `mcpServers` 설정 또는
+`claude mcp add devtrail-vault -- devtrail mcp-serve`로 등록한다.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from app.config import get_settings
 
 _SESSION_ID = str(uuid4())
 
-mcp = FastMCP("work-agent-vault")
+mcp = FastMCP("devtrail-vault")
 
 
 def _session_marker_path() -> Path:

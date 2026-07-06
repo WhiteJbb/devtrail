@@ -1,11 +1,11 @@
 ﻿# Claude Code SessionStart 훅 (Tier 1, docs/service-improvement-plan.md P3) — 참고용.
 #
-# work-agent get_project_briefing()을 additionalContext로 주입한다. 이 저장소의
+# devtrail get_project_briefing()을 additionalContext로 주입한다. 이 저장소의
 # .claude/settings.json에는 등록하지 않았다 — 이 스크립트를 만드는 세션 자체가
 # devtrail에서 도는 Claude Code 세션이라 등록 시 즉시 스스로에게 적용되기 때문이다.
 # 실제 등록 전 별도 세션에서 반드시 검증할 것 (docs/vault-mcp-implementation-summary.md 참고).
 #
-# work-agent가 PATH에서 바로 실행 가능해야 한다(예: 이 훅을 쓸 venv에서
+# devtrail이 PATH에서 바로 실행 가능해야 한다(예: 이 훅을 쓸 venv에서
 # `pip install -e .` 등으로 설치). 실행 실패는 이 스크립트를 죽이지 않고 조용히
 # 건너뛴다 — SessionStart 훅은 세션 진행을 막아서는 안 된다.
 #
@@ -35,18 +35,18 @@ try {
 }
 
 # 세션마다 clean start — 이전 세션이 남긴 마커가 이번 세션의 것으로 오인되지 않게
-# 지운다. MCP 서버(work-agent mcp-serve)가 시작되면 main()이 새 마커를 쓴다.
+# 지운다. MCP 서버(devtrail mcp-serve)가 시작되면 main()이 새 마커를 쓴다.
 $markerPath = Join-Path $cwd ".claude/.vault-mcp/current_session.json"
 if (Test-Path $markerPath) {
     try { Remove-Item -Path $markerPath -Force -ErrorAction Stop } catch {}
 }
 
-# work-agent 부재/실패가 훅 전체를 죽이지 않도록 이 블록만 EAP를 낮추고 감싼다.
+# devtrail 부재/실패가 훅 전체를 죽이지 않도록 이 블록만 EAP를 낮추고 감싼다.
 $previousEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 $briefingLines = $null
 try {
-    $briefingLines = & work-agent project-briefing $cwd
+    $briefingLines = & devtrail project-briefing $cwd
 } catch {
     $briefingLines = $null
 }

@@ -42,7 +42,7 @@ def _distill_response(title="LLM 라우터 설계 원칙"):
                         "## 적용 방법\n"
                         "task_type=light면 Gemini Flash-Lite를 우선 사용하고, 실패 시 GPT-4o mini로 폴백한다."
                     ),
-                    "project": "work-agent",
+                    "project": "devtrail",
                     "tags": ["llm", "architecture"],
                     "source_refs": ["00_Inbox/Captures/test.md"],
                 }
@@ -67,7 +67,7 @@ def test_full_pipeline_capture_to_promote(tmp_path):
     capture_agent = CaptureAgent(settings=settings, now=now)
     cap_result = capture_agent.capture(
         text="LLM 라우터 task_type 기반 설계 완료. light/writer/long_writer/polish/local 분류.",
-        project="work-agent",
+        project="devtrail",
     )
     assert cap_result.path.exists()
     assert "00_Inbox" in cap_result.rel_path
@@ -112,7 +112,7 @@ def test_build_context_after_promote(tmp_path):
     # capture + distill + promote
     CaptureAgent(settings=settings, now=now).capture(
         text="LLM 라우터 설계 결정: task_type별 fallback chain 구성",
-        project="work-agent",
+        project="devtrail",
     )
     llm = FakeLLM(_distill_response())
     distill_result = DistillAgent(settings=settings, llm=llm, now=now).distill_today()
@@ -144,7 +144,7 @@ def test_duplicate_candidate_not_rewritten(tmp_path):
     settings = _settings(tmp_path)
     now = datetime(2026, 6, 23, 9, 0, 0)
 
-    CaptureAgent(settings=settings, now=now).capture(text="LLM 라우터 작업", project="work-agent")
+    CaptureAgent(settings=settings, now=now).capture(text="LLM 라우터 작업", project="devtrail")
 
     llm = FakeLLM(_distill_response())
     agent = DistillAgent(settings=settings, llm=llm, now=now)
@@ -252,7 +252,7 @@ def _distill_response_with_fabricated_refs(real_path: str):
                     "title": "Source Grounding 검증",
                     "summary": "허위 경로가 필터링되는지 확인",
                     "body": "## 개념\n필터링 테스트.\n\n## 왜 중요한가\nLLM이 존재하지 않는 경로를 만들 수 있다.\n\n## 적용 방법\n_spec_from_item에서 fallback_refs와 교차 검증한다.",
-                    "project": "work-agent",
+                    "project": "devtrail",
                     "tags": ["grounding"],
                     "source_refs": [real_path, "00_Inbox/Captures/FABRICATED_DOES_NOT_EXIST.md"],
                 }
@@ -347,7 +347,7 @@ def _no_wikilink_response():
                         "## 적용 방법\n"
                         "light면 flash-lite를 기본으로 사용한다."
                     ),
-                    "project": "work-agent",
+                    "project": "devtrail",
                     "tags": ["llm", "architecture"],
                     "source_refs": ["00_Inbox/Captures/test.md"],
                 }
@@ -368,7 +368,7 @@ def test_related_links_injected_when_llm_omits_section(tmp_path):
     now = datetime(2026, 6, 23, 9, 0, 0)
 
     # 기존 지식 노트 (cross-session 연결 대상)
-    knowledge_dir = tmp_path / "20_Knowledge" / "work-agent"
+    knowledge_dir = tmp_path / "20_Knowledge" / "devtrail"
     knowledge_dir.mkdir(parents=True)
     (knowledge_dir / "llm-router-design.md").write_text(
         "---\ntitle: LLM 라우터 설계\ntype: knowledge\ntags:\n- llm\n- architecture\n---\n\n# LLM 라우터 설계\nllm architecture router task_type provider\n",
@@ -376,7 +376,7 @@ def test_related_links_injected_when_llm_omits_section(tmp_path):
     )
 
     CaptureAgent(settings=settings, now=now).capture(
-        text="llm architecture router task_type provider 설계", project="work-agent"
+        text="llm architecture router task_type provider 설계", project="devtrail"
     )
     result = DistillAgent(
         settings=settings, llm=FakeLLM(_no_wikilink_response()), now=now
@@ -397,7 +397,7 @@ def test_related_links_replaces_placeholder(tmp_path):
     settings = _settings(tmp_path)
     now = datetime(2026, 6, 23, 9, 0, 0)
 
-    knowledge_dir = tmp_path / "20_Knowledge" / "work-agent"
+    knowledge_dir = tmp_path / "20_Knowledge" / "devtrail"
     knowledge_dir.mkdir(parents=True)
     (knowledge_dir / "llm-router-design.md").write_text(
         "---\ntitle: LLM 라우터 설계\ntype: knowledge\ntags:\n- llm\n- architecture\n---\n\n# LLM 라우터 설계\nllm architecture router task_type provider\n",
@@ -416,7 +416,7 @@ def test_related_links_replaces_placeholder(tmp_path):
                         "## 적용 방법\nlight면 flash-lite를 기본으로 사용한다.\n\n"
                         "## 관련 노트\n(관련 기존 지식 노트 없음)"
                     ),
-                    "project": "work-agent",
+                    "project": "devtrail",
                     "tags": ["llm", "architecture"],
                     "source_refs": ["00_Inbox/Captures/test.md"],
                 }
@@ -429,7 +429,7 @@ def test_related_links_replaces_placeholder(tmp_path):
     )
 
     CaptureAgent(settings=settings, now=now).capture(
-        text="llm architecture router task_type provider 설계", project="work-agent"
+        text="llm architecture router task_type provider 설계", project="devtrail"
     )
     result = DistillAgent(
         settings=settings, llm=FakeLLM(placeholder_response), now=now

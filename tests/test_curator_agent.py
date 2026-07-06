@@ -127,12 +127,12 @@ def test_promote_candidate_with_project_uses_project_subdir(tmp_path):
 
 
 def test_promote_candidate_decision_goes_to_projects_decisions(tmp_path):
-    rel = _write_candidate(tmp_path, "decision", "아키텍처 결정", project="WorkAgent")
+    rel = _write_candidate(tmp_path, "decision", "아키텍처 결정", project="Devtrail")
 
     agent = CuratorAgent(settings=_settings(tmp_path))
     result = agent.promote_candidate(rel)
 
-    assert result.promoted_path.startswith("30_Projects/WorkAgent/Decisions/")
+    assert result.promoted_path.startswith("30_Projects/Devtrail/Decisions/")
 
 
 def test_promote_candidate_updates_status_in_promoted_file(tmp_path):
@@ -240,7 +240,7 @@ def test_apply_memory_patch_rejects_session_handoff(tmp_path):
 def test_cli_list_candidates_shows_items(monkeypatch, tmp_path):
     items = [
         CandidateItem(kind="knowledge", title="RAG 지식", rel_path="60_Candidates/Knowledge/abc.md",
-                      created_at="2026-06-23", project="WorkAgent"),
+                      created_at="2026-06-23", project="Devtrail"),
     ]
 
     class _FakeCurator:

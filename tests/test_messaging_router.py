@@ -7,9 +7,9 @@ def _router():
 
 def test_help_and_unknown():
     router = _router()
-    assert "Work Agent" in router.handle("/help")
+    assert "Devtrail" in router.handle("/help")
     assert "알 수 없는 명령" in router.handle("/nope")
-    assert "Work Agent" in router.handle("")
+    assert "Devtrail" in router.handle("")
 
 
 def test_draft_requires_topic():

@@ -1,9 +1,9 @@
-# work-agent 코드 자동 업데이트
+# devtrail 코드 자동 업데이트
 # 로컬 변경이 있으면 건너뜀. 새 커밋이 있으면 pull.
 # pyproject.toml 변경 시에만 pip 재설치 (editable install은 소스 변경 자동 반영)
 
 $RepoRoot  = Split-Path $PSScriptRoot -Parent
-$LogFile   = "$RepoRoot\logs\update-work-agent.log"
+$LogFile   = "$RepoRoot\logs\update-devtrail.log"
 $LockFile  = "$RepoRoot\.update.lock"
 
 New-Item -ItemType Directory -Force -Path "$RepoRoot\logs" | Out-Null
@@ -15,7 +15,7 @@ function Log($msg) {
     Add-Content -Path $LogFile -Value $line -Encoding UTF8
 }
 
-Log "=== update-work-agent start ==="
+Log "=== update-devtrail start ==="
 
 Set-Location $RepoRoot
 
@@ -61,9 +61,9 @@ Set-Content $LockFile "" -Encoding UTF8
 Log "Update lock created."
 
 try {
-    # work-agent.exe 프로세스 트리 강제 종료
-    Log "Stopping work-agent process tree..."
-    taskkill /F /IM work-agent.exe /T 2>&1 | ForEach-Object { Log "taskkill: $_" }
+    # devtrail.exe 프로세스 트리 강제 종료
+    Log "Stopping devtrail process tree..."
+    taskkill /F /IM devtrail.exe /T 2>&1 | ForEach-Object { Log "taskkill: $_" }
     Start-Sleep -Seconds 3
 
     # 이전 실패로 남은 pip 임시 디렉터리 정리 (.venv가 있을 때만)
@@ -84,7 +84,7 @@ try {
         exit 1
     }
 
-    Log "update-work-agent done"
+    Log "update-devtrail done"
 } finally {
     Remove-Item $LockFile -Force -ErrorAction SilentlyContinue
     Log "Update lock released."

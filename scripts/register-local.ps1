@@ -42,8 +42,8 @@ function Register($name, $intervalMinutes, $script) {
 Write-Host "`nRegistering local Task Scheduler tasks...`n" -ForegroundColor White
 
 # Every 10 min: vault git sync (local variant - tracks all files)
-Register "work-agent-vault-sync" 10 "$RepoRoot\scripts\sync-vault-local.ps1"
+Register "devtrail-vault-sync" 10 "$RepoRoot\scripts\sync-vault-local.ps1"
 
 Write-Host ""
 Write-Host "To remove:" -ForegroundColor DarkGray
-Write-Host "  Unregister-ScheduledTask -TaskName work-agent-vault-sync -Confirm:`$false" -ForegroundColor DarkGray
+Write-Host "  Unregister-ScheduledTask -TaskName devtrail-vault-sync -Confirm:`$false" -ForegroundColor DarkGray

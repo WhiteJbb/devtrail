@@ -1,4 +1,4 @@
-"""work-agent Textual 대시보드.
+"""devtrail Textual 대시보드.
 
 실행:
     python dashboard.py
@@ -312,7 +312,7 @@ class ArgModal(ModalScreen):
 
 # ── 메인 앱 ───────────────────────────────────────────────────────────────────
 
-class WorkAgentApp(App):
+class DevtrailApp(App):
 
     CSS = """
     Screen {
@@ -464,7 +464,7 @@ class WorkAgentApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.title = "WORK AGENT"
+        self.title = "DEVTRAIL"
         self.sub_title = "Personal AI Dashboard"
         self.action_refresh()
         self.set_interval(30, self.action_refresh)
@@ -533,7 +533,7 @@ class WorkAgentApp(App):
         log = self.query_one("#output", RichLog)
         ts = time.strftime("%H:%M:%S")
         log.write(
-            f"\n[bold #58a6ff]▶ [{ts}] work-agent {cmd}[/bold #58a6ff]"
+            f"\n[bold #58a6ff]▶ [{ts}] devtrail {cmd}[/bold #58a6ff]"
             + (f" [dim]{' '.join(args)}[/dim]" if args else "")
         )
         log.write("[dim]" + "─" * 56 + "[/dim]")
@@ -575,7 +575,7 @@ class WorkAgentApp(App):
 # ── 진입점 ───────────────────────────────────────────────────────────────────
 
 def run(vault: Path) -> None:
-    WorkAgentApp(vault).run()
+    DevtrailApp(vault).run()
 
 
 if __name__ == "__main__":
