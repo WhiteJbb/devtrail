@@ -1,7 +1,7 @@
 ﻿# Telegram 봇 상시 실행 wrapper
 # 봇이 종료되면 10초 후 자동 재시작
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $LogFile  = "$RepoRoot\logs\bot.log"
 
 New-Item -ItemType Directory -Force -Path "$RepoRoot\logs" | Out-Null

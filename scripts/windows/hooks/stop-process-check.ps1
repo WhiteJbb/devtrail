@@ -13,8 +13,8 @@
 #
 # .claude/settings.json 등록 예:
 #   "hooks": {
-#     "Stop": [ { "hooks": [ { "type": "command", "command": "pwsh -File scripts/hooks/stop-process-check.ps1" } ] } ],
-#     "PreCompact": [ { "hooks": [ { "type": "command", "command": "pwsh -File scripts/hooks/stop-process-check.ps1" } ] } ]
+#     "Stop": [ { "hooks": [ { "type": "command", "command": "pwsh -File scripts/windows/hooks/stop-process-check.ps1" } ] } ],
+#     "PreCompact": [ { "hooks": [ { "type": "command", "command": "pwsh -File scripts/windows/hooks/stop-process-check.ps1" } ] } ]
 #   }
 
 $ErrorActionPreference = "Stop"

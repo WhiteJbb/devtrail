@@ -2,7 +2,7 @@
 # update-devtrail → sync-vault(pull) → nightly-distill → push-digest → sync-vault(push)
 # 충돌/오류 발생 시 중단 + Telegram 알림
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $LogFile  = "$RepoRoot\logs\nightly.log"
 $LockFile = "$RepoRoot\.nightly.lock"
 
@@ -105,12 +105,12 @@ try {
 
     # 1. devtrail 코드 업데이트
     Invoke-Step "update-devtrail" {
-        & "$RepoRoot\scripts\update-devtrail.ps1"
+        & "$RepoRoot\scripts\windows\update-devtrail.ps1"
     }
 
     # 2. Vault 최신화 (pull)
     Invoke-Step "sync-vault (pull)" {
-        & "$RepoRoot\scripts\sync-vault.ps1" -Internal
+        & "$RepoRoot\scripts\windows\sync-vault.ps1" -Internal
     }
 
     # 3. nightly-distill
@@ -126,7 +126,7 @@ try {
 
     # 5. 결과 vault에 push
     Invoke-Step "sync-vault (push)" {
-        & "$RepoRoot\scripts\sync-vault.ps1" -Internal -CommitMsg "auto: nightly distill $(Get-Date -Format 'yyyy-MM-dd')"
+        & "$RepoRoot\scripts\windows\sync-vault.ps1" -Internal -CommitMsg "auto: nightly distill $(Get-Date -Format 'yyyy-MM-dd')"
     }
 
     Log "=== run-nightly-safe done ==="

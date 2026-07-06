@@ -2,7 +2,7 @@
 # 로컬 변경이 있으면 건너뜀. 새 커밋이 있으면 pull.
 # pyproject.toml 변경 시에만 pip 재설치 (editable install은 소스 변경 자동 반영)
 
-$RepoRoot  = Split-Path $PSScriptRoot -Parent
+$RepoRoot  = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $LogFile   = "$RepoRoot\logs\update-devtrail.log"
 $LockFile  = "$RepoRoot\.update.lock"
 

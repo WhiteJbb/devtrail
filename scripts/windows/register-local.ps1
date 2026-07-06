@@ -1,7 +1,7 @@
 # Local machine Task Scheduler registration (vault sync only)
 # Run as Administrator
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 
 function Register($name, $intervalMinutes, $script) {
     try {
@@ -42,7 +42,7 @@ function Register($name, $intervalMinutes, $script) {
 Write-Host "`nRegistering local Task Scheduler tasks...`n" -ForegroundColor White
 
 # Every 10 min: vault git sync (local variant - tracks all files)
-Register "devtrail-vault-sync" 10 "$RepoRoot\scripts\sync-vault-local.ps1"
+Register "devtrail-vault-sync" 10 "$RepoRoot\scripts\windows\sync-vault-local.ps1"
 
 Write-Host ""
 Write-Host "To remove:" -ForegroundColor DarkGray

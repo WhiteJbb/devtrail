@@ -1,6 +1,6 @@
 ﻿# weekly-distill 안전 실행 wrapper
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $LogFile  = "$RepoRoot\logs\weekly.log"
 
 New-Item -ItemType Directory -Force -Path "$RepoRoot\logs" | Out-Null

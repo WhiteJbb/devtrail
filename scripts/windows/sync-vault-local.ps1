@@ -2,7 +2,7 @@
 # Tracks ALL changes (git add -A) instead of AI folders only
 # Use sync-vault.ps1 on the server (AI folders only)
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $LogFile  = "$RepoRoot\logs\sync-vault-local.log"
 
 New-Item -ItemType Directory -Force -Path "$RepoRoot\logs" | Out-Null

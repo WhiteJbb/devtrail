@@ -1,7 +1,7 @@
 ﻿# Windows Task Scheduler 등록
 # 관리자 권한으로 실행 필요
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $PS    = "powershell.exe"
 $Flags = "-NonInteractive -ExecutionPolicy Bypass -File"
 
@@ -33,22 +33,22 @@ function Set-PowerPolicy($name) {
 Write-Host "`nTask Scheduler 등록 중...`n" -ForegroundColor White
 
 # 시작 시: Telegram 봇 (SYSTEM으로 실행 — 로그인 없이도 동작)
-Register "devtrail-bot" "/SC ONSTART" "$RepoRoot\scripts\run-bot-service.ps1" @("/RU", "SYSTEM")
+Register "devtrail-bot" "/SC ONSTART" "$RepoRoot\scripts\windows\run-bot-service.ps1" @("/RU", "SYSTEM")
 
 # 10분마다: devtrail 코드 업데이트
-Register "devtrail-update" "/SC MINUTE /MO 10" "$RepoRoot\scripts\update-devtrail.ps1"
+Register "devtrail-update" "/SC MINUTE /MO 10" "$RepoRoot\scripts\windows\update-devtrail.ps1"
 
 # 10분마다: vault git 동기화
-Register "devtrail-vault-sync" "/SC MINUTE /MO 10" "$RepoRoot\scripts\sync-vault.ps1"
+Register "devtrail-vault-sync" "/SC MINUTE /MO 10" "$RepoRoot\scripts\windows\sync-vault.ps1"
 
 # 매일 23:30: nightly 전체 파이프라인
-Register "devtrail-nightly" "/SC DAILY /ST 23:30" "$RepoRoot\scripts\run-nightly-safe.ps1"
+Register "devtrail-nightly" "/SC DAILY /ST 23:30" "$RepoRoot\scripts\windows\run-nightly-safe.ps1"
 
 # 매주 일요일 18:00: weekly 회고 (한 주 daily digest 7개 종합)
-Register "devtrail-weekly" "/SC WEEKLY /D SUN /ST 18:00" "$RepoRoot\scripts\run-weekly-safe.ps1"
+Register "devtrail-weekly" "/SC WEEKLY /D SUN /ST 18:00" "$RepoRoot\scripts\windows\run-weekly-safe.ps1"
 
 # 매일 08:00: 아침 할 일 알림
-$notifyScript = "$RepoRoot\scripts\run-notify.ps1"
+$notifyScript = "$RepoRoot\scripts\windows\run-notify.ps1"
 $result = & schtasks /Create /TN "devtrail-notify-morning" /TR "$PS $Flags `"$notifyScript`" -Kind morning" /SC DAILY /ST 08:00 /RL HIGHEST /F 2>&1
 if ($LASTEXITCODE -eq 0) { Write-Host "  [OK] devtrail-notify-morning" -ForegroundColor Green }
 else { Write-Host "  [!!] devtrail-notify-morning - $($result -join ' ')" -ForegroundColor Red }

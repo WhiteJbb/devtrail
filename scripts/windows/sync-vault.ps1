@@ -7,7 +7,7 @@ param(
     [switch]$Internal         # nightly에서 호출 시 lock 체크 건너뜀
 )
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $LogFile  = "$RepoRoot\logs\sync-vault.log"
 $LockFile = "$RepoRoot\.nightly.lock"
 

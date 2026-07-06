@@ -1259,7 +1259,7 @@ def project_briefing(
 ) -> None:
     """get_project_briefing() 결과를 stdout에 출력한다.
 
-    Tier 1 SessionStart 훅(scripts/hooks/session-start-briefing.ps1)이 호출하는
+    Tier 1 SessionStart 훅(scripts/windows/hooks/session-start-briefing.ps1)이 호출하는
     용도다. Vault 미설정, 매칭 실패 등 어떤 예외 상황에서도 훅 전체를 실패시키지
     않도록 항상 exit code 0으로 종료하고, 문제가 있으면 안내 문구만 출력한다.
     """
