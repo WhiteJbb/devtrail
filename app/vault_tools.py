@@ -27,7 +27,13 @@ from app.memory.agent_memory_loader import AgentMemoryLoader
 from app.memory.context_pack_builder import ContextPackBuilder
 from app.memory.project_memory_loader import ProjectMemoryLoader
 from app.models.context_pack import ContextPack
-from app.services.candidate_writer import CandidateSpec, CandidateWriter, CandidateWriteResult, slug_component
+from app.services.candidate_writer import (
+    SESSION_HANDOFF_DIR,
+    CandidateSpec,
+    CandidateWriter,
+    CandidateWriteResult,
+    handoff_project_dir,
+)
 from app.services.wiki_service import WikiService
 
 _STABLE_PREFIXES = ("20_Knowledge/", "30_Projects/", "40_AgentMemory/")
@@ -113,10 +119,6 @@ def _truncate(text: str, limit: int = _SECTION_MAX_CHARS) -> str:
     return text[:limit].rstrip() + "\n...(생략)"
 
 
-def _project_dir_slug(project: str) -> str:
-    return slug_component(project) if project.strip() else "_Unassigned"
-
-
 def _canonicalize_project(vault_dir: Path, project: str) -> str:
     """등록된 ProjectMemory와 대소문자 무시로 일치하면 레지스트리 표기로 치환한다.
 
@@ -132,7 +134,7 @@ def _canonicalize_project(vault_dir: Path, project: str) -> str:
 
 def _list_session_handoffs(vault_dir: Path, project: str) -> list[dict]:
     """60_Candidates/SessionHandoffs/<project>/의 candidate를 frontmatter와 함께 반환한다."""
-    handoff_dir = vault_dir / "60_Candidates" / "SessionHandoffs" / _project_dir_slug(project)
+    handoff_dir = vault_dir / handoff_project_dir(project)
     if not handoff_dir.exists():
         return []
     items: list[dict] = []
@@ -300,7 +302,7 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
         # ProjectMemory 등록이 없어도 write_work_plan이 이미 SessionHandoffs 폴더를
         # 만들어둔 프로젝트라면 그 폴더명으로 매칭한다 — 그렇지 않으면 등록 없이
         # write_work_plan만 호출된 프로젝트의 handoff가 briefing에 영원히 안 보인다.
-        handoffs_root = vault_dir / "60_Candidates" / "SessionHandoffs"
+        handoffs_root = vault_dir / SESSION_HANDOFF_DIR
         handoff_project_dirs = (
             [d.name for d in handoffs_root.iterdir() if d.is_dir() and d.name != "_Unassigned"]
             if handoffs_root.exists()

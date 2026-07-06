@@ -28,6 +28,8 @@ _CANDIDATE_DIRS = {
 
 _NO_DEDUP_KINDS = {"session_handoff"}
 
+SESSION_HANDOFF_DIR = _CANDIDATE_DIRS["session_handoff"]
+
 
 @dataclass(frozen=True)
 class CandidateSpec:
@@ -160,8 +162,7 @@ class CandidateWriter:
     def _unique_rel_path(self, kind: str, title: str, project: str = "") -> str:
         base_dir = _CANDIDATE_DIRS[kind]
         if kind == "session_handoff":
-            sub = self._slug(project) if project.strip() else "_Unassigned"
-            base_dir = f"{base_dir}/{sub}"
+            base_dir = handoff_project_dir(project)
         name = self._slug(title)
         rel = f"{base_dir}/{name}.md"
         if not (self.vault_dir / rel).exists():
@@ -206,10 +207,17 @@ class CandidateWriter:
 
 
 def slug_component(value: str) -> str:
-    """경로 한 조각(파일명/폴더명)에 쓸 수 있게 파일시스템 금지 문자만 제거한다.
-
-    session_handoff의 <Project> 하위 폴더명도 이 함수로 만들어야 CandidateWriter가
-    쓰는 실제 경로와 vault_tools의 조회 경로가 어긋나지 않는다.
-    """
+    """경로 한 조각(파일명/폴더명)에 쓸 수 있게 파일시스템 금지 문자만 제거한다."""
     text = re.sub(r'[\\/:*?"<>|]', "", value.strip())
     return re.sub(r"\s+", " ", text).strip() or "candidate"
+
+
+def handoff_project_dir(project: str) -> str:
+    """session_handoff의 <Project> 하위 폴더 상대경로를 계산한다.
+
+    CandidateWriter(쓰기), vault_tools(조회), retention(정리) 세 곳이 각자
+    비슷한 계산을 하면 한 곳만 바뀌어도 briefing/cleanup이 조용히 빈 결과를
+    내므로, 이 함수 하나로 통일한다.
+    """
+    sub = slug_component(project) if project.strip() else "_Unassigned"
+    return f"{SESSION_HANDOFF_DIR}/{sub}"

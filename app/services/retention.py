@@ -12,6 +12,8 @@ from pathlib import Path
 
 import frontmatter
 
+from app.services.candidate_writer import SESSION_HANDOFF_DIR
+
 DEFAULT_KEEP_PER_PROJECT = 3
 DEFAULT_WORKLOG_RETENTION_DAYS = 30
 DEFAULT_HANDOFF_RETENTION_DAYS = 30
@@ -95,7 +97,7 @@ def _cleanup_session_handoffs(
     Process가 그 stale session_id로 잘못 재귀속되는 문제로 이어진다. session_id가
     없는 파일은 파일 단독을 그룹으로 취급한다.
     """
-    handoffs_root = vault_dir / "60_Candidates" / "SessionHandoffs"
+    handoffs_root = vault_dir / SESSION_HANDOFF_DIR
     if not handoffs_root.exists():
         return []
 
