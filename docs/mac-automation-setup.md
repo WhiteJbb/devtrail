@@ -76,7 +76,7 @@ python3.11 --version
 ### 1-4. 레포 클론
 
 ```bash
-git clone https://github.com/WhiteJbb/work-agent ~/devtrail
+git clone https://github.com/WhiteJbb/devtrail.git ~/devtrail
 cd ~/devtrail
 ```
 
@@ -85,8 +85,12 @@ cd ~/devtrail
 Vault가 git으로 관리되고 있다면:
 
 ```bash
-git clone <vault 저장소 주소> ~/devtrail-vault
+git clone https://github.com/WhiteJbb/personal-vault.git ~/devtrail-vault
 ```
+
+위처럼 홈 바로 아래(`~/devtrail-vault`)에 두는 것을 권장한다. 데스크톱·문서·
+iCloud Drive 등 macOS 보호 폴더에 두면 launchd 자동 실행 시 권한 오류가 난다
+(8번 트러블슈팅의 "Operation not permitted" 항목 참고).
 
 ---
 
@@ -280,12 +284,38 @@ cat ~/devtrail/logs/launchd-*.err.log
 `launchd-*.err.log`/`launchd-*.out.log`는 launchd가 스크립트를 실행한 시스템
 레벨 출력이고, `logs/nightly.log` 등은 스크립트 자체가 남긴 로그다. 둘 다 확인.
 
-### "Operation not permitted" 같은 권한 오류
+### "Operation not permitted" 같은 권한 오류 (TCC)
 
-Vault가 iCloud Drive, 데스크톱, 문서 폴더 등 macOS가 보호하는 위치에 있으면
-터미널(또는 launchd가 대신 실행하는 `/bin/bash`)에 접근 권한이 없어서 날 수 있다.
-설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 "터미널"을 추가하고
-터미널을 재시작한다.
+Vault가 iCloud Drive, 데스크톱, 문서, 다운로드 등 macOS가 보호하는 위치에 있으면
+git 명령이 `Operation not permitted`로 실패한다. 자동화에서 특히 헷갈리는 이유:
+
+- macOS 권한(TCC)은 **접근을 시도한 프로세스별로** 부여된다.
+- 터미널에서 수동 실행 → Terminal.app의 권한을 따른다.
+- launchd가 실행 → Terminal.app과 무관하게 `/bin/bash` 자체의 권한을 따른다.
+
+그래서 **"수동으로 돌리면 되는데 launchd로만 돌리면 실패"** 하는 증상이 나온다.
+터미널에 전체 디스크 접근 권한을 줘도 launchd 실행에는 효과가 없다. 실패 여부는
+`~/devtrail/logs/launchd-*.err.log`에 `Operation not permitted`가 찍히는지로 확인한다.
+
+**해결 방법 1 — Vault를 보호 폴더 밖에 두기 (권장)**
+
+이 가이드의 기본 경로(`~/devtrail-vault`, 홈 바로 아래)는 보호 대상이 아니라서
+문제 자체가 생기지 않는다. Vault가 데스크톱/문서/iCloud에 있다면 홈 아래로 옮기고
+`.env`의 `OBSIDIAN_VAULT_PATH`만 고치는 것이 가장 깔끔하다. 권한 설정 관리가
+필요 없고, macOS 업데이트로 TCC 동작이 바뀌어도 영향이 없다.
+
+**해결 방법 2 — 프로세스에 전체 디스크 접근 권한 부여**
+
+Vault 위치를 옮길 수 없을 때만 사용한다. 설정 → 개인정보 보호 및 보안 →
+전체 디스크 접근 권한에서 `+`를 누르고:
+
+- 터미널 수동 실행용: 응용 프로그램 → 유틸리티 → "터미널" 추가 후 터미널 재시작.
+- launchd 자동 실행용: 파일 선택 창에서 `Cmd + Shift + G` → `/bin` 입력 →
+  `bash` 선택. (launchd 작업은 재시작할 필요 없이 다음 주기 실행부터 적용된다.)
+
+단, `/bin/bash`에 전체 디스크 접근을 주면 이 Mac에서 bash로 실행되는 **모든**
+스크립트가 그 권한을 갖게 되므로 보안상 부여 범위가 넓다. 가능하면 해결 방법 1을
+먼저 검토할 것.
 
 ### plist 문법을 직접 고쳤는데 로드가 안 됨
 
