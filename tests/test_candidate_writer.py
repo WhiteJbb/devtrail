@@ -79,12 +79,14 @@ def test_memory_patch_includes_evidence_confidence_review_fields(tmp_path):
         title="반복 실수 — 경로 확인 누락",
         body="다음부터 경로를 먼저 확인한다",
         evidence="세션 중 3회 발생",
+        scope="project",
         confidence="medium",
         requires_user_review=True,
     )
     result = writer.write(spec)
     post = frontmatter.loads((tmp_path / result.rel_path).read_text(encoding="utf-8"))
     assert post.metadata["evidence"] == "세션 중 3회 발생"
+    assert post.metadata["scope"] == "project"
     assert post.metadata["confidence"] == "medium"
     assert post.metadata["requires_user_review"] is True
 

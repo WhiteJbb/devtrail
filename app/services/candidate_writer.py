@@ -41,6 +41,7 @@ class CandidateSpec:
     handoff_type: str = ""
     session_id: str = ""
     evidence: str = ""
+    scope: str = ""
     confidence: str = ""
     requires_user_review: bool = False
 
@@ -128,6 +129,7 @@ class CandidateWriter:
             metadata["session_id"] = spec.session_id
         if kind == "memory_patch":
             metadata["evidence"] = spec.evidence
+            metadata["scope"] = spec.scope
             metadata["confidence"] = spec.confidence
             metadata["requires_user_review"] = spec.requires_user_review
 
