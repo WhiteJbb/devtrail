@@ -34,6 +34,7 @@ from app.services.candidate_writer import (
     CandidateWriteResult,
     handoff_project_dir,
 )
+from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
 from app.services.wiki_service import WikiService
 
 _STABLE_PREFIXES = ("20_Knowledge/", "30_Projects/", "40_AgentMemory/")
@@ -541,16 +542,16 @@ def _render_process_body(
         next_session.strip() or "- ",
         "",
         "## Learning Recovery",
-        "### AI가 주도적으로 처리한 부분",
+        f"### {HEADING_AI_LED}",
         f"- {recovery.get('ai_led', '')}",
         "",
-        "### 내가 아직 완전히 이해하지 못한 개념",
+        f"### {HEADING_UNCLEAR}",
         f"- {recovery.get('unclear_concepts', '')}",
         "",
-        "### 다음에 직접 설명해봐야 할 질문",
+        f"### {HEADING_QUESTIONS}",
     ]
     lines += [f"{i + 1}. {q}" for i, q in enumerate(questions)] if questions else ["1. "]
-    lines += ["", "### 관련 Vault 후보"]
+    lines += ["", f"### {HEADING_RELATED}"]
     lines += [f"- {r}" for r in related] if related else ["- "]
     lines.append("")
     return "\n".join(lines).strip() + "\n"

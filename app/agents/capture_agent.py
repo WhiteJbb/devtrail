@@ -15,6 +15,7 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.prompts import render_prompt
 from app.services.repo_snapshot import RepoSnapshot, capture_repo_snapshot
+from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
 from app.services.wiki_service import WikiService
 
 
@@ -269,10 +270,10 @@ class CaptureAgent:
                 "## 7. 블로그 / 포트폴리오 소재", "- ", "",
                 "## 8. Git / Source Refs", "- ", "",
                 "## 9. Learning Recovery", "",
-                "### AI가 주도적으로 처리한 부분", "- ", "",
-                "### 내가 아직 완전히 이해하지 못한 개념", "- ", "",
-                "### 다음에 직접 설명해봐야 할 질문", "1. ", "",
-                "### 관련 Vault 후보", "- ", "",
+                f"### {HEADING_AI_LED}", "- ", "",
+                f"### {HEADING_UNCLEAR}", "- ", "",
+                f"### {HEADING_QUESTIONS}", "1. ", "",
+                f"### {HEADING_RELATED}", "- ", "",
             ]
 
         # Repo Snapshot 섹션

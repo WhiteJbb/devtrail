@@ -12,6 +12,12 @@ from pathlib import Path
 import frontmatter
 
 
+HEADING_AI_LED = "AI가 주도적으로 처리한 부분"
+HEADING_UNCLEAR = "내가 아직 완전히 이해하지 못한 개념"
+HEADING_QUESTIONS = "다음에 직접 설명해봐야 할 질문"
+HEADING_RELATED = "관련 Vault 후보"
+
+
 @dataclass(frozen=True)
 class ReviewQuestion:
     project: str
@@ -43,11 +49,11 @@ def pick_review_question(vault_dir: Path) -> ReviewQuestion | None:
     entries.sort(key=lambda e: e[0], reverse=True)
 
     for _created, md_path, post in entries[:_MAX_SESSIONS_TO_SCAN]:
-        question = _extract_section_first_line(post.content, "다음에 직접 설명해봐야 할 질문", numbered=True)
+        question = _extract_section_first_line(post.content, HEADING_QUESTIONS, numbered=True)
         if not question:
             continue
 
-        unclear = _extract_section_first_line(post.content, "내가 아직 완전히 이해하지 못한 개념", numbered=False)
+        unclear = _extract_section_first_line(post.content, HEADING_UNCLEAR, numbered=False)
         rel = str(md_path.relative_to(vault_dir)).replace("\\", "/")
         return ReviewQuestion(
             project=str(post.metadata.get("project", "") or ""),
