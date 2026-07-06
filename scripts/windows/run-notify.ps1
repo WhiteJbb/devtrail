@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory)][ValidateSet("morning","evening")][string]$Kind
 )
 
-$RepoRoot = Split-Path $PSScriptRoot -Parent
+$RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $LogFile  = "$RepoRoot\logs\notify.log"
 
 New-Item -ItemType Directory -Force -Path "$RepoRoot\logs" | Out-Null

@@ -12,7 +12,7 @@
 # .claude/settings.json 등록 예:
 #   "hooks": {
 #     "SessionStart": [
-#       { "hooks": [ { "type": "command", "command": "pwsh -File scripts/hooks/session-start-briefing.ps1" } ] }
+#       { "hooks": [ { "type": "command", "command": "pwsh -File scripts/windows/hooks/session-start-briefing.ps1" } ] }
 #     ]
 #   }
 
