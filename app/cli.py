@@ -1262,5 +1262,29 @@ def mcp_serve() -> None:
     run_mcp_server()
 
 
+@app.command("project-briefing")
+def project_briefing(
+    repo: str = typer.Argument(".", help="프로젝트 판별에 쓸 repo 경로 (기본: 현재 디렉터리)"),
+) -> None:
+    """get_project_briefing() 결과를 stdout에 출력한다.
+
+    Tier 1 SessionStart 훅(scripts/hooks/session-start-briefing.ps1)이 호출하는
+    용도다. Vault 미설정, 매칭 실패 등 어떤 예외 상황에서도 훅 전체를 실패시키지
+    않도록 항상 exit code 0으로 종료하고, 문제가 있으면 안내 문구만 출력한다.
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        typer.echo("(work-agent Vault가 설정되지 않아 briefing을 건너뜁니다. .env의 OBSIDIAN_VAULT_PATH를 확인하세요.)")
+        return
+    try:
+        from app import vault_tools
+
+        briefing = vault_tools.get_project_briefing(repo, settings=settings)
+    except Exception as e:
+        typer.echo(f"(briefing 조회 실패: {e})")
+        return
+    typer.echo(briefing.text)
+
+
 if __name__ == "__main__":
     app()
