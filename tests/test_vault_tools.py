@@ -365,6 +365,27 @@ def test_curator_list_candidates_excludes_session_handoffs_by_default(tmp_path):
 # ── get_project_briefing ─────────────────────────────────────────────────────
 
 
+def test_get_project_briefing_tolerates_non_dict_vault_json(tmp_path):
+    """.claude/vault.json이 스칼라/배열이어도 AttributeError 없이 폴백해야 한다(P3.1)."""
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".claude").mkdir(parents=True)
+    (repo_dir / ".claude" / "vault.json").write_text('"devtrail"', encoding="utf-8")
+
+    settings = _settings(tmp_path)
+    briefing = vault_tools.get_project_briefing(str(repo_dir), settings=settings)
+    assert briefing.matched is False
+
+
+def test_get_project_briefing_tolerates_array_vault_json(tmp_path):
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".claude").mkdir(parents=True)
+    (repo_dir / ".claude" / "vault.json").write_text('["devtrail"]', encoding="utf-8")
+
+    settings = _settings(tmp_path)
+    briefing = vault_tools.get_project_briefing(str(repo_dir), settings=settings)
+    assert briefing.matched is False
+
+
 def test_get_project_briefing_no_match_returns_candidates_without_context(tmp_path):
     _write(tmp_path, "30_Projects/Devtrail/Context.md", body="Devtrail 컨텍스트")
     settings = _settings(tmp_path)

@@ -240,6 +240,8 @@ def _load_project_config(repo_dir: Path) -> str:
         data = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
+    if not isinstance(data, dict):
+        return ""
     return str(data.get("project", "")).strip()
 
 
