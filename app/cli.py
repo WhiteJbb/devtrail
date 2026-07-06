@@ -1188,5 +1188,20 @@ def serve_bot() -> None:
         typer.echo("\n봇을 종료합니다.")
 
 
+@app.command("mcp-serve")
+def mcp_serve() -> None:
+    """Vault tool 레이어를 MCP(stdio)로 노출한다 — Claude Code/Desktop에서 등록해 사용.
+
+    등록 예:
+      claude mcp add work-agent-vault -- work-agent mcp-serve
+    """
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
+    from app.mcp_server import main as run_mcp_server
+
+    run_mcp_server()
+
+
 if __name__ == "__main__":
     app()
