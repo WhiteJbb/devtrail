@@ -77,6 +77,9 @@ def _extract_section_first_line(body: str, heading_contains: str, numbered: bool
             text = text.split(".", 1)[-1].strip()
         elif text.startswith("- "):
             text = text[2:].strip()
-        if text:
-            return text
+        # "- " placeholder만 있는 줄은 strip 후 "-"만 남아 startswith("- ") 검사를
+        # 통과하지 못하고 그대로 반환되던 문제 — 빈 값으로 취급해 다음 줄을 본다.
+        if text in ("", "-"):
+            continue
+        return text
     return ""

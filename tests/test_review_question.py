@@ -64,6 +64,21 @@ def test_pick_review_question_skips_sessions_without_question_to_find_older_one(
     assert rq.source_rel_path == "10_Worklog/Sessions/2026-07-01-with-question.md"
 
 
+def test_pick_review_question_blank_unclear_concept_placeholder_becomes_empty(tmp_path):
+    """"- " placeholder만 있는 미해결 개념 줄은 "-"가 아니라 빈 문자열이어야 한다(P3.6)."""
+    body = (
+        "## Learning Recovery\n\n"
+        "### AI가 주도적으로 처리한 부분\n- \n\n"
+        "### 내가 아직 완전히 이해하지 못한 개념\n- \n\n"
+        "### 다음에 직접 설명해봐야 할 질문\n"
+        "1. 진짜 질문 내용\n"
+    )
+    _write_session(tmp_path, "2026-07-05-devtrail-session.md", "Devtrail", body, created_at="2026-07-05T09:00:00")
+    rq = pick_review_question(tmp_path)
+    assert rq is not None
+    assert rq.unclear_concept == ""
+
+
 def test_pick_review_question_uses_created_at_not_filename_suffix_order(tmp_path):
     """같은 날 두 번째 세션(파일명 충돌로 '-2' 접미사가 붙음)이 영원히 무시되면 안 된다(P2.2).
 
