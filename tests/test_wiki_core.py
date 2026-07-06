@@ -64,6 +64,21 @@ def test_search_returns_relevant_notes(tmp_path):
     assert results[0].note.path == "20_Knowledge/RAG/rag.md"
 
 
+def test_search_prefixes_filters_before_limit(tmp_path):
+    """prefixes는 점수화·절단 전에 적용돼야 스코프 밖 노트가 top-N을 채우지 못한다."""
+    for i in range(15):
+        note = tmp_path / "00_Inbox" / "Memos" / f"memo-{i:02d}.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("고유검색어777 반복", encoding="utf-8")
+    knowledge = tmp_path / "20_Knowledge" / "rag.md"
+    knowledge.parent.mkdir(parents=True, exist_ok=True)
+    knowledge.write_text("고유검색어777 관련 지식", encoding="utf-8")
+
+    results = WikiService(tmp_path).search("고유검색어777", limit=10, prefixes=("20_Knowledge/",))
+    assert len(results) == 1
+    assert results[0].note.path == "20_Knowledge/rag.md"
+
+
 def test_cli_init_index_search(monkeypatch, tmp_path):
     monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
     get_settings.cache_clear()

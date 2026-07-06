@@ -91,6 +91,22 @@ def test_search_vault_stable_sorted_before_candidate(tmp_path):
     assert statuses.index("stable") < statuses.index("candidate")
 
 
+def test_search_vault_scope_note_not_crowded_out_by_out_of_scope_notes(tmp_path):
+    """스코프 밖 노트가 많아도 스코프 안 결과가 top-N에서 밀려나면 안 된다(P3.3).
+
+    사후 필터링(전역 top-N을 먼저 뽑고 걸러내기)이면 00_Inbox/10_Worklog처럼
+    노트가 많은 폴더가 default limit(10)을 다 채워, 실제로 스코프 안에 있는
+    유일한 결과가 아예 반환되지 않을 수 있다.
+    """
+    for i in range(45):
+        _write(tmp_path, f"10_Worklog/Sessions/session-{i:02d}.md", body="프로젝트희귀검색어 반복 등장")
+    _write(tmp_path, "20_Knowledge/rag.md", body="프로젝트희귀검색어 관련 지식")
+
+    settings = _settings(tmp_path)
+    hits = vault_tools.search_vault("프로젝트희귀검색어", settings=settings)  # 기본 limit=10
+    assert any(h.path == "20_Knowledge/rag.md" for h in hits)
+
+
 # ── record_note ──────────────────────────────────────────────────────────────
 
 

@@ -181,9 +181,17 @@ class WikiService:
         results = [r for r in self._search_notes(notes, query, limit=limit + 1) if r.note.path != rel_path]
         return results[:limit]
 
-    def search(self, query: str, limit: int = 10) -> list[WikiSearchResult]:
-        """Simple keyword search over parsed vault notes."""
-        return self._search_notes(self.scan_notes(), query, limit=limit)
+    def search(self, query: str, limit: int = 10, prefixes: tuple[str, ...] | None = None) -> list[WikiSearchResult]:
+        """Simple keyword search over parsed vault notes.
+
+        prefixes가 주어지면 점수화·절단 전에 해당 경로 접두사로만 필터링한다 —
+        전역 top-N을 먼저 뽑은 뒤 걸러내면, 노트가 많은 폴더(예: 세션 로그)가
+        허용된 스코프 밖 결과로 top-N을 채워 스코프 안 결과가 잘려나갈 수 있다.
+        """
+        notes = self.scan_notes()
+        if prefixes:
+            notes = [n for n in notes if n.path.startswith(prefixes)]
+        return self._search_notes(notes, query, limit=limit)
 
     def _search_notes(self, notes: list[WikiNote], query: str, limit: int = 10) -> list[WikiSearchResult]:
         terms = self._tokenize(query)

@@ -201,16 +201,14 @@ def search_vault(query: str, limit: int = 10, settings: Settings | None = None) 
     """
     vault_dir = _vault_dir(settings)
     wiki = WikiService(vault_dir)
-    raw = wiki.search(query, limit=max(limit * 4, 20))
+    # 점수화·절단 전에 read_scope로 필터링한다 — 사후 필터링하면 00_Inbox/10_Worklog처럼
+    # 노트가 많은 폴더가 전역 top-N을 채워 스코프 안 결과가 아예 안 보일 수 있다.
+    raw = wiki.search(query, limit=limit, prefixes=_ALLOWED_READ_PREFIXES)
 
-    hits: list[SearchHit] = []
-    for r in raw:
-        path = r.note.path
-        if not any(path.startswith(prefix) for prefix in _ALLOWED_READ_PREFIXES):
-            continue
-        hits.append(
-            SearchHit(path=path, title=r.note.title, status=_status_of(path), score=r.score, summary=r.note.summary)
-        )
+    hits = [
+        SearchHit(path=r.note.path, title=r.note.title, status=_status_of(r.note.path), score=r.score, summary=r.note.summary)
+        for r in raw
+    ]
 
     hits.sort(key=lambda h: (0 if h.status == "stable" else 1, -h.score, h.path))
     return hits[:limit]
