@@ -25,7 +25,7 @@ from app.services.wiki_service import WikiService
 
 app = typer.Typer(
     add_completion=False,
-    help="Devtrail — 작업 기록 기반 기술 블로그 초안 생성기",
+    help="Devtrail — 개인 지식 관리 · 자동 정리 · 콘텐츠 생성 CLI",
     no_args_is_help=True,
 )
 
@@ -108,7 +108,10 @@ def install_hooks(
 ) -> None:
     """대상 git 레포지토리에 devtrail post-commit hook을 설치한다.
 
-    커밋할 때마다 자동으로 10_Worklog/GitSummaries/에 캡처된다.
+    참고: hook 스크립트는 기본적으로 비활성화(exit 0) 상태로 설치된다. 커밋마다
+    LLM을 호출해 커밋 속도가 저하되고 diff가 800자로 잘려 실질적 가치가 낮았기
+    때문이다. nightly-distill이 세션 노트 기반으로 하루치를 종합 처리하는 것으로
+    대체됐다. 재활성화하려면 설치된 hook 파일에서 `exit 0` 줄을 지우면 된다.
     """
     import shutil
     import stat
@@ -1078,7 +1081,7 @@ def ask(
 def notify(
     kind: str = typer.Argument(..., help="morning | evening"),
 ) -> None:
-    """Telegram으로 아침/저녁 알림을 전송한다. Task Scheduler에서 호출하도록 설계됨."""
+    """Telegram으로 아침/저녁 알림을 전송한다. OS 스케줄러(Windows Task Scheduler / macOS launchd)에서 호출하도록 설계됨."""
     from app.messaging.telegram_provider import TelegramProvider
 
     settings = get_settings()

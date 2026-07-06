@@ -4,10 +4,10 @@ task_type에 따라 적절한 FallbackChain을 구성해 반환한다.
 설정되지 않은 provider는 체인에서 조용히 제외된다.
 
 task_type별 라우팅:
-  light:       Gemini Flash-Lite → GPT-4o mini → Ollama
-  writer:      Gemini Flash → GPT-4o mini → Kimi
-  long_writer: Kimi → Gemini Flash → GPT-4o mini
-  polish:      GPT-4o mini → Gemini Flash
+  light:       Gemini Flash-Lite → GPT-4.1-mini → Ollama
+  writer:      Gemini Flash → GPT-4.1-mini → Kimi
+  long_writer: Kimi → Gemini Flash → GPT-4.1-mini
+  polish:      GPT-4.1-mini → Gemini Flash
   local:       Ollama (emergency only)
 """
 
