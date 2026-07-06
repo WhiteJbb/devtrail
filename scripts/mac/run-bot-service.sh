@@ -23,6 +23,16 @@ if [ ! -x "$WA" ]; then
     exit 1
 fi
 
+# caffeinate -i: 봇이 살아있는 동안 시스템 idle sleep 진입을 막는다.
+# pmset 설정(sleep 0)이 macOS 업데이트 등으로 리셋돼도 봇이 안전망이 된다.
+# (뚜껑 닫힘에 의한 sleep은 못 막는다 — 클램셸 모드 필요)
+CAFFEINATE=""
+if command -v caffeinate >/dev/null 2>&1; then
+    CAFFEINATE="caffeinate -i"
+else
+    log "WARN: caffeinate not found — idle sleep 방지 없이 실행"
+fi
+
 cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT"
 
@@ -35,7 +45,7 @@ while true; do
     done
 
     log "Starting bot..."
-    "$WA" serve-bot 2>&1 | while IFS= read -r l; do log "  $l"; done
+    $CAFFEINATE "$WA" serve-bot 2>&1 | while IFS= read -r l; do log "  $l"; done
     code=$?
     log "Bot exited (code=$code). Restarting in 10s..."
     sleep 10

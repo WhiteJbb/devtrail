@@ -241,11 +241,33 @@ sudo pmset -a disksleep 0    # 디스크 절전 안 함
 건드리지 않아도 된다. 노트북이면 뚜껑을 닫으면 위 설정과 무관하게 잠드니, 항상 켜둘
 Mac이라면 뚜껑을 열어두거나 외장 모니터를 연결해 "클램셸 모드"로 두는 방법을 쓴다.
 
-확인:
+확인 — AC Power / Battery Power **두 섹션 모두** `sleep 0`인지 볼 것
+(GUI의 "디스플레이가 꺼져있을 때 자동으로 잠자기 안 함" 토글은 전원 연결 시에만 적용된다):
 
 ```bash
-pmset -g
+pmset -g custom
 ```
+
+### 그래도 잠들면 — 원인 확인하는 법
+
+pmset 설정은 macOS 업데이트 후 초기화되는 경우가 있다. 갑자기 다시 잠들기 시작하면
+아래 명령으로 **잠든 이유**를 로그에서 직접 확인한다:
+
+```bash
+pmset -g log | grep -E "Entering Sleep|due to" | tail -20
+```
+
+`due to` 뒤가 원인이다:
+
+| 로그 표기 | 의미 | 대응 |
+|---|---|---|
+| `'Idle Sleep' ... Using AC` | 전원 연결 상태인데 절전 타이머가 살아있음 | `sudo pmset -a sleep 0` 재적용 |
+| `'Idle Sleep' ... Using Batt` | 배터리 프로필에만 절전이 남아있음 | `-a`(전체) 플래그로 재적용 |
+| `Clamshell Sleep` | 뚜껑 닫힘 | 뚜껑 열기 또는 클램셸 모드 |
+| `Maintenance Sleep` / `DarkWake` | 정상 동작 (곧 다시 깸) | 조치 불필요 |
+
+참고로 `run-bot-service.sh`는 봇을 `caffeinate -i`로 감싸 실행하므로, 봇이 살아있는
+동안은 pmset이 리셋돼도 idle sleep에 들어가지 않는다(안전망). 뚜껑 닫힘은 못 막는다.
 
 ---
 
