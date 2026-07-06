@@ -59,9 +59,23 @@ def test_write_work_plan_auto_injects_session_id(vault_env, monkeypatch):
     assert post.metadata["session_id"] == mod._SESSION_ID
 
 
+def test_import_does_not_create_marker_file(vault_env, monkeypatch):
+    """모듈 import만으로는 마커가 생기면 안 된다(P4.1) — main()이 실제로 서버를 시작할 때만 쓴다.
+
+    import 시점에 마커를 쓰면 REPL이나 향후 eager import 시 라이브 세션의 진짜
+    마커를 덮어쓸 수 있다.
+    """
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    assert not mod._session_marker_path().exists()
+
+
 def test_write_session_process_updates_marker_file(vault_env, monkeypatch):
     mod = _reload_mcp_server(vault_env, monkeypatch)
     write_session_process = mod.mcp._tool_manager.get_tool("write_session_process").fn
+
+    # main()이 서버 시작 시 쓰는 초기 마커를 직접 재현한다(mcp.run은 블로킹이라 테스트에서
+    # 호출할 수 없다).
+    mod._write_session_marker(process_written=False)
 
     marker_path = mod._session_marker_path()
     assert marker_path.exists()
@@ -69,6 +83,7 @@ def test_write_session_process_updates_marker_file(vault_env, monkeypatch):
 
     before = json.loads(marker_path.read_text(encoding="utf-8"))
     assert before["process_written"] is False
+    assert "updated_at" in before
 
     write_session_process(
         project="Devtrail",

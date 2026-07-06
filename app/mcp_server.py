@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -41,14 +42,18 @@ def _write_session_marker(process_written: bool) -> None:
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(
-            json.dumps({"session_id": _SESSION_ID, "process_written": process_written}, ensure_ascii=False),
+            json.dumps(
+                {
+                    "session_id": _SESSION_ID,
+                    "process_written": process_written,
+                    "updated_at": datetime.now().isoformat(),
+                },
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
     except OSError:
         pass  # 훅 연동은 best-effort — 마커 기록 실패로 tool 자체를 막지 않는다
-
-
-_write_session_marker(process_written=False)
 
 
 def _candidate_result_dict(result) -> dict | None:
@@ -150,6 +155,10 @@ def write_session_process(
 
 
 def main() -> None:
+    # 모듈 import 시점이 아니라 서버가 실제로 시작될 때만 마커를 (재)생성한다 —
+    # import만으로 마커가 생기면(REPL, 향후 eager import 등) 라이브 세션의 진짜
+    # 마커를 덮어쓸 수 있다.
+    _write_session_marker(process_written=False)
     mcp.run(transport="stdio")
 
 
