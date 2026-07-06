@@ -169,6 +169,67 @@ def test_write_session_process_double_writes_worklog(tmp_path):
     assert result.worklog_rel_path.startswith("10_Worklog/Sessions/")
 
 
+def test_write_session_process_worklog_is_not_marked_for_redistill(tmp_path):
+    """write_session_process가 남긴 worklog 노트는 needs_distill=False여야 한다(P1.3).
+
+    True로 남으면 nightly distill이 이미 구조화된 Process를 재추출해 방금 분리 생성한
+    Decision/MemoryPatch와 중복 후보를 만든다.
+    """
+    settings = _settings(tmp_path)
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="x", files_touched="x", project_decisions={},
+        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={}, session_id="sess-nd", settings=settings,
+    )
+    post = frontmatter.loads((tmp_path / result.worklog_rel_path).read_text(encoding="utf-8"))
+    assert post.metadata["needs_distill"] is False
+
+
+def test_write_session_process_memory_patch_not_deduped_across_sessions(tmp_path):
+    """같은 프로젝트로 두 번째 세션을 돌려도 Agent Execution Notes가 유실되지 않아야 한다.
+
+    memory_patch 제목이 "{project} — Agent Execution Notes — {date}" 고정 형식이라
+    같은 날 두 번째 호출은 유사도 dedup에 걸려 기존 파일 경로만 반환되기 쉽다(P1.1).
+    """
+    settings = _settings(tmp_path)
+    notes = {"mistakes": "경로를 잘못 짚음", "evidence": "로그 확인"}
+
+    result1 = vault_tools.write_session_process(
+        project="Devtrail", what_changed="1차 변경", files_touched="a.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes=notes,
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="sess-mp-1", settings=settings,
+    )
+    result2 = vault_tools.write_session_process(
+        project="Devtrail", what_changed="2차 변경", files_touched="b.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes=notes,
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="sess-mp-2", settings=settings,
+    )
+
+    assert result1.memory_patch is not None
+    assert result2.memory_patch is not None
+    assert result1.memory_patch.rel_path != result2.memory_patch.rel_path
+    assert (tmp_path / result1.memory_patch.rel_path).exists()
+    assert (tmp_path / result2.memory_patch.rel_path).exists()
+
+
+def test_write_session_process_no_decision_when_final_judge_key_missing(tmp_path):
+    """final_judge 키를 아예 안 넘기면 Decision 후보가 생기면 안 된다(P1.2).
+
+    본문 렌더링은 누락 시 'unresolved'로 표기하는데, 가드가 빈 문자열을 걸러내지
+    못하면 본문은 미해결이라 적으면서 후보는 생성되는 모순이 생긴다.
+    """
+    settings = _settings(tmp_path)
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="x", files_touched="x",
+        project_decisions={"decision": "아직 논의 중인 결정"},  # final_judge 키 자체가 없음
+        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={}, session_id="sess-fj-missing", settings=settings,
+    )
+    assert result.decision is None
+
+
 def test_write_session_process_splits_decision_when_present(tmp_path):
     settings = _settings(tmp_path)
     result = vault_tools.write_session_process(

@@ -570,12 +570,15 @@ def write_session_process(
         session_id=session_id,
         from_agent=True,
         source="mcp_session_process",
+        # Decision/MemoryPatch 분리를 이미 이 함수가 수행했으므로 nightly distill이
+        # 같은 내용을 다시 LLM에 넣어 중복 후보를 만들지 않도록 재증류 대상에서 뺀다.
+        needs_distill=False,
     )
 
     decision_result: CandidateWriteResult | None = None
     decision_text = str(decisions.get("decision", "")).strip()
     final_judge = str(decisions.get("final_judge", "")).strip().lower()
-    if decision_text and final_judge != "unresolved":
+    if decision_text and final_judge not in ("", "unresolved"):
         decision_body = (
             f"## 결정\n\n{decision_text}\n\n"
             f"## 이유\n\n{decisions.get('reason', '')}\n\n"
@@ -612,7 +615,11 @@ def write_session_process(
                 confidence=str(notes.get("confidence", "unspecified")),
                 requires_user_review=bool(notes.get("requires_user_review", True)),
                 source_refs=[process_result.rel_path],
-            )
+            ),
+            # 제목이 "{project} — Agent Execution Notes — {date}" 고정 형식이라 날짜만
+            # 다른 이전 세션 제목과 유사도가 임계값을 넘는다. dedup을 켜두면 write()가
+            # 새 본문을 쓰지 않고 기존 파일 경로만 반환해 이번 세션의 노트가 유실된다.
+            dedup=False,
         )
 
     return SessionProcessResult(

@@ -132,6 +132,20 @@ def test_capture_session_id_defaults_to_empty(tmp_path):
     assert post.metadata["session_id"] == ""
 
 
+def test_capture_session_needs_distill_defaults_true(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.capture_session()
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["needs_distill"] is True
+
+
+def test_capture_session_needs_distill_can_be_disabled(tmp_path):
+    agent = _agent(tmp_path)
+    result = agent.capture_session(needs_distill=False)
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["needs_distill"] is False
+
+
 def test_capture_session_fallback_template_includes_learning_recovery(tmp_path):
     agent = _agent(tmp_path)
     result = agent.capture_session()
