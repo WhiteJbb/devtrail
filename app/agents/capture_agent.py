@@ -135,10 +135,16 @@ class CaptureAgent:
         from_repo: bool = False,
         from_agent: bool = False,
         summary_file: str | None = None,
+        summary_text: str | None = None,
+        session_id: str | None = None,
         source: str = "agent_session",
         title: str | None = None,
     ) -> CaptureResult:
-        """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Sessions/에 저장한다."""
+        """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Sessions/에 저장한다.
+
+        summary_text가 주어지면 summary_file보다 우선한다(MCP처럼 요약 텍스트를 직접
+        전달하는 호출 경로에서 임시 파일을 만들 필요가 없게 한다).
+        """
         date = self._date()
         project = (project or "").strip()
         slug_parts = [date, self._slug(project) if project else None, "session"]
@@ -153,13 +159,14 @@ class CaptureAgent:
             repo_path = repo or "."
             snap = capture_repo_snapshot(repo_path)
 
-        # summary-file 읽기
-        summary_text = ""
-        if summary_file:
+        # summary_text > summary_file 순으로 요약을 확보한다
+        resolved_summary = (summary_text or "").strip()
+        if not resolved_summary and summary_file:
             try:
-                summary_text = Path(summary_file).read_text(encoding="utf-8").strip()
+                resolved_summary = Path(summary_file).read_text(encoding="utf-8").strip()
             except OSError:
-                summary_text = ""
+                resolved_summary = ""
+        summary_text = resolved_summary
 
         # ISO 타임스탬프
         now = self._now()
@@ -177,6 +184,7 @@ class CaptureAgent:
             "needs_distill": True,
             "created_at": iso_now,
             "updated_at": iso_now,
+            "session_id": session_id or "",
             "from_repo": from_repo,
             "from_agent": from_agent,
             "agent_summary_missing": from_agent and not summary_text,
@@ -256,10 +264,15 @@ class CaptureAgent:
                 "## 6. 다음 할 일", "- ", "",
                 "## 7. 블로그 / 포트폴리오 소재", "- ", "",
                 "## 8. Git / Source Refs", "- ", "",
+                "## 9. Learning Recovery", "",
+                "### AI가 주도적으로 처리한 부분", "- ", "",
+                "### 내가 아직 완전히 이해하지 못한 개념", "- ", "",
+                "### 다음에 직접 설명해봐야 할 질문", "1. ", "",
+                "### 관련 Vault 후보", "- ", "",
             ]
 
         # Repo Snapshot 섹션
-        lines += ["## 9. Repo Snapshot", ""]
+        lines += ["## 10. Repo Snapshot", ""]
         if snap is None:
             lines += ["_repo 정보 없음 (--from-repo 없이 실행됨)_", ""]
         elif snap.error:
@@ -293,7 +306,7 @@ class CaptureAgent:
             ]
 
         lines += [
-            "## 10. Notes",
+            "## 11. Notes",
             "- 실제로 하지 않은 일은 적지 말 것.",
             "- 불확실한 내용은 `확실하지 않음`으로 표시할 것.",
         ]
