@@ -47,6 +47,18 @@ _SECTION_MAX_CHARS = 1200
 _CONTEXT_MAX_CHARS = 600  # 인덱스 우선: 요약만 주입하고 전문은 read_note로 당겨 읽게 한다
 _CONTEXT_STALE_DAYS = 30  # Context.md updated_at이 이보다 오래되면 briefing에 경고
 _RECENT_HANDOFF_LIMIT = 3
+_RECENT_DECISION_LIMIT = 5
+# 세션마다 달라지는 운영 메모리만 briefing 본문에 넣는다. 나머지(Profile/ProjectMap/
+# WritingStyle/CareerContext)는 정적이라 참고 노트(read_note) 목록으로만 안내한다 —
+# 7개 파일 전체를 이어붙여 앞에서 자르면 목록 맨 앞의 Profile이 예산을 다 쓰고
+# 정작 OpenLoops/Lessons는 briefing에 도달하지 못한다.
+_MEMORY_PRIORITY_FILES = (
+    "40_AgentMemory/01_CurrentFocus.md",
+    "40_AgentMemory/05_OpenLoops.md",
+    "40_AgentMemory/06_Lessons.md",
+)
+_MEMORY_FILE_MAX_CHARS = 700
+_MEMORY_STALE_DAYS = 30  # CurrentFocus/OpenLoops가 이보다 오래되면 briefing에 경고
 _ORPHAN_REATTACH_WINDOW_HOURS = 24
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
@@ -120,6 +132,47 @@ def _truncate(text: str, limit: int = _SECTION_MAX_CHARS) -> str:
     if len(text) <= limit:
         return text
     return text[:limit].rstrip() + "\n...(생략)"
+
+
+def _render_memory_briefing(agent_memory) -> str:
+    """운영 메모리(CurrentFocus/OpenLoops/Lessons)를 파일별 예산으로 렌더한다."""
+    parts: list[str] = []
+    blocks = {b.rel_path: b for b in agent_memory.blocks}
+    for rel in _MEMORY_PRIORITY_FILES:
+        block = blocks.get(rel)
+        if block is None or not block.body.strip():
+            continue
+        parts.append(f"### {block.title}\n\n{_truncate(block.body, _MEMORY_FILE_MAX_CHARS)}")
+    return "\n\n".join(parts)
+
+
+def _memory_staleness_warning(agent_memory) -> str:
+    """CurrentFocus/OpenLoops가 _MEMORY_STALE_DAYS를 넘게 방치됐으면 경고를 반환한다.
+
+    Context.md 신선도 경고와 같은 원칙 — 매 세션 주입되는 메모리는 '작성 시점의
+    사실'이므로, 오래된 채로 조용히 주입되는 것을 막는다. 날짜가 없으면 경고하지
+    않는다 (오탐 방지).
+    """
+    stale_lines: list[str] = []
+    blocks = {b.rel_path: b for b in agent_memory.blocks}
+    for rel in ("40_AgentMemory/01_CurrentFocus.md", "40_AgentMemory/05_OpenLoops.md"):
+        block = blocks.get(rel)
+        if block is None or not block.updated_at:
+            continue
+        try:
+            updated = datetime.strptime(block.updated_at[:10], "%Y-%m-%d")
+        except ValueError:
+            continue
+        age_days = (datetime.now() - updated).days
+        if age_days > _MEMORY_STALE_DAYS:
+            stale_lines.append(f"- {block.title}: {age_days}일 전({block.updated_at[:10]}) 마지막 갱신")
+    if not stale_lines:
+        return ""
+    return (
+        "## ⚠ AgentMemory 신선도 경고\n\n"
+        + "\n".join(stale_lines)
+        + "\n\n내용이 여전히 유효한지 확인하고 필요하면 apply-memory-patch로 갱신을 제안하세요."
+    )
 
 
 def _canonicalize_project(vault_dir: Path, project: str) -> str:
@@ -342,12 +395,18 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
             f"`{resolved_project}`은(는) Vault에 아직 등록되지 않았습니다. 전역 Agent Memory만 "
             "반환합니다. `write_work_plan`을 처음 호출하면 SessionHandoffs 폴더가 생성됩니다."
         )
-        sections.append(f"## Current Focus / Open Loops\n\n{_truncate(agent_memory.render())}")
+        sections.append(f"## Current Focus / Open Loops\n\n{_render_memory_briefing(agent_memory)}")
         return ProjectBriefing(
             project=resolved_project, matched=True, candidates=[], text="\n\n".join(sections), source_refs=source_refs
         )
 
-    sections.append(f"## Current Focus\n\n{_truncate(agent_memory.render())}")
+    memory_section = _render_memory_briefing(agent_memory)
+    if memory_section:
+        sections.append(f"## Current Focus\n\n{memory_section}")
+
+    memory_staleness = _memory_staleness_warning(agent_memory)
+    if memory_staleness:
+        sections.append(memory_staleness)
 
     if project_ctx:
         # 인덱스 우선: 요약만 넣고 전문은 필요할 때 read_note로 조회하게 한다 —
@@ -362,23 +421,32 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
         if staleness:
             sections.append(staleness)
 
-    decisions_dir = vault_dir / "60_Candidates" / "Decisions"
-    recent_decisions: list[str] = []
-    if decisions_dir.exists():
-        for md_path in sorted(decisions_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+    # 결정 이력은 검토 대기 후보(60_Candidates/Decisions)와 승격된 정본
+    # (30_Projects/<P>/Decisions)을 함께 읽는다 — 후보만 읽으면 promote하는 순간
+    # briefing에서 결정이 사라져, 검토를 성실히 할수록 컨텍스트를 잃는다.
+    decision_entries: list[tuple[float, str, str]] = []
+
+    def _collect_decisions(dir_path: Path, *, project_filter: bool, tag: str) -> None:
+        if not dir_path.exists():
+            return
+        for md_path in dir_path.glob("*.md"):
             try:
                 post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if str(post.metadata.get("project", "")).strip().lower() != resolved_project.lower():
+            if project_filter and str(post.metadata.get("project", "")).strip().lower() != resolved_project.lower():
                 continue
             rel = str(md_path.relative_to(vault_dir)).replace("\\", "/")
-            recent_decisions.append(f"- {post.metadata.get('title', md_path.stem)} ({rel})")
-            source_refs.append(rel)
-            if len(recent_decisions) >= 5:
-                break
-    if recent_decisions:
-        sections.append("## Recent Decisions\n\n" + _truncate("\n".join(recent_decisions)))
+            title = post.metadata.get("title", md_path.stem)
+            decision_entries.append((md_path.stat().st_mtime, f"- {title} ({rel}){tag}", rel))
+
+    _collect_decisions(vault_dir / "60_Candidates" / "Decisions", project_filter=True, tag=" — 검토 대기")
+    _collect_decisions(vault_dir / "30_Projects" / resolved_project / "Decisions", project_filter=False, tag="")
+    decision_entries.sort(key=lambda e: e[0], reverse=True)
+    recent_entries = decision_entries[:_RECENT_DECISION_LIMIT]
+    source_refs.extend(rel for _, _, rel in recent_entries)
+    if recent_entries:
+        sections.append("## Recent Decisions\n\n" + _truncate("\n".join(line for _, line, _ in recent_entries)))
 
     plans = [h for h in handoffs if h["handoff_type"] == "plan"]
     processes = [h for h in handoffs if h["handoff_type"] == "process"]

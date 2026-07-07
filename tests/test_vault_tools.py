@@ -659,3 +659,86 @@ def test_briefing_no_plan_reminder_when_todays_plan_exists(tmp_path):
     )
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
     assert "## 리마인더" not in briefing.text
+
+
+# ── briefing AgentMemory 우선순위 (사용 흐름 개선) ───────────────────────────
+
+
+def _write_agent_memory(vault: Path, name: str, body: str, updated_at: str = "") -> None:
+    meta = {"updated_at": updated_at} if updated_at else {}
+    _write(vault, f"40_AgentMemory/{name}", body=body, **meta)
+
+
+def test_briefing_memory_prefers_dynamic_files_over_profile(tmp_path):
+    """긴 Profile이 있어도 OpenLoops/Lessons가 briefing 본문에 도달해야 한다.
+
+    기존에는 7개 파일 전체 렌더를 앞 1200자에서 통째로 잘라, 목록 맨 앞의 정적인
+    Profile이 예산을 다 쓰고 OpenLoops/Lessons는 어떤 세션에도 주입되지 못했다.
+    """
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    _write_agent_memory(tmp_path, "00_Profile.md", "프로필정적내용 " * 300)  # 1200자 초과
+    _write_agent_memory(tmp_path, "01_CurrentFocus.md", "지금집중하는일 본문")
+    _write_agent_memory(tmp_path, "05_OpenLoops.md", "미해결이슈 본문")
+    _write_agent_memory(tmp_path, "06_Lessons.md", "일하는방식교훈 본문")
+
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "지금집중하는일 본문" in briefing.text
+    assert "미해결이슈 본문" in briefing.text
+    assert "일하는방식교훈 본문" in briefing.text
+    # 정적인 Profile 본문은 주입하지 않는다 — 참고 노트(read_note) 목록으로만 안내
+    assert "프로필정적내용" not in briefing.text
+    assert "40_AgentMemory/00_Profile.md" in briefing.source_refs
+
+
+def test_briefing_memory_applies_per_file_budget(tmp_path):
+    """한 파일이 길어도 다음 우선순위 파일이 잘려나가면 안 된다."""
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    _write_agent_memory(tmp_path, "01_CurrentFocus.md", "포커스 " * 400)  # 700자 초과
+    _write_agent_memory(tmp_path, "05_OpenLoops.md", "오픈루프핵심줄")
+
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "오픈루프핵심줄" in briefing.text
+
+
+def test_briefing_warns_on_stale_agent_memory(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    _write_agent_memory(tmp_path, "01_CurrentFocus.md", "오래된 포커스", updated_at="2026-01-01")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "AgentMemory 신선도 경고" in briefing.text
+
+
+def test_briefing_no_memory_warning_when_fresh(tmp_path):
+    from datetime import datetime
+
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    today = datetime.now().strftime("%Y-%m-%d")
+    _write_agent_memory(tmp_path, "01_CurrentFocus.md", "신선한 포커스", updated_at=today)
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "AgentMemory 신선도 경고" not in briefing.text
+
+
+# ── briefing Recent Decisions에 승격본 포함 (사용 흐름 개선) ─────────────────
+
+
+def test_briefing_includes_promoted_decisions(tmp_path):
+    """promote 후에도 결정이 briefing에서 사라지면 안 된다.
+
+    기존에는 60_Candidates/Decisions만 읽어, 검토를 성실히 할수록(promote할수록)
+    다음 세션 briefing에서 결정 이력이 사라졌다.
+    """
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    _write(tmp_path, "30_Projects/Devtrail/Decisions/캐시-전략-결정.md", body="결정 본문", title="캐시 전략 결정")
+
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "Recent Decisions" in briefing.text
+    assert "캐시 전략 결정" in briefing.text
+    assert "30_Projects/Devtrail/Decisions/캐시-전략-결정.md" in briefing.source_refs
+
+
+def test_briefing_tags_candidate_decisions_as_pending(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    _write(tmp_path, "60_Candidates/Decisions/미검토-결정.md", body="후보 본문", title="미검토 결정", project="Devtrail")
+
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "미검토 결정" in briefing.text
+    assert "검토 대기" in briefing.text

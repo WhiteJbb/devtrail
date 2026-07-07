@@ -98,8 +98,10 @@
 PowerShell로 직접 실행해 다음은 확인했다:
 - SessionStart 훅: `get_project_briefing()` 결과를 `hookSpecificOutput.additionalContext` JSON
   으로 조립하는 부분
-- Stop 훅: git dirty 여부 + `.claude/.vault-mcp/current_session.json`의 `process_written`
-  플래그를 읽어 차단/통과를 가르는 로직
+- Stop 훅: git dirty 여부 + 세션 시작(마커 생성) 이후 새 커밋 존재 여부 +
+  `.claude/.vault-mcp/current_session.json`의 `process_written` 플래그를 읽어
+  차단/통과를 가르는 로직. dirty만 보면 커밋/머지로 깔끔하게 끝낸(기록 가치가
+  가장 높은) 세션이 기록 없이 통과하는 역설이 있어 세션 중 커밋 검사를 추가했다.
 
 **하지만 Claude Code의 실제 훅 프로토콜(정확한 stdin JSON 필드, exit code 의미, 차단 응답
 포맷)에 대한 실제 세션 검증은 하지 않았다.** 등록 전 반드시 별도 세션에서 검증할 것 — §6의

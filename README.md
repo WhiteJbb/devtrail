@@ -192,12 +192,17 @@ devtrail build-context "주제"        # ContextPack 구성
 ### Candidates 관리
 
 ```bash
-devtrail list-candidates                      # 60_Candidates/ 목록 (stale 표시 포함)
-devtrail preview-candidate <path>             # 후보 미리보기
-devtrail promote-candidate <path>             # 공식 영역으로 승격
+devtrail list-candidates                      # 60_Candidates/ 번호 목록 (stale 표시 포함)
+devtrail review                               # 한 건씩 미리보며 승격/건너뛰기/삭제 (Telegram /review의 CLI 판)
+devtrail preview-candidate <번호|path>        # 후보 미리보기
+devtrail promote-candidate <번호|path>        # 공식 영역으로 승격
 devtrail promote-all [--kind knowledge|decision|blog_idea]   # 타입별 일괄 승격
 devtrail apply-memory-patch [path] [-i]       # → 40_AgentMemory/ 반영
 ```
+
+`list-candidates`가 비어 있거나 `notify morning` 전송 시 마지막 nightly-distill 실행이
+이틀 넘게 밀려 있으면 정지 경고를 함께 표시한다 — "다 검토한 상태"와 "파이프라인이
+조용히 멈춘 상태"를 구분하기 위함.
 
 ### 탐색
 

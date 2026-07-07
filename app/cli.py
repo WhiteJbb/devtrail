@@ -422,6 +422,37 @@ def _curator_agent() -> CuratorAgent:
         _fail(f"Curator를 사용할 수 없습니다.\n  {e}\n  → .env에서 OBSIDIAN_VAULT_PATH를 설정하세요.")
 
 
+def _pipeline_health_line() -> str:
+    """nightly-distill 정지 경고 한 줄. 정상이거나 판정 불가면 빈 문자열."""
+    from pathlib import Path
+
+    from app.services.pipeline_health import check_pipeline_health, stale_warning
+
+    settings = get_settings()
+    if not settings.obsidian_vault_root:
+        return ""
+    return stale_warning(check_pipeline_health(Path(settings.obsidian_vault_root)))
+
+
+def _resolve_candidate_selector(curator: CuratorAgent, selector: str) -> str:
+    """후보 선택자를 rel_path로 해석한다 — list-candidates 출력 번호 또는 경로.
+
+    번호는 list_candidates()의 정렬 순서(경로 사전순)에 대한 1-기반 인덱스라,
+    목록 조회와 선택 사이에 후보가 생기면 어긋날 수 있다. 해석된 제목을 출력해
+    사용자가 의도한 후보인지 확인할 수 있게 한다.
+    """
+    selector = selector.strip()
+    if not selector.isdigit():
+        return selector
+    items = curator.list_candidates()
+    idx = int(selector)
+    if idx < 1 or idx > len(items):
+        _fail(f"번호 {idx}에 해당하는 후보가 없습니다 (현재 {len(items)}개). list-candidates로 다시 확인하세요.")
+    item = items[idx - 1]
+    typer.echo(f"  #{idx} → [{item.kind}] {item.title}")
+    return item.rel_path
+
+
 @app.command("list-candidates")
 def list_candidates(
     include_handoffs: bool = typer.Option(
@@ -434,8 +465,12 @@ def list_candidates(
     운영 메모리이므로 기본 출력에서 제외한다. --include-handoffs로 함께 볼 수 있다.
     """
     items = _curator_agent().list_candidates(include_session_handoffs=include_handoffs)
+    health_line = _pipeline_health_line()
     if not items:
         typer.echo("60_Candidates/ 에 후보가 없습니다.")
+        # "다 검토한 상태"와 "nightly가 멈춰서 후보가 안 생기는 상태"를 구분해준다
+        if health_line:
+            typer.secho(f"  {health_line}", fg=typer.colors.YELLOW)
         return
 
     stale_count = sum(1 for i in items if i.is_stale)
@@ -443,36 +478,43 @@ def list_candidates(
     if stale_count:
         header += f"  ({stale_count}개 stale)"
     typer.secho(header, fg=typer.colors.CYAN, bold=True)
-    for item in items:
+    for idx, item in enumerate(items, 1):
         stale_tag = "  ⚠ stale" if item.is_stale else ""
         typer.echo(
-            f"  [{item.kind}] {item.title}"
+            f"  {idx}. [{item.kind}] {item.title}"
             + (f"  ({item.project})" if item.project else "")
             + stale_tag
         )
-        typer.echo(f"    {item.rel_path}")
+        typer.echo(f"     {item.rel_path}")
+    typer.echo("\n  번호로 바로 쓸 수 있습니다: preview-candidate 1 / promote-candidate 1 / review")
+    if health_line:
+        typer.secho(f"  {health_line}", fg=typer.colors.YELLOW)
 
 
 @app.command("preview-candidate")
 def preview_candidate(
-    rel_path: str = typer.Argument(..., help="60_Candidates/ 기준 상대 경로"),
+    rel_path: str = typer.Argument(..., help="후보 경로(vault 기준) 또는 list-candidates 출력 번호"),
 ) -> None:
     """후보 노트의 내용을 미리 본다."""
+    curator = _curator_agent()
+    resolved = _resolve_candidate_selector(curator, rel_path)
     try:
-        content = _curator_agent().preview_candidate(rel_path)
+        content = curator.preview_candidate(resolved)
     except ValueError as e:
         _fail(str(e))
-    typer.secho(f"\n--- {rel_path} ---", fg=typer.colors.BRIGHT_BLACK)
+    typer.secho(f"\n--- {resolved} ---", fg=typer.colors.BRIGHT_BLACK)
     typer.echo(content)
 
 
 @app.command("promote-candidate")
 def promote_candidate(
-    rel_path: str = typer.Argument(..., help="승격할 후보 노트 경로 (vault 기준)"),
+    rel_path: str = typer.Argument(..., help="승격할 후보 경로(vault 기준) 또는 list-candidates 출력 번호"),
 ) -> None:
     """후보 노트를 공식 Knowledge/Decision/Memory 영역으로 승격한다."""
+    curator = _curator_agent()
+    resolved = _resolve_candidate_selector(curator, rel_path)
     try:
-        result = _curator_agent().promote_candidate(rel_path)
+        result = curator.promote_candidate(resolved)
     except ValueError as e:
         _fail(str(e))
 
@@ -480,6 +522,61 @@ def promote_candidate(
     typer.echo(f"  후보: {result.candidate_path}")
     typer.echo(f"  승격됨: {result.promoted_path}")
     typer.echo(f"  종류: {result.kind}")
+
+
+@app.command("review")
+def review_candidates() -> None:
+    """후보를 한 건씩 미리보며 승격/건너뛰기/삭제한다 (Telegram /review의 CLI 판).
+
+    memory_patch는 promote 대신 apply-memory-patch 경로로 반영한다 (Telegram과 동일).
+    """
+    curator = _curator_agent()
+    items = curator.list_candidates()
+    if not items:
+        typer.echo("검토할 후보가 없습니다.")
+        health_line = _pipeline_health_line()
+        if health_line:
+            typer.secho(f"  {health_line}", fg=typer.colors.YELLOW)
+        return
+
+    typer.secho(f"\n후보 {len(items)}개 검토 시작", fg=typer.colors.CYAN, bold=True)
+    done = 0
+    for idx, item in enumerate(items, 1):
+        stale_tag = "  ⚠ stale" if item.is_stale else ""
+        typer.secho(f"\n[{idx}/{len(items)}] [{item.kind}] {item.title}{stale_tag}", bold=True)
+        typer.echo(f"  {item.rel_path}")
+        try:
+            content = curator.preview_candidate(item.rel_path)
+        except ValueError as e:
+            typer.secho(f"  읽기 실패, 건너뜁니다: {e}", fg=typer.colors.YELLOW)
+            continue
+        typer.secho("--- 내용 ---", fg=typer.colors.BRIGHT_BLACK)
+        typer.echo(content if len(content) <= 2000 else content[:2000].rstrip() + "\n...(생략)")
+
+        choice = typer.prompt("p=승격 / s=건너뛰기 / d=삭제 / q=종료", default="s").strip().lower()
+        if choice == "q":
+            typer.echo(f"검토를 종료합니다. 남은 {len(items) - idx + 1}건은 다음 review 때 이어서 볼 수 있어요.")
+            break
+        if choice == "p":
+            try:
+                if item.kind == "memory_patch":
+                    result = curator.apply_memory_patch(item.rel_path)
+                else:
+                    result = curator.promote_candidate(item.rel_path)
+                typer.secho(f"  ✅ 승격 → {result.promoted_path}", fg=typer.colors.GREEN)
+                done += 1
+            except ValueError as e:
+                typer.secho(f"  승격 실패: {e}", fg=typer.colors.RED)
+        elif choice == "d":
+            try:
+                curator.delete_candidate(item.rel_path)
+                typer.secho("  🗑 삭제했습니다.", fg=typer.colors.YELLOW)
+                done += 1
+            except ValueError as e:
+                typer.secho(f"  삭제 실패: {e}", fg=typer.colors.RED)
+        # 그 외 입력은 건너뛰기
+
+    typer.secho(f"\n검토 완료 — 처리 {done}건", fg=typer.colors.CYAN, bold=True)
 
 
 @app.command("promote-all")
@@ -1170,13 +1267,17 @@ def notify(
         else ""
     )
 
+    # nightly-distill 정지 감지 — 파이프라인이 조용히 죽으면 아침에 바로 알린다
+    health_line = _pipeline_health_line()
+    health_hint = f"\n\n{health_line}" if health_line else ""
+
     if kind == "morning":
         task_block = (
             ("\n" + "\n".join(task_lines))
             if task_lines
             else "\n등록된 할 일이 없어요. /task 로 추가할 수 있어요."
         )
-        text = f"🌅 좋은 아침이에요! 오늘 할 일 정리해뒀어요.{task_block}{candidate_hint}"
+        text = f"🌅 좋은 아침이에요! 오늘 할 일 정리해뒀어요.{task_block}{candidate_hint}{health_hint}"
     elif kind == "evening":
         text = (
             "🌙 오늘 하루 마무리할 시간이에요.\n\n"
