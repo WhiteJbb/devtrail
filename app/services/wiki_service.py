@@ -27,28 +27,21 @@ VAULT_DIRS = [
     "00_Inbox/Raw/Attachments",  # media_handler가 Telegram 첨부를 저장
     "10_Worklog/Sessions",
     "10_Worklog/Daily",
-    "10_Worklog/Weekly",
     "10_Worklog/Summaries",  # worklog_agent 출력
     "10_Worklog/GitSummaries",  # capture_agent.capture_commit 출력
-    "20_Knowledge/AI",
-    "20_Knowledge/RAG",
-    "20_Knowledge/Agent",
-    "20_Knowledge/Infra",
-    "20_Knowledge/Backend",
-    "20_Knowledge/Frontend",
-    "20_Knowledge/Career",
+    "20_Knowledge",  # 승격 지식 — curator가 20_Knowledge/{project}/ 하위를 동적 생성
+    # 프로젝트 정본 문서 구조 (기본 프로젝트 Devtrail 예시).
+    # Context.md는 get_project_briefing이 읽고, Decisions/는 promote-candidate 대상.
     "30_Projects/Devtrail/Decisions",
-    "30_Projects/Devtrail/Issues",
-    "30_Projects/Devtrail/Logs",
-    "40_AgentMemory/Core",
-    "40_AgentMemory/ProjectSummaries",
+    "30_Projects/Devtrail/Plans",  # 기능 단위 구현 계획 (세션 Plan은 SessionHandoffs)
+    "30_Projects/Devtrail/Design",  # IA / UserScenarios / Personas
+    "30_Projects/Devtrail/Conversations",  # 중요 대화 발췌
+    "40_AgentMemory",  # 전역 메모리 — 실체는 루트 00_Profile.md ~ 05_OpenLoops.md
     "50_Outputs/Digest",
     "50_Outputs/WeeklyReview",
     "50_Outputs/Todo",  # todo_agent 출력
     "50_Outputs/Blog/Ideas",
     "50_Outputs/Blog/Drafts",
-    "50_Outputs/Blog/Review",
-    "50_Outputs/Blog/Published",
     "50_Outputs/Blog/Export",  # wiki_blog_agent export 출력
     "50_Outputs/Portfolio",
     "50_Outputs/Resume",
