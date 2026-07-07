@@ -66,6 +66,11 @@ AGENT_MEMORY_FILES = {
 }
 
 
+# init_project()가 30_Projects/<Project>/ 아래에 만드는 프로젝트 문서 구조.
+# Context.md는 get_project_briefing이 읽고, Decisions/는 promote-candidate 대상.
+PROJECT_SUBDIRS = ["Decisions", "Plans", "Design", "Conversations"]
+
+
 def mark_distilled(vault_dir: Path, notes: list) -> None:
     """needs_distill: True 인 노트를 처리 완료(False)로 표시한다."""
     for note in notes:
@@ -149,6 +154,47 @@ class WikiService:
             self._write_if_missing(rel, self._default_agent_memory(title), created_files, existing_files)
 
         self.append_vault_log("init", "vault skeleton", [str(p.relative_to(self.vault_dir)) for p in created_files])
+        return VaultInitResult(
+            vault_dir=self.vault_dir,
+            created_dirs=created_dirs,
+            created_files=created_files,
+            existing_files=existing_files,
+        )
+
+    def init_project(self, project: str) -> VaultInitResult:
+        """30_Projects/<project>/에 프로젝트 문서 스캐폴드를 만든다 (기존 파일 보존).
+
+        Context.md는 ProjectMemoryLoader가 body 비어 있으면 무시하므로
+        섹션 골격을 채워서 생성한다 — 이래야 첫 세션부터 briefing 매칭이 된다.
+        """
+        project = project.strip()
+        if not project:
+            raise ValueError("project 이름이 비어 있습니다.")
+
+        base = f"30_Projects/{project}"
+        created_dirs: list[Path] = []
+        created_files: list[Path] = []
+        existing_files: list[Path] = []
+
+        for sub in PROJECT_SUBDIRS:
+            path = self.vault_dir / base / sub
+            if not path.exists():
+                path.mkdir(parents=True, exist_ok=True)
+                created_dirs.append(path)
+
+        project_files = {
+            f"{base}/Context.md": self._default_project_context(project),
+            f"{base}/PromptLog.md": self._default_prompt_log(project),
+            f"{base}/Design/IA.md": self._default_design_doc(project, "IA", "information_architecture", "폴더 구조·데이터 흐름 등 시스템의 정보 구조를 정의한다."),
+            f"{base}/Design/UserScenarios.md": self._default_design_doc(project, "User Scenarios", "user_scenarios", "주요 사용 시나리오를 기록한다. 새 기능은 여기 시나리오에 근거를 둔다."),
+            f"{base}/Design/Personas.md": self._default_design_doc(project, "Personas", "personas", "사용자/행위자 정의. 기능 설계 시 어느 행위자를 위한 것인지 명시한다."),
+        }
+        for rel, content in project_files.items():
+            self._write_if_missing(rel, content, created_files, existing_files)
+
+        self.append_vault_log(
+            "init-project", project, [str(p.relative_to(self.vault_dir)) for p in created_files]
+        )
         return VaultInitResult(
             vault_dir=self.vault_dir,
             created_dirs=created_dirs,
@@ -409,6 +455,57 @@ class WikiService:
             "- 40_AgentMemory/\n\n"
             "Protected areas should be changed through candidates or patches "
             "(promote-candidate / apply-memory-patch), then reviewed.\n"
+        )
+
+    def _default_project_context(self, project: str) -> str:
+        today = datetime.now().strftime("%Y-%m-%d")
+        return (
+            "---\n"
+            "type: project_context\n"
+            f"project: {project}\n"
+            "status: active\n"
+            f"updated_at: {today}\n"
+            "---\n\n"
+            f"# {project} — Project Context\n\n"
+            "> 이 파일은 `get_project_briefing`이 세션 시작 시 자동 주입하는 프로젝트 정본 컨텍스트다.\n"
+            "> 배경·목표·제약이 바뀔 때마다 갱신한다.\n\n"
+            "## 배경\n\n"
+            "_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_\n\n"
+            "## 목표\n\n"
+            "- \n\n"
+            "## 제약 / 원칙\n\n"
+            "- 사용자의 결정이 필요한 부분은 진행하지 말고 질문한다\n\n"
+            "## 관련 문서\n\n"
+            "- 구현 계획: [[Plans/]]\n"
+            "- 의사결정 이력: [[Decisions/]] (promote-candidate가 쌓음)\n"
+            "- 제품 설계: [[Design/IA]], [[Design/UserScenarios]], [[Design/Personas]]\n"
+            "- 프롬프트 원문: [[PromptLog]]\n"
+        )
+
+    def _default_prompt_log(self, project: str) -> str:
+        today = datetime.now().strftime("%Y-%m-%d")
+        return (
+            "---\n"
+            "type: prompt_log\n"
+            f"project: {project}\n"
+            f"updated_at: {today}\n"
+            "---\n\n"
+            "# Prompt Log\n\n"
+            "> 에이전트/LLM에 사용한 중요한 프롬프트 원문을 시간순으로 기록한다.\n"
+            "> 형식: 날짜 · 용도 · 프롬프트 원문 · (있으면) 결과 링크\n"
+        )
+
+    def _default_design_doc(self, project: str, title: str, doc_key: str, guide: str) -> str:
+        today = datetime.now().strftime("%Y-%m-%d")
+        return (
+            "---\n"
+            "type: design\n"
+            f"project: {project}\n"
+            f"doc: {doc_key}\n"
+            f"updated_at: {today}\n"
+            "---\n\n"
+            f"# {title}\n\n"
+            f"> {guide}\n"
         )
 
     def _default_agent_memory(self, title: str) -> str:
