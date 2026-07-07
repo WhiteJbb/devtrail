@@ -14,10 +14,12 @@ def test_init_vault_creates_skeleton_without_overwrite(tmp_path):
     service = WikiService(tmp_path)
     result = service.init_vault()
 
-    assert (tmp_path / "00_Inbox" / "Captures").is_dir()
+    assert (tmp_path / "00_Inbox" / "Memos").is_dir()
     assert (tmp_path / "20_Knowledge" / "RAG").is_dir()
+    assert (tmp_path / "10_Worklog" / "GitSummaries").is_dir()
+    assert (tmp_path / "60_Candidates" / "SessionHandoffs").is_dir()
+    assert (tmp_path / "70_Tasks" / "Done").is_dir()
     assert (tmp_path / "40_AgentMemory" / "00_Profile.md").exists()
-    assert (tmp_path / "90_Templates" / "Knowledge.md").exists()
     assert (tmp_path / "AGENTS.md").exists()
     assert result.created_files
 

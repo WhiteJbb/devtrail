@@ -296,9 +296,12 @@ def test_long_writer_provider_env_deduplicates_chain():
 
 
 def test_command_to_task_type_light():
-    assert get_task_type_for_command("distill-today") == "light"
     assert get_task_type_for_command("suggest-knowledge") == "light"
     assert get_task_type_for_command("capture") == "light"
+
+
+def test_command_to_task_type_distill():
+    assert get_task_type_for_command("distill-today") == "distill"
 
 
 def test_command_to_task_type_writer():

@@ -5,6 +5,7 @@ task_type에 따라 적절한 FallbackChain을 구성해 반환한다.
 
 task_type별 라우팅:
   light:       Gemini Flash-Lite → GPT-4.1-mini → Ollama
+  distill:     Gemini Flash-Lite → GPT-4.1-mini → Ollama
   writer:      Gemini Flash → GPT-4.1-mini → Kimi
   long_writer: Kimi → Gemini Flash → GPT-4.1-mini
   polish:      GPT-4.1-mini → Gemini Flash

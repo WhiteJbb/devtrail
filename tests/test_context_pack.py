@@ -176,7 +176,7 @@ def test_cli_build_context_renders_pack(monkeypatch, tmp_path):
     monkeypatch.setattr("app.cli.ContextPackBuilder", lambda *a, **kw: _FakeBuilder())
     monkeypatch.setattr(
         "app.cli.get_settings",
-        lambda: SimpleNamespace(obsidian_vault_root=str(tmp_path), wiki_folder="60_Wiki"),
+        lambda: SimpleNamespace(obsidian_vault_root=str(tmp_path)),
     )
 
     out = runner.invoke(cli.app, ["build-context", "테스트 주제"])

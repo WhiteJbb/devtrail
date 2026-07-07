@@ -38,7 +38,7 @@ class ProjectAgent:
         if not self.settings.obsidian_vault_root:
             raise RuntimeError("OBSIDIAN_VAULT_PATH is not configured.")
         self.vault_dir = Path(self.settings.obsidian_vault_root)
-        self.wiki_service = WikiService(self.vault_dir, wiki_folder=self.settings.wiki_folder)
+        self.wiki_service = WikiService(self.vault_dir)
         self.builder = ContextPackBuilder(self.vault_dir, wiki_service=self.wiki_service)
 
     def summarize_project(self, project: str) -> ProjectResult:

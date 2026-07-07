@@ -17,7 +17,6 @@ from app.agents.capture_agent import CaptureAgent
 def _settings(tmp_path: Path):
     return SimpleNamespace(
         obsidian_vault_root=str(tmp_path),
-        wiki_folder="60_Wiki",
         git_diff_max_chars=800,
     )
 
@@ -66,10 +65,10 @@ def test_capture_session_tags(tmp_path):
     assert "worklog" in tags
 
 
-def test_capture_session_saved_to_daily(tmp_path):
+def test_capture_session_saved_to_sessions(tmp_path):
     agent = _agent(tmp_path)
     result = agent.capture_session(project="Devtrail")
-    assert result.rel_path.startswith("10_Worklog/Daily/")
+    assert result.rel_path.startswith("10_Worklog/Sessions/")
     assert "session" in result.rel_path
 
 
@@ -194,7 +193,7 @@ def test_capture_session_appends_log(tmp_path):
     # log.md는 WikiService.append_vault_log가 쓰므로 존재 여부 확인
     # (실제 파일 생성은 WikiService 구현에 달려 있음)
     # capture_session이 예외 없이 완료됨을 검증
-    assert (tmp_path / "10_Worklog/Daily").exists()
+    assert (tmp_path / "10_Worklog/Sessions").exists()
 
 
 # ── from_agent 플래그 ─────────────────────────────────────────────────────────
@@ -225,8 +224,8 @@ def test_cli_capture_session_basic(tmp_path, monkeypatch):
     runner = CliRunner()
 
     fake_result = SimpleNamespace(
-        path=tmp_path / "10_Worklog/Daily/2026-06-23-devtrail-session.md",
-        rel_path="10_Worklog/Daily/2026-06-23-devtrail-session.md",
+        path=tmp_path / "10_Worklog/Sessions/2026-06-23-devtrail-session.md",
+        rel_path="10_Worklog/Sessions/2026-06-23-devtrail-session.md",
         created=True,
         kind="session",
     )
@@ -250,8 +249,8 @@ def test_cli_capture_session_from_repo(tmp_path, monkeypatch):
     runner = CliRunner()
 
     fake_result = SimpleNamespace(
-        path=tmp_path / "10_Worklog/Daily/2026-06-23-session.md",
-        rel_path="10_Worklog/Daily/2026-06-23-session.md",
+        path=tmp_path / "10_Worklog/Sessions/2026-06-23-session.md",
+        rel_path="10_Worklog/Sessions/2026-06-23-session.md",
         created=True,
         kind="session",
     )
@@ -280,8 +279,8 @@ def test_cli_capture_session_summary_file(tmp_path, monkeypatch):
     summary.write_text("내용", encoding="utf-8")
 
     fake_result = SimpleNamespace(
-        path=tmp_path / "10_Worklog/Daily/2026-06-23-session.md",
-        rel_path="10_Worklog/Daily/2026-06-23-session.md",
+        path=tmp_path / "10_Worklog/Sessions/2026-06-23-session.md",
+        rel_path="10_Worklog/Sessions/2026-06-23-session.md",
         created=True,
         kind="session",
     )
@@ -309,7 +308,7 @@ def test_router_session_no_arg(tmp_path):
 
     router = CommandRouter()
     fake_result = SimpleNamespace(
-        rel_path="10_Worklog/Daily/2026-06-23-session.md",
+        rel_path="10_Worklog/Sessions/2026-06-23-session.md",
         created=True,
         kind="session",
     )
@@ -328,7 +327,7 @@ def test_router_session_with_project(tmp_path):
 
     router = CommandRouter()
     fake_result = SimpleNamespace(
-        rel_path="10_Worklog/Daily/2026-06-23-devtrail-session.md",
+        rel_path="10_Worklog/Sessions/2026-06-23-devtrail-session.md",
         created=True,
         kind="session",
     )
@@ -353,7 +352,7 @@ def test_distill_session_notes_priority(tmp_path):
     today = datetime.now().strftime("%Y-%m-%d")
 
     session_note = WikiNote(
-        path="10_Worklog/Daily/2026-06-23-Devtrail-session.md",
+        path="10_Worklog/Sessions/2026-06-23-Devtrail-session.md",
         title="Devtrail 작업 세션",
         body="세션 내용",
         metadata={"type": "session", "date": today, "project": "Devtrail"},
@@ -362,7 +361,7 @@ def test_distill_session_notes_priority(tmp_path):
         summary="",
     )
     capture_note = WikiNote(
-        path="00_Inbox/Captures/20260623-120000-memo.md",
+        path="00_Inbox/Memos/20260623-120000-memo.md",
         title="메모",
         body="메모 내용",
         metadata={"type": "capture", "date": today},

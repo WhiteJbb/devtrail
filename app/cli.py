@@ -52,7 +52,7 @@ def _wiki_service_from_settings() -> WikiService:
     settings = get_settings()
     if not settings.obsidian_vault_root:
         _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
-    return WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
+    return WikiService(Path(settings.obsidian_vault_root))
 
 
 def _capture_agent() -> CaptureAgent:
