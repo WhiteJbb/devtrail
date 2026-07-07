@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import frontmatter
@@ -26,6 +27,7 @@ class AgentMemoryBlock:
     rel_path: str
     title: str
     body: str
+    updated_at: str = ""  # frontmatter updated_at > 파일 mtime 순으로 채운 YYYY-MM-DD
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,14 @@ class AgentMemoryLoader:
         if len(body) > _MAX_FILE_CHARS:
             body = body[:_MAX_FILE_CHARS].rstrip() + "\n...(일부 생략)"
 
-        return AgentMemoryBlock(rel_path=rel, title=title, body=body)
+        updated_at = str(metadata.get("updated_at", "") or "").strip()
+        if not updated_at:
+            try:
+                updated_at = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d")
+            except OSError:
+                updated_at = ""
+
+        return AgentMemoryBlock(rel_path=rel, title=title, body=body, updated_at=updated_at)
 
     def _h1_from_body(self, body: str) -> str:
         for line in body.splitlines():
