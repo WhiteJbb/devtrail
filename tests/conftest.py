@@ -13,10 +13,12 @@ class FakeLLM:
         self.response = response
         self.last_prompt = ""
         self.last_system = ""
+        self.prompts: list[str] = []  # 호출 순서대로 누적 (critic 등 다단계 검증용)
 
     def complete(self, prompt: str, system: str = "") -> str:
         self.last_prompt = prompt
         self.last_system = system
+        self.prompts.append(prompt)
         return self.response
 
 

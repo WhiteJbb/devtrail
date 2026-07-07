@@ -172,8 +172,17 @@ class CuratorAgent:
                 pass
         return results
 
-    def apply_memory_patch(self, rel_path: str) -> PromoteResult:
-        """memory_patch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다."""
+    # apply_memory_patch의 --target 별칭 → 40_AgentMemory 파일 매핑
+    PATCH_TARGETS = {
+        "open-loops": "40_AgentMemory/05_OpenLoops.md",
+        "lessons": "40_AgentMemory/06_Lessons.md",
+    }
+
+    def apply_memory_patch(self, rel_path: str, target: str = "") -> PromoteResult:
+        """memory_patch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다.
+
+        대상 우선순위: target 인자 > 후보 frontmatter target_file > 05_OpenLoops.md.
+        """
         src_path = self.vault_dir / rel_path
         if not src_path.exists():
             raise ValueError(f"후보를 찾지 못했습니다: {rel_path}")
@@ -194,7 +203,14 @@ class CuratorAgent:
             )
 
         # 대상 AgentMemory 파일 결정 (없으면 05_OpenLoops.md에 append)
-        target_file = str(metadata.get("target_file") or "").strip()
+        target_file = ""
+        if target.strip():
+            alias = target.strip().lower().replace("_", "-")
+            target_file = self.PATCH_TARGETS.get(alias, "")
+            if not target_file:
+                raise ValueError(f"알 수 없는 target입니다: {target} (허용: {sorted(self.PATCH_TARGETS)})")
+        if not target_file:
+            target_file = str(metadata.get("target_file") or "").strip()
         if not target_file:
             target_file = "40_AgentMemory/05_OpenLoops.md"
 

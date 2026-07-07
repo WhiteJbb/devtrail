@@ -588,3 +588,74 @@ def test_get_project_briefing_warns_on_unpaired_plan(tmp_path):
     )
     briefing = vault_tools.get_project_briefing("Devtrail", settings=settings)
     assert "미짝 Plan" in briefing.text
+
+
+# ── A: 인덱스 우선 briefing / D: 신선도·Plan 리마인더 ────────────────────────
+
+
+def _write_project_context(vault: Path, project: str, body: str, updated_at: str = "") -> None:
+    meta = {"type": "project_context", "project": project, "status": "active"}
+    if updated_at:
+        meta["updated_at"] = updated_at
+    _write(vault, f"30_Projects/{project}/Context.md", body=body, **meta)
+
+
+def test_briefing_truncates_long_context_with_read_note_pointer(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경 " * 500)
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+
+    assert 'read_note("30_Projects/Devtrail/Context.md")' in briefing.text
+    # 전문(약 1500자)이 통째로 들어가지 않는다
+    assert briefing.text.count("배경") < 400
+
+
+def test_briefing_short_context_has_no_pointer(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "짧은 배경")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "짧은 배경" in briefing.text
+    assert "_전문: read_note" not in briefing.text
+
+
+def test_briefing_lists_reference_notes(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "## 참고 노트" in briefing.text
+    assert "- 30_Projects/Devtrail/Context.md" in briefing.text
+
+
+def test_briefing_warns_on_stale_context(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경", updated_at="2026-01-01")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "Context 신선도 경고" in briefing.text
+
+
+def test_briefing_no_warning_for_fresh_context(tmp_path):
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    _write_project_context(tmp_path, "Devtrail", "배경", updated_at=today)
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "Context 신선도 경고" not in briefing.text
+
+
+def test_briefing_no_warning_without_updated_at(tmp_path):
+    """updated_at이 없으면 오탐 경고를 내지 않는다."""
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "Context 신선도 경고" not in briefing.text
+
+
+def test_briefing_reminds_plan_when_none_today(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "write_work_plan" in briefing.text
+
+
+def test_briefing_no_plan_reminder_when_todays_plan_exists(tmp_path):
+    from datetime import datetime
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    vault_tools.write_work_plan(
+        project="Devtrail", goal="g", context_read="c", scope="s",
+        approach="a", risks="r", session_id="sess-1", settings=_settings(tmp_path),
+    )
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "## 리마인더" not in briefing.text

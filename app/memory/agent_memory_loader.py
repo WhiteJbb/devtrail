@@ -15,6 +15,7 @@ _AGENT_MEMORY_FILES = [
     "40_AgentMemory/03_WritingStyle.md",
     "40_AgentMemory/04_CareerContext.md",
     "40_AgentMemory/05_OpenLoops.md",
+    "40_AgentMemory/06_Lessons.md",
 ]
 
 _MAX_FILE_CHARS = 2000

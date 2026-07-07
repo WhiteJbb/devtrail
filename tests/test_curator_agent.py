@@ -274,3 +274,41 @@ def test_cli_promote_candidate_shows_result(monkeypatch, tmp_path):
     assert out.exit_code == 0
     assert "승격 완료" in out.output
     assert "20_Knowledge/abc.md" in out.output
+
+
+# ── apply_memory_patch --target / Lessons ─────────────────────────────
+
+
+def test_apply_memory_patch_target_lessons(tmp_path):
+    rel = _write_candidate(tmp_path, "memory_patch", "작업 방식 교훈")
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    result = agent.apply_memory_patch(rel, target="lessons")
+
+    assert result.promoted_path == "40_AgentMemory/06_Lessons.md"
+    text = (tmp_path / "40_AgentMemory" / "06_Lessons.md").read_text(encoding="utf-8")
+    assert "작업 방식 교훈" in text
+
+
+def test_apply_memory_patch_target_arg_overrides_frontmatter(tmp_path):
+    rel = _write_candidate(
+        tmp_path, "memory_patch", "교훈", target_file="40_AgentMemory/06_Lessons.md"
+    )
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    result = agent.apply_memory_patch(rel, target="open-loops")
+    assert result.promoted_path == "40_AgentMemory/05_OpenLoops.md"
+
+
+def test_apply_memory_patch_frontmatter_target_file_used(tmp_path):
+    rel = _write_candidate(
+        tmp_path, "memory_patch", "교훈", target_file="40_AgentMemory/06_Lessons.md"
+    )
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    result = agent.apply_memory_patch(rel)
+    assert result.promoted_path == "40_AgentMemory/06_Lessons.md"
+
+
+def test_apply_memory_patch_rejects_unknown_target(tmp_path):
+    rel = _write_candidate(tmp_path, "memory_patch", "교훈")
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    with pytest.raises(ValueError):
+        agent.apply_memory_patch(rel, target="nonsense")

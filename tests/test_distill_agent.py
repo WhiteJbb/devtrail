@@ -108,7 +108,9 @@ def test_suggest_knowledge_filters_to_knowledge(tmp_path):
 
     assert len(result.written) == 1
     assert result.written[0].rel_path.startswith("60_Candidates/Knowledge/")
-    assert "요청 종류: knowledge" in llm.last_prompt
+    # 1차 호출은 distill 프롬프트, 2차 호출은 critic 프롬프트
+    assert "요청 종류: knowledge" in llm.prompts[0]
+    assert "후보 목록" in llm.last_prompt
 
 
 def test_distill_today_without_today_sources_returns_empty(tmp_path):
@@ -148,3 +150,63 @@ def test_cli_suggest_blog_topics(monkeypatch):
     assert out.exit_code == 0
     assert "후보 1개 생성" in out.output
     assert "60_Candidates/BlogIdeas/글감.md" in out.output
+
+
+# ── E: critic 게이트 ─────────────────────────────────────────────────────────
+
+
+class _SeqLLM:
+    """호출 순서대로 다른 응답을 반환하는 stub (1차 distill, 2차 critic)."""
+
+    name = "seq"
+    model = "seq"
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def complete(self, prompt: str, system: str = "") -> str:
+        idx = min(self.calls, len(self.responses) - 1)
+        self.calls += 1
+        return self.responses[idx]
+
+
+def test_critic_drops_rejected_candidates(tmp_path):
+    _seed_capture(tmp_path)
+    critic_response = json.dumps({
+        "verdicts": [
+            {"index": 0, "keep": False, "reason": "커밋 메시지 재서술"},
+            {"index": 1, "keep": True, "reason": "근거 있음"},
+        ]
+    }, ensure_ascii=False)
+    llm = _SeqLLM([_distill_response(), critic_response])
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    result = agent.distill_today()
+
+    # _distill_response()는 4개 후보(knowledge/decision/memory_patch/blog_idea) → index 0 탈락
+    assert len(result.written) == 3
+    assert len(result.dropped) == 1
+    assert "커밋 메시지 재서술" in result.dropped[0]
+
+
+def test_critic_failure_is_fail_open(tmp_path):
+    """critic이 JSON을 못 주면 전부 통과한다 — 게이트 오류가 생성을 막지 않는다."""
+    _seed_capture(tmp_path)
+    llm = _SeqLLM([_distill_response(), "이건 JSON이 아님"])
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    result = agent.distill_today()
+
+    assert len(result.written) == 4
+    assert result.dropped == []
+
+
+def test_critic_missing_verdicts_keeps_all(tmp_path):
+    _seed_capture(tmp_path)
+    llm = _SeqLLM([_distill_response(), json.dumps({"other": []})])
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    result = agent.distill_today()
+
+    assert len(result.written) == 4

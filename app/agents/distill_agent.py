@@ -31,6 +31,7 @@ _CHARS_PER_TOKEN = 3  # 한국어 혼용 기준 보수적 추정
 class DistillResult:
     written: list[CandidateWriteResult]
     source_refs: list[str]
+    dropped: list[str] = ()  # critic 게이트 탈락 후보 ("제목 — 사유")
 
 
 class DistillAgent:
@@ -87,14 +88,69 @@ class DistillAgent:
         except JSONParseError as e:
             raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
+        specs, dropped = self._critic_filter(specs, context=context, related_section=related_section)
         written = self.writer.write_many(specs)
         self._inject_related_links(written, related)
         from app.services.wiki_service import mark_distilled
         mark_distilled(self.vault_dir, notes)
-        return DistillResult(written=written, source_refs=[n.path for n in notes])
+        return DistillResult(written=written, source_refs=[n.path for n in notes], dropped=dropped)
 
     def _llm(self) -> LLMProvider:
         return self.llm or get_task_llm_provider("distill", self.settings)
+
+    def _critic_filter(
+        self, specs: list[CandidateSpec], context: str, related_section: str
+    ) -> tuple[list[CandidateSpec], list[str]]:
+        """2차 LLM 패스로 근거 없음/재서술/일회성/중복 후보를 걸러낸다.
+
+        fail-open: critic 호출이 실패하거나 형식이 어긋나면 전부 통과시킨다 —
+        게이트 오류가 정상 후보 생성을 막아선 안 된다. 탈락 목록은 digest에
+        보고돼 오탐을 사람이 확인할 수 있다.
+        """
+        if not specs:
+            return specs, []
+
+        lines = []
+        for i, s in enumerate(specs):
+            snippet = (s.body or s.summary).strip()[:300]
+            lines.append(f"{i}. [{s.kind}] {s.title}\n   {snippet}")
+        prompt = render_prompt(
+            "candidate_critic",
+            DATE=self._date(),
+            CANDIDATES="\n\n".join(lines),
+            CONTEXT=context,
+            RELATED_KNOWLEDGE=related_section,
+        )
+
+        try:
+            data = complete_json(self._llm(), prompt)
+        except Exception:
+            return specs, []
+        verdicts = data.get("verdicts") if isinstance(data, dict) else None
+        if not isinstance(verdicts, list) or not verdicts:
+            return specs, []
+
+        drop_reasons: dict[int, str] = {}
+        for v in verdicts:
+            if not isinstance(v, dict) or v.get("keep") is not False:
+                continue
+            try:
+                idx = int(v.get("index"))
+            except (TypeError, ValueError):
+                continue
+            drop_reasons[idx] = str(v.get("reason") or "").strip()
+
+        kept: list[CandidateSpec] = []
+        dropped: list[str] = []
+        for i, s in enumerate(specs):
+            if i in drop_reasons:
+                reason = drop_reasons[i] or "사유 없음"
+                dropped.append(f"{s.title} — {reason}")
+            else:
+                kept.append(s)
+        if dropped:
+            self.wiki_service.append_vault_log("critic-drop", f"{len(dropped)}개 탈락", dropped)
+        return kept, dropped
 
     def _raw_notes(self, today_only: bool, days: int = 0) -> list[WikiNote]:
         from datetime import timedelta

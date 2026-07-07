@@ -46,6 +46,7 @@ class CandidateSpec:
     scope: str = ""
     confidence: str = ""
     requires_user_review: bool = False
+    target_file: str = ""  # memory_patch 전용: apply 시 반영될 40_AgentMemory 파일
 
 
 @dataclass(frozen=True)
@@ -107,9 +108,14 @@ class CandidateWriter:
         if effective_dedup:
             existing = self.find_duplicate(spec)
             if existing:
-                # 기존 후보 경로를 반환 (새로 쓰지 않음)
-                existing_path = self.vault_dir / existing
-                return CandidateWriteResult(spec=spec, path=existing_path, rel_path=existing)
+                # 새로 쓰지 않고 기존 후보를 최신 내용으로 갱신한다 — "안 쓰기"만 하면
+                # 오래된 초안이 검토 큐에 계속 남고 최신 정보가 유실된다.
+                updated = self._update_existing(existing, spec)
+                if updated is not None:
+                    return updated
+                # status가 candidate가 아니면(사람이 promote/수정한 파일) 덮어쓰지 않고
+                # 기존 경로만 반환한다.
+                return CandidateWriteResult(spec=spec, path=self.vault_dir / existing, rel_path=existing)
 
         rel_path = self._unique_rel_path(kind, spec.title, project=spec.project)
         path = self.vault_dir / rel_path
@@ -134,6 +140,8 @@ class CandidateWriter:
             metadata["scope"] = spec.scope
             metadata["confidence"] = spec.confidence
             metadata["requires_user_review"] = spec.requires_user_review
+            if spec.target_file:
+                metadata["target_file"] = spec.target_file
 
         body = self._render_body(spec)
         post = frontmatter.Post(body, **metadata)
@@ -145,6 +153,33 @@ class CandidateWriter:
 
     def write_many(self, specs: list[CandidateSpec], dedup: bool = True) -> list[CandidateWriteResult]:
         return [self.write(spec, dedup=dedup) for spec in specs]
+
+    def _update_existing(self, rel_path: str, spec: CandidateSpec) -> CandidateWriteResult | None:
+        """유사 후보를 새 내용으로 갱신한다. status=candidate가 아니면 None (건드리지 않음).
+
+        created_at·title은 보존하고 body를 교체하며, source_refs는 합집합으로 병합한다 —
+        같은 주제가 여러 날 이어질 때 근거 노트가 누적돼야 promote 판단이 쉬워진다.
+        """
+        path = self.vault_dir / rel_path
+        try:
+            existing = frontmatter.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if str(existing.metadata.get("status", "") or "").strip().lower() != "candidate":
+            return None
+
+        merged_refs = list(dict.fromkeys(
+            [str(r) for r in (existing.metadata.get("source_refs") or [])] + list(spec.source_refs)
+        ))
+        existing.metadata["updated_at"] = self._now().strftime("%Y-%m-%dT%H:%M:%S")
+        existing.metadata["source_refs"] = merged_refs
+        if spec.summary:
+            existing.metadata["summary"] = spec.summary
+        existing.content = self._render_body(spec)
+        path.write_text(frontmatter.dumps(existing), encoding="utf-8")
+
+        self.wiki_service.append_vault_log("distill-update", spec.title, [rel_path])
+        return CandidateWriteResult(spec=spec, path=path, rel_path=rel_path)
 
     def _render_body(self, spec: CandidateSpec) -> str:
         body = spec.body.strip()

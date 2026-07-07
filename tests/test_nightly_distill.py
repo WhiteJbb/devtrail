@@ -164,3 +164,68 @@ def test_run_no_telegram_when_not_configured(tmp_path):
     result = agent.run()
 
     assert result.sent_telegram is False
+
+
+# ── 후보 TTL 정리 + 저위험 패치 자동 반영 ────────────────────────────────────
+
+
+def test_run_expires_old_candidates(tmp_path):
+    import frontmatter as fm
+    old = tmp_path / "60_Candidates" / "Knowledge" / "stale.md"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    meta = {"type": "candidate", "candidate_type": "knowledge", "title": "stale",
+            "status": "candidate", "created_at": "2026-05-01"}
+    old.write_text(fm.dumps(fm.Post("본문", **meta)), encoding="utf-8")
+
+    _seed_session(tmp_path)
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert "60_Candidates/Knowledge/stale.md" in result.expired_candidates
+    assert not old.exists()
+    assert "## 후보 정리 (TTL 초과)" in result.digest_text
+
+
+def test_run_auto_applies_low_risk_patches(tmp_path):
+    import frontmatter as fm
+    patch = tmp_path / "60_Candidates" / "MemoryPatches" / "auto.md"
+    patch.parent.mkdir(parents=True, exist_ok=True)
+    meta = {"type": "candidate", "candidate_type": "memory_patch", "title": "자동 교훈",
+            "status": "candidate", "created_at": "2026-06-23",
+            "requires_user_review": False,
+            "target_file": "40_AgentMemory/06_Lessons.md"}
+    patch.write_text(fm.dumps(fm.Post("## 교훈\n\n.venv로 테스트", **meta)), encoding="utf-8")
+
+    _seed_session(tmp_path)
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert result.auto_applied_patches
+    lessons = (tmp_path / "40_AgentMemory" / "06_Lessons.md").read_text(encoding="utf-8")
+    assert ".venv로 테스트" in lessons
+    # 원본은 applied 마킹
+    applied = fm.loads(patch.read_text(encoding="utf-8"))
+    assert applied.metadata["status"] == "applied"
+
+
+def test_run_leaves_review_required_patches_alone(tmp_path):
+    import frontmatter as fm
+    patch = tmp_path / "60_Candidates" / "MemoryPatches" / "manual.md"
+    patch.parent.mkdir(parents=True, exist_ok=True)
+    meta = {"type": "candidate", "candidate_type": "memory_patch", "title": "검토 필요",
+            "status": "candidate", "created_at": "2026-06-23",
+            "requires_user_review": True}
+    patch.write_text(fm.dumps(fm.Post("본문", **meta)), encoding="utf-8")
+
+    _seed_session(tmp_path)
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert result.auto_applied_patches == []
+    assert fm.loads(patch.read_text(encoding="utf-8")).metadata["status"] == "candidate"

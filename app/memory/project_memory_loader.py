@@ -19,6 +19,7 @@ class ProjectContext:
     body: str
     tags: list[str] = field(default_factory=list)
     status: str = ""
+    updated_at: str = ""  # frontmatter updated_at (신선도 경고용)
 
 
 @dataclass(frozen=True)
@@ -107,4 +108,5 @@ class ProjectMemoryLoader:
             body=body,
             tags=tags,
             status=str(metadata.get("status", "") or ""),
+            updated_at=str(metadata.get("updated_at", "") or ""),
         )
