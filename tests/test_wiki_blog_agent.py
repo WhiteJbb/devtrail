@@ -124,7 +124,6 @@ def test_cli_write_blog_success(monkeypatch, tmp_path):
         "app.cli.get_settings",
         lambda: SimpleNamespace(
             obsidian_vault_root=str(tmp_path),
-            wiki_folder="60_Wiki",
             llm_provider="ollama",
             messenger_provider="",
         ),
@@ -143,7 +142,6 @@ def test_cli_write_blog_fails_without_vault(monkeypatch):
         "app.cli.get_settings",
         lambda: SimpleNamespace(
             obsidian_vault_root="",
-            wiki_folder="60_Wiki",
             llm_provider="",
             messenger_provider="",
         ),

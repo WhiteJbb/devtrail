@@ -58,7 +58,8 @@ def test_suggest_creates_career_bullet_candidates(tmp_path):
 def test_suggest_with_project_filter(tmp_path):
     _seed_session(tmp_path, project="XCoreChat")
     llm = FakeLLM(_career_response(1))
-    agent = CareerBulletAgent(settings=_settings(tmp_path), llm=llm)
+    # 시드 노트(2026-06-23)가 7일 recency cutoff 안에 들도록 now를 고정한다
+    agent = CareerBulletAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
 
     result = agent.suggest(project="XCoreChat")
 
@@ -69,7 +70,7 @@ def test_suggest_with_project_filter(tmp_path):
 
 def test_suggest_empty_when_no_notes(tmp_path):
     llm = FakeLLM(_career_response(0))
-    agent = CareerBulletAgent(settings=_settings(tmp_path), llm=llm)
+    agent = CareerBulletAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
 
     result = agent.suggest()
 
@@ -82,7 +83,8 @@ def test_suggest_no_fabricated_metrics_prompt(tmp_path):
     """프롬프트에 과장 금지 지시가 포함돼 있는지 확인."""
     _seed_session(tmp_path)
     llm = FakeLLM(_career_response(1))
-    agent = CareerBulletAgent(settings=_settings(tmp_path), llm=llm)
+    # 시드 노트(2026-06-23)가 7일 recency cutoff 안에 들도록 now를 고정한다
+    agent = CareerBulletAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
     agent.suggest()
 
     assert "과장 금지" in llm.last_prompt or "없는 수치" in llm.last_prompt

@@ -14,7 +14,6 @@ from app import vault_tools
 def _settings(tmp_path: Path):
     return SimpleNamespace(
         obsidian_vault_root=str(tmp_path),
-        wiki_folder="60_Wiki",
         git_diff_max_chars=800,
     )
 

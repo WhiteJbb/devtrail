@@ -46,7 +46,7 @@ class NightlyDistillAgent:
         if not self.settings.obsidian_vault_root:
             raise RuntimeError("OBSIDIAN_VAULT_PATH is not configured.")
         self.vault_dir = Path(self.settings.obsidian_vault_root)
-        self.wiki_service = WikiService(self.vault_dir, wiki_folder=self.settings.wiki_folder)
+        self.wiki_service = WikiService(self.vault_dir)
 
     def run(self, weekly: bool = False) -> NightlyDistillResult:
         """daily(기본) 또는 weekly 모드로 정제 + digest를 생성한다."""

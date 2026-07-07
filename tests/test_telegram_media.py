@@ -51,7 +51,7 @@ def test_handle_voice_no_stt(tmp_path):
     fake_file.write_bytes(b"fake ogg data")
 
     mock_capture = MagicMock()
-    mock_capture.capture_attachment.return_value = MagicMock(rel_path="00_Inbox/Captures/note.md")
+    mock_capture.capture_attachment.return_value = MagicMock(rel_path="00_Inbox/Memos/note.md")
 
     handler = TelegramMediaHandler(
         provider=mock_provider,
@@ -79,7 +79,7 @@ def test_handle_voice_with_stt(tmp_path):
     mock_provider.download_file.return_value = fake_file
 
     mock_capture = MagicMock()
-    mock_capture.capture.return_value = MagicMock(rel_path="00_Inbox/Captures/note.md")
+    mock_capture.capture.return_value = MagicMock(rel_path="00_Inbox/Memos/note.md")
 
     stt = MockSpeechToTextProvider(response="오늘 RAG 작업했음")
     handler = TelegramMediaHandler(
@@ -106,7 +106,7 @@ def test_handle_image(tmp_path):
     mock_provider.download_file.return_value = fake_file
 
     mock_capture = MagicMock()
-    mock_capture.capture_attachment.return_value = MagicMock(rel_path="00_Inbox/Captures/img.md")
+    mock_capture.capture_attachment.return_value = MagicMock(rel_path="00_Inbox/Memos/img.md")
 
     handler = TelegramMediaHandler(
         provider=mock_provider,
@@ -128,7 +128,7 @@ def test_handle_image(tmp_path):
 def test_handle_url(tmp_path):
     mock_provider = MagicMock()
     mock_capture = MagicMock()
-    mock_capture.capture_url.return_value = MagicMock(rel_path="00_Inbox/Captures/url.md")
+    mock_capture.capture_url.return_value = MagicMock(rel_path="00_Inbox/URLs/url.md")
 
     handler = TelegramMediaHandler(
         provider=mock_provider,
@@ -140,7 +140,7 @@ def test_handle_url(tmp_path):
     # .env의 실제 LLM 키 유무에 따라 "URL 캡처 완료" / "URL 캡처 + 요약 완료"로 갈리므로
     # 공통 접두어와 노트 경로만 검증한다.
     assert "URL 캡처" in reply
-    assert "00_Inbox/Captures/url.md" in reply
+    assert "00_Inbox/URLs/url.md" in reply
     mock_capture.capture_url.assert_called_once()
 
 
@@ -159,7 +159,7 @@ def test_capture_attachment_voice(tmp_path):
 
     result = agent.capture_attachment(attachment, source="telegram_voice")
 
-    assert result.rel_path.startswith("00_Inbox/Captures/")
+    assert result.rel_path.startswith("00_Inbox/Memos/")
     text = result.path.read_text(encoding="utf-8")
     assert "source: telegram_voice" in text
     assert "STT" in text
@@ -174,7 +174,7 @@ def test_capture_url_saves_note(tmp_path):
 
     result = agent.capture_url("https://example.com", title="Example", source="telegram_url")
 
-    assert result.rel_path.startswith("00_Inbox/Captures/")
+    assert result.rel_path.startswith("00_Inbox/URLs/")
     text = result.path.read_text(encoding="utf-8")
     assert "url: https://example.com" in text
     assert "title: Example" in text

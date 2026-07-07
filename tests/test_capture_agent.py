@@ -27,7 +27,7 @@ def _git(repo, *args):
 def test_capture_writes_inbox_note_and_log(tmp_path):
     result = _agent(tmp_path).capture("오늘 RAG 검색 정리", project="Devtrail")
 
-    assert result.rel_path.startswith("00_Inbox/Captures/")
+    assert result.rel_path.startswith("00_Inbox/Memos/")
     text = result.path.read_text(encoding="utf-8")
     assert "type: capture" in text
     assert "project: Devtrail" in text
@@ -84,7 +84,7 @@ def test_cli_capture_and_daily_log(monkeypatch, tmp_path):
         assert daily.exit_code == 0
         assert "daily log 생성 완료" in daily.output
 
-        assert list((tmp_path / "00_Inbox" / "Captures").glob("*.md"))
+        assert list((tmp_path / "00_Inbox" / "Memos").glob("*.md"))
         assert (tmp_path / "10_Worklog" / "Daily").exists()
     finally:
         monkeypatch.delenv("OBSIDIAN_VAULT_PATH", raising=False)

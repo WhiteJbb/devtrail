@@ -54,11 +54,8 @@ class Settings(BaseSettings):
     # --- Obsidian ---
     obsidian_vault_path: str = Field(default="", alias="OBSIDIAN_VAULT_PATH")
     obsidian_vault_dir: str = Field(default="", alias="OBSIDIAN_VAULT_DIR")  # legacy alias
-    wiki_folder: str = Field(default="60_Wiki", alias="WIKI_FOLDER")
 
     # --- Git ---
-    git_log_limit: int = Field(default=20, alias="GIT_LOG_LIMIT")
-    git_include_diff: bool = Field(default=True, alias="GIT_INCLUDE_DIFF")
     git_diff_max_chars: int = Field(default=800, alias="GIT_DIFF_MAX_CHARS")
 
     # --- Messenger ---

@@ -48,7 +48,7 @@ class CareerBulletAgent:
         if not self.settings.obsidian_vault_root:
             raise RuntimeError("OBSIDIAN_VAULT_PATH is not configured.")
         self.vault_dir = Path(self.settings.obsidian_vault_root)
-        self.wiki_service = WikiService(self.vault_dir, wiki_folder=self.settings.wiki_folder)
+        self.wiki_service = WikiService(self.vault_dir)
         self.writer = CandidateWriter(self.vault_dir, wiki_service=self.wiki_service, now=now)
 
     def suggest(self, project: str = "") -> CareerBulletResult:
@@ -67,8 +67,9 @@ class CareerBulletAgent:
         data = complete_json(self._llm(), prompt)
         specs = self._parse_specs(data, source_refs=[n.path for n in notes])
         written = self.writer.write_many(specs)
-        from app.services.wiki_service import mark_distilled
-        mark_distilled(self.vault_dir, notes)
+        # needs_distill 마킹은 DistillAgent 단독 책임이다. 여기서도 마킹하면
+        # nightly에서 먼저 실행되는 쪽이 노트를 소진해 나머지가 항상 빈손이 된다.
+        # 중복 방지는 7일 recency cutoff + CandidateWriter dedup이 담당한다.
         return CareerBulletResult(written=written, source_refs=[n.path for n in notes])
 
     def _llm(self) -> LLMProvider:
@@ -82,11 +83,13 @@ class CareerBulletAgent:
         from datetime import timedelta
         cutoff = ((self.now or datetime.now()) - timedelta(days=7)).strftime("%Y-%m-%d")
         all_notes = self.wiki_service.scan_notes()
+        # needs_distill 필터를 걸지 않는다 — nightly에서 DistillAgent가 먼저 실행되며
+        # 같은 노트를 needs_distill=False로 마킹하므로, 필터를 걸면 career bullet이
+        # 볼 노트가 항상 없다 (49d7afd 이후 회귀).
         notes = [
             n for n in all_notes
             if n.path.startswith(_SOURCE_PREFIXES)
             and self._note_date(n) >= cutoff
-            and n.metadata.get("needs_distill") is not False
         ]
         if project:
             notes = [n for n in notes if str(n.metadata.get("project") or "").lower() == project.lower()

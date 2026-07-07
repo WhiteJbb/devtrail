@@ -196,7 +196,7 @@ class CommandRouter:
             settings = get_settings()
             if not settings.obsidian_vault_root:
                 return "Vault 경로가 아직 설정되지 않았어요. 서버 .env의 OBSIDIAN_VAULT_PATH를 확인해주세요."
-            service = WikiService(Path(settings.obsidian_vault_root), wiki_folder=settings.wiki_folder)
+            service = WikiService(Path(settings.obsidian_vault_root))
             results = service.search(arg, limit=5)
             if not results:
                 return f"'{arg}'에 맞는 노트를 못 찾았어요. 다른 키워드로 시도해볼까요?"

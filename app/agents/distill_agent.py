@@ -48,7 +48,7 @@ class DistillAgent:
         if not self.settings.obsidian_vault_root:
             raise RuntimeError("OBSIDIAN_VAULT_PATH is not configured.")
         self.vault_dir = Path(self.settings.obsidian_vault_root)
-        self.wiki_service = WikiService(self.vault_dir, wiki_folder=self.settings.wiki_folder)
+        self.wiki_service = WikiService(self.vault_dir)
         self.writer = CandidateWriter(self.vault_dir, wiki_service=self.wiki_service, now=now)
 
     def distill_today(self) -> DistillResult:

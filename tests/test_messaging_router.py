@@ -33,7 +33,7 @@ def test_search_no_vault_configured(monkeypatch):
     from types import SimpleNamespace
 
     router = _router()
-    with patch("app.config.get_settings", return_value=SimpleNamespace(obsidian_vault_root="", wiki_folder="60_Wiki")):
+    with patch("app.config.get_settings", return_value=SimpleNamespace(obsidian_vault_root="")):
         out = router.handle("/search RAG")
     assert "OBSIDIAN_VAULT_PATH" in out
 
