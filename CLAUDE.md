@@ -9,6 +9,15 @@ MCP(`devtrail mcp-serve`)가 연결돼 있으면 세션 종료/컴팩팅 전 기
 `10_Worklog/Sessions/` 세션 기록을 한 번에 생성하므로 별도로 `capture-session`을
 실행할 필요가 없다. 세션 시작 시에는 `get_project_briefing`을 먼저 호출한다.
 
+기록 작성 규칙:
+- 여러 항목이 있는 필드(goal, what_changed 등)는 한 문단으로 잇지 말고 markdown
+  불릿/번호 리스트로 작성한다 — 기록은 사람이 다시 읽는 문서다.
+- Process 기록 후 작업이 더 이어졌다면(커밋 발생) 세션을 끝내기 전에
+  `write_session_process`를 **다시 호출**한다. 같은 세션 기록이 갱신되므로
+  중복 파일 걱정 없이 최신 상태를 반영하면 된다.
+- `agent_execution_notes`의 next_checks/better_approach는 Lessons로 증류되는
+  필드다 — 이번 세션 한정 사실이 아니라 다음 세션에도 통하는 교훈으로 쓴다.
+
 `devtrail capture-session --from-agent`는 MCP가 연결되지 않았을 때의 fallback으로
 유지한다. 아래 capture-session rule은 이 fallback 경로에 적용된다.
 

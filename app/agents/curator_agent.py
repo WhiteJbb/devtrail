@@ -218,13 +218,22 @@ class CuratorAgent:
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         today = (self.now or datetime.now()).strftime("%Y-%m-%d")
+        # 선행 H1은 떼고 붙인다 — 출처는 아래 주석 마커가 이미 담고 있고, 세션마다
+        # H1이 쌓이면 대상 파일(Lessons/OpenLoops)이 보일러플레이트로 비대해진다.
+        # 단, H1 외에 본문이 없으면(제목만 있는 후보) 제거하지 않는다.
+        body_lines = patch_body.splitlines()
+        if body_lines and body_lines[0].lstrip().startswith("# "):
+            remainder = "\n".join(body_lines[1:]).strip()
+            if remainder:
+                patch_body = remainder
         append_text = f"\n\n<!-- patch applied {today} from {rel_path} -->\n\n{patch_body}"
 
         if target_path.exists():
             existing = target_path.read_text(encoding="utf-8")
             target_path.write_text(existing + append_text, encoding="utf-8")
         else:
-            target_path.write_text(patch_body, encoding="utf-8")
+            # 새 파일이어도 출처 마커를 남긴다 — H1을 떼고 붙이므로 마커가 유일한 출처다
+            target_path.write_text(append_text.lstrip() + "\n", encoding="utf-8")
 
         # 원본 candidate에 applied 마킹
         metadata["status"] = "applied"

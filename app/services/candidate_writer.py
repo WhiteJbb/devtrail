@@ -130,7 +130,9 @@ class CandidateWriter:
             "project": spec.project,
             "tags": spec.tags,
             "source_refs": spec.source_refs,
-            "summary": spec.summary,
+            # summary가 비면 본문 첫 의미 줄로 채운다 — list-candidates/digest/Telegram
+            # 카드가 제목 외에 보여줄 한 줄이 생긴다.
+            "summary": spec.summary or self._derive_summary(spec.body),
         }
         if kind == "session_handoff":
             metadata["handoff_type"] = spec.handoff_type
@@ -154,6 +156,31 @@ class CandidateWriter:
     def write_many(self, specs: list[CandidateSpec], dedup: bool = True) -> list[CandidateWriteResult]:
         return [self.write(spec, dedup=dedup) for spec in specs]
 
+    def upsert_exact(self, spec: CandidateSpec) -> CandidateWriteResult:
+        """제목이 정확히 같은 candidate가 있으면 갱신하고, 없으면 dedup 없이 새로 쓴다.
+
+        같은 세션이 write를 재호출하는 경로(예: Process 재기록 후 memory_patch 갱신)용.
+        유사도 dedup은 날짜만 다른 이전 세션 후보를 잘못 잡을 수 있어 정확 일치만 본다.
+        """
+        kind = self._normalize_kind(spec.kind)
+        if kind not in _CANDIDATE_DIRS:
+            raise ValueError(f"unsupported candidate kind: {spec.kind}")
+        cand_dir = self.vault_dir / _CANDIDATE_DIRS[kind]
+        if cand_dir.exists():
+            target_title = spec.title.strip()
+            for md_path in cand_dir.glob("*.md"):
+                try:
+                    existing = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if str(existing.metadata.get("title") or "").strip() != target_title:
+                    continue
+                rel = str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
+                updated = self._update_existing(rel, spec)
+                if updated is not None:
+                    return updated
+        return self.write(spec, dedup=False)
+
     def _update_existing(self, rel_path: str, spec: CandidateSpec) -> CandidateWriteResult | None:
         """유사 후보를 새 내용으로 갱신한다. status=candidate가 아니면 None (건드리지 않음).
 
@@ -173,8 +200,9 @@ class CandidateWriter:
         ))
         existing.metadata["updated_at"] = self._now().strftime("%Y-%m-%dT%H:%M:%S")
         existing.metadata["source_refs"] = merged_refs
-        if spec.summary:
-            existing.metadata["summary"] = spec.summary
+        new_summary = spec.summary or self._derive_summary(spec.body)
+        if new_summary:
+            existing.metadata["summary"] = new_summary
         existing.content = self._render_body(spec)
         path.write_text(frontmatter.dumps(existing), encoding="utf-8")
 
@@ -225,6 +253,18 @@ class CandidateWriter:
             "handoff": "session_handoff",
         }
         return aliases.get(value, value)
+
+    @staticmethod
+    def _derive_summary(body: str, limit: int = 120) -> str:
+        """본문에서 헤딩·불릿 기호를 뗀 첫 의미 줄을 요약으로 뽑는다."""
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            stripped = re.sub(r"^[-*>\d.)\s]+", "", stripped).strip()
+            if stripped:
+                return stripped[:limit]
+        return ""
 
     @staticmethod
     def _norm_title(title: str) -> str:

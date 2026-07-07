@@ -102,6 +102,8 @@ PowerShell로 직접 실행해 다음은 확인했다:
   `.claude/.vault-mcp/current_session.json`의 `process_written` 플래그를 읽어
   차단/통과를 가르는 로직. dirty만 보면 커밋/머지로 깔끔하게 끝낸(기록 가치가
   가장 높은) 세션이 기록 없이 통과하는 역설이 있어 세션 중 커밋 검사를 추가했다.
+  process_written=true여도 마지막 기록(마커 갱신) 이후 새 커밋이 있으면 재기록을
+  요구한다 — 재호출은 같은 세션의 Process/워크로그를 새 파일 없이 갱신(upsert)한다.
 
 **하지만 Claude Code의 실제 훅 프로토콜(정확한 stdin JSON 필드, exit code 의미, 차단 응답
 포맷)에 대한 실제 세션 검증은 하지 않았다.** 등록 전 반드시 별도 세션에서 검증할 것 — §6의
