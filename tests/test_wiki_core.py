@@ -15,7 +15,8 @@ def test_init_vault_creates_skeleton_without_overwrite(tmp_path):
     result = service.init_vault()
 
     assert (tmp_path / "00_Inbox" / "Memos").is_dir()
-    assert (tmp_path / "20_Knowledge" / "RAG").is_dir()
+    assert (tmp_path / "20_Knowledge").is_dir()
+    assert (tmp_path / "30_Projects" / "Devtrail" / "Design").is_dir()
     assert (tmp_path / "10_Worklog" / "GitSummaries").is_dir()
     assert (tmp_path / "60_Candidates" / "SessionHandoffs").is_dir()
     assert (tmp_path / "70_Tasks" / "Done").is_dir()
@@ -90,7 +91,7 @@ def test_cli_init_index_search(monkeypatch, tmp_path):
         assert init.exit_code == 0
         assert "Vault 초기화 완료" in init.output
 
-        note = tmp_path / "20_Knowledge" / "AI" / "agent.md"
+        note = tmp_path / "20_Knowledge" / "agent.md"
         note.write_text("# Agent Memory\n\n작업 맥락 기록", encoding="utf-8")
 
         index = runner.invoke(cli.app, ["index-vault"])
