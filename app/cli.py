@@ -100,6 +100,57 @@ def init_vault() -> None:
         typer.echo(f"  기존 파일 유지: {len(result.existing_files)}개")
 
 
+@app.command("init-project")
+def init_project(
+    project: str = typer.Argument(..., help="프로젝트 이름 (30_Projects/<이름>/ 에 생성)"),
+    repo: Path = typer.Option(
+        None,
+        "--repo",
+        "-r",
+        help="이 repo의 .claude/vault.json에 프로젝트명을 저장해 세션 briefing 매칭을 고정",
+    ),
+) -> None:
+    """30_Projects/<프로젝트>/에 문서 스캐폴드를 만든다 (기존 파일 보존).
+
+    생성: Context.md, Decisions/, Plans/, Design/(IA·UserScenarios·Personas),
+    Conversations/, PromptLog.md. Context.md는 get_project_briefing이 세션 시작 시
+    자동 주입하므로 생성 후 배경·목표·제약을 채워야 한다.
+    """
+    service = _wiki_service_from_settings()
+    try:
+        result = service.init_project(project)
+    except ValueError as e:
+        _fail(str(e))
+
+    typer.secho(f"\n프로젝트 초기화 완료: {project}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  경로: {result.vault_dir / '30_Projects' / project}")
+    typer.echo(f"  생성 폴더: {len(result.created_dirs)}개")
+    typer.echo(f"  생성 파일: {len(result.created_files)}개")
+    if result.existing_files:
+        typer.echo(f"  기존 파일 유지: {len(result.existing_files)}개")
+
+    if repo is not None:
+        if not repo.is_dir():
+            _fail(f"--repo 경로가 디렉터리가 아닙니다: {repo}")
+        import json
+
+        config_path = repo / ".claude" / "vault.json"
+        config: dict = {}
+        if config_path.exists():
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                if not isinstance(config, dict):
+                    config = {}
+            except (OSError, json.JSONDecodeError):
+                config = {}
+        config["project"] = project
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        typer.echo(f"  repo 매핑 저장: {config_path}")
+
+    typer.echo("\n  다음 단계: Context.md의 배경·목표·제약을 채우세요 — 세션 briefing 품질이 여기서 결정됩니다.")
+
+
 @app.command("install-hooks")
 def install_hooks(
     repo: Path = typer.Argument(..., help="대상 git 레포지토리 경로"),
