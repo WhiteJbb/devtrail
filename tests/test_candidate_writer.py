@@ -107,3 +107,39 @@ def test_session_handoffs_alias_normalizes(tmp_path):
     spec = CandidateSpec(kind="session-handoffs", title="Plan alias test", body="x", project="Devtrail")
     result = writer.write(spec)
     assert "SessionHandoffs" in result.rel_path
+
+# ── 갱신형 dedup ─────────────────────────────────────────────────────────────
+
+
+def test_dedup_updates_existing_candidate_body(tmp_path):
+    """유사 후보 재생성 시 새 파일 대신 기존 파일의 body가 갱신된다."""
+    writer = _writer(tmp_path)
+    r1 = writer.write(CandidateSpec(kind="knowledge", title="RAG 파이프라인 구조", body="옛 내용",
+                                    source_refs=["10_Worklog/Sessions/a.md"]))
+    r2 = writer.write(CandidateSpec(kind="knowledge", title="RAG 파이프라인 구조", body="새 내용",
+                                    source_refs=["10_Worklog/Sessions/b.md"]))
+
+    assert r1.rel_path == r2.rel_path
+    post = frontmatter.loads(r2.path.read_text(encoding="utf-8"))
+    assert "새 내용" in post.content
+    assert "옛 내용" not in post.content
+    assert post.metadata["updated_at"]
+    # source_refs는 합집합으로 병합
+    assert "10_Worklog/Sessions/a.md" in post.metadata["source_refs"]
+    assert "10_Worklog/Sessions/b.md" in post.metadata["source_refs"]
+
+
+def test_dedup_does_not_touch_promoted_candidate(tmp_path):
+    """사람이 promote한 파일(status!=candidate)은 덮어쓰지 않는다."""
+    writer = _writer(tmp_path)
+    r1 = writer.write(CandidateSpec(kind="knowledge", title="RAG 파이프라인 구조", body="원본"))
+    post = frontmatter.loads(r1.path.read_text(encoding="utf-8"))
+    post.metadata["status"] = "promoted"
+    r1.path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    r2 = writer.write(CandidateSpec(kind="knowledge", title="RAG 파이프라인 구조", body="변경 시도"))
+
+    assert r2.rel_path == r1.rel_path
+    final = frontmatter.loads(r1.path.read_text(encoding="utf-8"))
+    assert "원본" in final.content
+    assert "변경 시도" not in final.content

@@ -44,6 +44,8 @@ _ALLOWED_READ_PREFIXES = _STABLE_PREFIXES + (_CANDIDATE_PREFIX,)
 _RECORD_NOTE_KINDS = {"knowledge", "decision", "blog_idea", "career_bullet"}
 
 _SECTION_MAX_CHARS = 1200
+_CONTEXT_MAX_CHARS = 600  # 인덱스 우선: 요약만 주입하고 전문은 read_note로 당겨 읽게 한다
+_CONTEXT_STALE_DAYS = 30  # Context.md updated_at이 이보다 오래되면 briefing에 경고
 _RECENT_HANDOFF_LIMIT = 3
 _ORPHAN_REATTACH_WINDOW_HOURS = 24
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
@@ -348,8 +350,17 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     sections.append(f"## Current Focus\n\n{_truncate(agent_memory.render())}")
 
     if project_ctx:
-        sections.append(f"## Project Context\n\n{_truncate(project_ctx.body)}")
+        # 인덱스 우선: 요약만 넣고 전문은 필요할 때 read_note로 조회하게 한다 —
+        # 매 세션 전체를 밀어넣으면 대부분 안 쓰는 내용이 토큰만 차지한다.
+        context_section = _truncate(project_ctx.body, _CONTEXT_MAX_CHARS)
+        if len(project_ctx.body.strip()) > _CONTEXT_MAX_CHARS:
+            context_section += f"\n\n_전문: read_note(\"{project_ctx.rel_path}\")_"
+        sections.append(f"## Project Context\n\n{context_section}")
         source_refs.append(project_ctx.rel_path)
+
+        staleness = _context_staleness_warning(project_ctx.updated_at)
+        if staleness:
+            sections.append(staleness)
 
     decisions_dir = vault_dir / "60_Candidates" / "Decisions"
     recent_decisions: list[str] = []
@@ -398,12 +409,51 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     if next_actions:
         sections.append("## Suggested Next Actions\n\n" + _truncate("\n\n".join(next_actions)))
 
+    # 오늘 Plan이 아직 없으면 리마인더 — 사후 "미짝 Plan 경고"의 대칭.
+    today = datetime.now().strftime("%Y-%m-%d")
+    has_todays_plan = any(p["created_at"][:10] == today for p in plans)
+    if not has_todays_plan:
+        sections.append(
+            "## 리마인더\n\n구현을 시작하기 전에 `write_work_plan`으로 이 세션의 Plan을 먼저 기록하세요."
+        )
+
+    # 인덱스 우선: 주입하지 않은 전문은 필요할 때 read_note로 조회
+    unique_refs = list(dict.fromkeys(source_refs))
+    if unique_refs:
+        sections.append(
+            "## 참고 노트 (필요 시 read_note로 전문 조회)\n\n"
+            + "\n".join(f"- {ref}" for ref in unique_refs)
+        )
+
     return ProjectBriefing(
         project=resolved_project,
         matched=True,
         candidates=[],
         text="\n\n".join(sections),
         source_refs=source_refs,
+    )
+
+
+def _context_staleness_warning(updated_at: str) -> str:
+    """Context.md의 updated_at이 _CONTEXT_STALE_DAYS를 넘었으면 경고 섹션을 반환한다.
+
+    메모리는 '작성 시점의 사실'이다 — 오래된 배경으로 조용히 작업하는 것을 막는다.
+    updated_at이 없거나 파싱 불가면 경고하지 않는다 (오탐 방지).
+    """
+    raw = updated_at.strip()
+    if not raw:
+        return ""
+    try:
+        updated = datetime.strptime(raw[:10], "%Y-%m-%d")
+    except ValueError:
+        return ""
+    age_days = (datetime.now() - updated).days
+    if age_days <= _CONTEXT_STALE_DAYS:
+        return ""
+    return (
+        "## ⚠ Context 신선도 경고\n\n"
+        f"Context.md가 {age_days}일 전({raw[:10]})에 마지막으로 갱신됐습니다. "
+        "배경·목표·제약이 여전히 유효한지 확인하고 필요하면 갱신을 제안하세요."
     )
 
 
@@ -662,6 +712,9 @@ def write_session_process(
                 confidence=str(notes.get("confidence", "unspecified")),
                 requires_user_review=bool(notes.get("requires_user_review", True)),
                 source_refs=[process_result.rel_path],
+                # 실행 노트는 "일하는 방식" 교훈이므로 OpenLoops(할 일)가 아니라
+                # Lessons에 반영한다 — apply 시 이 파일로 append된다.
+                target_file="40_AgentMemory/06_Lessons.md",
             ),
             # 제목이 "{project} — Agent Execution Notes — {date}" 고정 형식이라 날짜만
             # 다른 이전 세션 제목과 유사도가 임계값을 넘는다. dedup을 켜두면 write()가

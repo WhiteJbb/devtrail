@@ -184,3 +184,15 @@ def test_cli_build_context_renders_pack(monkeypatch, tmp_path):
     assert out.exit_code == 0, out.output
     assert "Context Pack" in out.output
     assert "source_refs: 1개" in out.output
+
+
+def test_agent_memory_loader_includes_lessons(tmp_path):
+    """06_Lessons.md가 briefing에 포함되도록 로더가 읽어야 한다."""
+    lessons = tmp_path / "40_AgentMemory" / "06_Lessons.md"
+    lessons.parent.mkdir(parents=True, exist_ok=True)
+    lessons.write_text("# Lessons\n\n- 테스트는 .venv로 실행한다", encoding="utf-8")
+
+    memory = AgentMemoryLoader(tmp_path).load()
+
+    assert "40_AgentMemory/06_Lessons.md" in memory.source_refs
+    assert "테스트는 .venv로 실행한다" in memory.render()

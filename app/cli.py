@@ -501,6 +501,7 @@ def promote_all_cmd(
 def apply_memory_patch(
     rel_path: str = typer.Argument(default="", help="적용할 MemoryPatch 후보 경로 (vault 기준). 생략 시 인터랙티브 선택."),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="목록에서 번호로 선택"),
+    target: str = typer.Option("", "--target", "-t", help="반영 대상: open-loops(할 일) | lessons(일하는 방식 교훈). 생략 시 후보의 target_file → OpenLoops 순."),
 ) -> None:
     """MemoryPatch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다.
 
@@ -531,7 +532,7 @@ def apply_memory_patch(
         rel_path = patches[idx - 1].rel_path
 
     try:
-        result = curator.apply_memory_patch(rel_path)
+        result = curator.apply_memory_patch(rel_path, target=target)
     except ValueError as e:
         _fail(str(e))
 
@@ -1264,10 +1265,12 @@ def vault_cleanup(
     keep: int = typer.Option(3, "--keep", help="프로젝트당 보존할 최신 세션(Plan+Process 짝) 수"),
     worklog_days: int = typer.Option(30, "--worklog-days", help="distill된 worklog 세션 보존 기간(일)"),
     handoff_days: int = typer.Option(30, "--handoff-days", help="최신 N개를 넘는 SessionHandoffs 보존 기간(일)"),
+    candidate_ttl: int = typer.Option(14, "--candidate-ttl", help="검토 안 된 후보 보존 기간(일) — 재생성 가능 kind는 삭제, decision/memory_patch는 _Archive/ 이동"),
 ) -> None:
-    """오래된 10_Worklog/Sessions/와 60_Candidates/SessionHandoffs/를 정리한다.
+    """오래된 worklog 세션·SessionHandoffs·검토 안 된 후보를 정리한다.
 
     사람이 직접 실행하는 destructive 명령이며 MCP에는 노출하지 않는다.
+    (후보 TTL 정리는 nightly-distill도 자동 수행한다.)
     """
     from app.services.retention import cleanup_vault
 
@@ -1280,17 +1283,24 @@ def vault_cleanup(
         keep_per_project=keep,
         worklog_retention_days=worklog_days,
         handoff_retention_days=handoff_days,
+        candidate_ttl_days=candidate_ttl,
         dry_run=dry_run,
     )
 
-    total = len(result.deleted_worklog) + len(result.deleted_handoffs)
+    total = (
+        len(result.deleted_worklog)
+        + len(result.deleted_handoffs)
+        + len(result.deleted_candidates)
+        + len(result.archived_candidates)
+    )
     if total == 0:
         typer.echo("정리할 대상이 없습니다.")
         return
 
-    verb = "삭제 예정 (--dry-run)" if dry_run else "삭제 완료"
+    verb = "정리 예정 (--dry-run)" if dry_run else "정리 완료"
     typer.secho(
-        f"\n{verb}: worklog {len(result.deleted_worklog)}개, handoff {len(result.deleted_handoffs)}개",
+        f"\n{verb}: worklog {len(result.deleted_worklog)}개, handoff {len(result.deleted_handoffs)}개, "
+        f"후보 삭제 {len(result.deleted_candidates)}개, 후보 보관 {len(result.archived_candidates)}개",
         fg=typer.colors.GREEN,
         bold=True,
     )
@@ -1298,6 +1308,10 @@ def vault_cleanup(
         typer.echo(f"  [worklog] {rel}")
     for rel in result.deleted_handoffs:
         typer.echo(f"  [handoff] {rel}")
+    for rel in result.deleted_candidates:
+        typer.echo(f"  [후보 삭제] {rel}")
+    for rel in result.archived_candidates:
+        typer.echo(f"  [후보 보관] {rel}")
 
 
 @app.command("mcp-serve")

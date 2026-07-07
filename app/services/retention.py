@@ -17,12 +17,23 @@ from app.services.candidate_writer import SESSION_HANDOFF_DIR
 DEFAULT_KEEP_PER_PROJECT = 3
 DEFAULT_WORKLOG_RETENTION_DAYS = 30
 DEFAULT_HANDOFF_RETENTION_DAYS = 30
+DEFAULT_CANDIDATE_TTL_DAYS = 14
+
+CANDIDATE_ARCHIVE_DIR = "60_Candidates/_Archive"
+
+# TTL 만료 후보의 kind별 처분 (사용자 확정 정책):
+# 재생성 가능한 파생물(raw 노트에서 다시 뽑을 수 있음)은 삭제,
+# 사람 판단이 들어간 것은 _Archive/로 보관한다.
+_EXPIRE_DELETE_KINDS = {"knowledge", "blog_idea", "career_bullet"}
+_EXPIRE_ARCHIVE_KINDS = {"decision", "memory_patch"}
 
 
 @dataclass(frozen=True)
 class CleanupResult:
     deleted_worklog: list[str] = field(default_factory=list)
     deleted_handoffs: list[str] = field(default_factory=list)
+    deleted_candidates: list[str] = field(default_factory=list)
+    archived_candidates: list[str] = field(default_factory=list)
     dry_run: bool = False
 
 
@@ -46,6 +57,7 @@ def cleanup_vault(
     keep_per_project: int = DEFAULT_KEEP_PER_PROJECT,
     worklog_retention_days: int = DEFAULT_WORKLOG_RETENTION_DAYS,
     handoff_retention_days: int = DEFAULT_HANDOFF_RETENTION_DAYS,
+    candidate_ttl_days: int = DEFAULT_CANDIDATE_TTL_DAYS,
     dry_run: bool = False,
     now: datetime | None = None,
 ) -> CleanupResult:
@@ -60,7 +72,83 @@ def cleanup_vault(
     resolved_now = now or datetime.now()
     deleted_worklog = _cleanup_worklog_sessions(vault_dir, worklog_retention_days, resolved_now, dry_run)
     deleted_handoffs = _cleanup_session_handoffs(vault_dir, keep_per_project, handoff_retention_days, resolved_now, dry_run)
-    return CleanupResult(deleted_worklog=deleted_worklog, deleted_handoffs=deleted_handoffs, dry_run=dry_run)
+    deleted_candidates, archived_candidates = cleanup_candidates(
+        vault_dir, ttl_days=candidate_ttl_days, dry_run=dry_run, now=resolved_now
+    )
+    return CleanupResult(
+        deleted_worklog=deleted_worklog,
+        deleted_handoffs=deleted_handoffs,
+        deleted_candidates=deleted_candidates,
+        archived_candidates=archived_candidates,
+        dry_run=dry_run,
+    )
+
+
+def cleanup_candidates(
+    vault_dir: Path,
+    *,
+    ttl_days: int = DEFAULT_CANDIDATE_TTL_DAYS,
+    dry_run: bool = False,
+    now: datetime | None = None,
+) -> tuple[list[str], list[str]]:
+    """TTL이 지난 60_Candidates 후보를 kind별 정책으로 처분한다.
+
+    - status=candidate + 재생성 가능 kind(knowledge/blog_idea/career_bullet) → 삭제
+    - status=candidate + 사람 판단 kind(decision/memory_patch) → _Archive/<폴더>/ 이동
+    - status=promoted/applied → 공식 영역에 사본이 있으므로 kind 무관 삭제
+    - SessionHandoffs는 자체 정책(cleanup_vault)이 있으므로 제외
+
+    반환: (deleted rel_paths, archived rel_paths)
+    """
+    from app.services.candidate_writer import _CANDIDATE_DIRS  # 순환 없음: retention→writer 단방향
+
+    resolved_now = now or datetime.now()
+    deleted: list[str] = []
+    archived: list[str] = []
+
+    for kind, rel_dir in _CANDIDATE_DIRS.items():
+        if kind == "session_handoff":
+            continue
+        cand_dir = vault_dir / rel_dir
+        if not cand_dir.exists():
+            continue
+
+        for md_path in sorted(cand_dir.glob("*.md")):
+            try:
+                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            meta = post.metadata
+            # dedup 갱신(updated_at)이 있으면 그 시점 기준 — 갱신은 "아직 활발한 주제"
+            # 신호이므로 created_at만 보면 살아있는 후보를 만료시킨다.
+            if meta.get("updated_at"):
+                last_active = _parse_created_at({"created_at": meta["updated_at"]}, md_path.stat().st_mtime)
+            else:
+                last_active = _parse_created_at(meta, md_path.stat().st_mtime)
+            if (resolved_now - last_active).days <= ttl_days:
+                continue
+
+            status = str(meta.get("status", "") or "").strip().lower()
+            rel = str(md_path.relative_to(vault_dir)).replace("\\", "/")
+
+            if status in ("promoted", "applied") or kind in _EXPIRE_DELETE_KINDS:
+                deleted.append(rel)
+                if not dry_run:
+                    md_path.unlink()
+            elif kind in _EXPIRE_ARCHIVE_KINDS:
+                archive_dir = vault_dir / CANDIDATE_ARCHIVE_DIR / cand_dir.name
+                archived.append(rel)
+                if not dry_run:
+                    archive_dir.mkdir(parents=True, exist_ok=True)
+                    dest = archive_dir / md_path.name
+                    idx = 2
+                    while dest.exists():
+                        dest = archive_dir / f"{md_path.stem} ({idx}){md_path.suffix}"
+                        idx += 1
+                    md_path.rename(dest)
+            # 알 수 없는 kind는 건드리지 않는다
+
+    return deleted, archived
 
 
 def _cleanup_worklog_sessions(vault_dir: Path, retention_days: int, now: datetime, dry_run: bool) -> list[str]:

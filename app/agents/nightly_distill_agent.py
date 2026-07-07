@@ -29,6 +29,9 @@ class NightlyDistillResult:
     digest_path: Path | None
     digest_rel_path: str
     sent_telegram: bool
+    expired_candidates: list[str] = field(default_factory=list)  # TTL 삭제
+    archived_candidates: list[str] = field(default_factory=list)  # TTL 아카이브
+    auto_applied_patches: list[str] = field(default_factory=list)  # 저위험 패치 자동 반영
 
 
 class NightlyDistillAgent:
@@ -60,7 +63,24 @@ class NightlyDistillAgent:
         career_agent = CareerBulletAgent(settings=self.settings, llm=self.llm, now=self.now)
         career_result = career_agent.suggest()
 
-        digest_text = self._build_digest(distill_result, career_result, weekly=weekly)
+        # TTL 지난 후보 정리 — 재생성 가능 kind는 삭제, decision/memory_patch는 _Archive/.
+        # 검토 안 된 후보가 무한 누적되는 것을 막는다 (2026-07 대청소 44개의 재발 방지).
+        from app.services.retention import cleanup_candidates
+
+        expired, archived = cleanup_candidates(self.vault_dir, now=self.now)
+
+        # 저위험 패치 자동 반영 — requires_user_review=False로 명시된 것만.
+        # Lessons/OpenLoops는 append 전용이라 오염 반경이 작아 검토 게이트를 생략한다.
+        auto_applied = self._auto_apply_low_risk_patches()
+
+        digest_text = self._build_digest(
+            distill_result,
+            career_result,
+            weekly=weekly,
+            expired=expired,
+            archived=archived,
+            auto_applied=auto_applied,
+        )
         digest_path, digest_rel = self._save_digest(digest_text, weekly=weekly)
         sent = self._try_send_telegram(digest_text)
 
@@ -71,7 +91,38 @@ class NightlyDistillAgent:
             digest_path=digest_path,
             digest_rel_path=digest_rel,
             sent_telegram=sent,
+            expired_candidates=expired,
+            archived_candidates=archived,
+            auto_applied_patches=auto_applied,
         )
+
+    def _auto_apply_low_risk_patches(self) -> list[str]:
+        """requires_user_review=False인 MemoryPatch 후보를 대상 파일에 자동 반영한다."""
+        patches_dir = self.vault_dir / "60_Candidates" / "MemoryPatches"
+        if not patches_dir.exists():
+            return []
+
+        from app.agents.curator_agent import CuratorAgent
+
+        curator = CuratorAgent(settings=self.settings, now=self.now)
+        applied: list[str] = []
+        for md_path in sorted(patches_dir.glob("*.md")):
+            try:
+                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            meta = post.metadata
+            if str(meta.get("status", "") or "").strip().lower() != "candidate":
+                continue
+            if meta.get("requires_user_review", True):
+                continue
+            rel = str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
+            try:
+                result = curator.apply_memory_patch(rel)
+                applied.append(f"{rel} → {result.promoted_path}")
+            except Exception:
+                continue  # 개별 패치 실패가 nightly 전체를 막지 않는다
+        return applied
 
     # ── Digest 빌더 ──────────────────────────────────────────────────────────
 
@@ -80,6 +131,9 @@ class NightlyDistillAgent:
         distill: DistillResult,
         career: CareerBulletResult,
         weekly: bool = False,
+        expired: list[str] | None = None,
+        archived: list[str] | None = None,
+        auto_applied: list[str] | None = None,
     ) -> str:
         date = self._date()
         label = "Weekly Digest" if weekly else "Daily Digest"
@@ -159,6 +213,28 @@ class NightlyDistillAgent:
         else:
             lines.append("- (없음)")
         lines.append("")
+
+        # critic 게이트 탈락 — 오탐이면 사람이 여기서 발견해 수동 복구할 수 있다
+        if distill.dropped:
+            lines += ["## critic 게이트 탈락 후보", ""]
+            for entry in distill.dropped:
+                lines.append(f"- {entry}")
+            lines.append("")
+
+        if auto_applied:
+            lines += ["## 자동 반영된 교훈 (검토 불필요 패치)", ""]
+            for entry in auto_applied:
+                lines.append(f"- {entry}")
+            lines.append("")
+
+        # TTL 정리 결과 — 조용히 지우면 "정리된 줄 모르는" 상태가 되므로 digest에 남긴다
+        if expired or archived:
+            lines += ["## 후보 정리 (TTL 초과)", ""]
+            for rel in expired or []:
+                lines.append(f"- 삭제: {rel}")
+            for rel in archived or []:
+                lines.append(f"- 보관(_Archive): {rel}")
+            lines.append("")
 
         total = len(distill.written) + len(career.written)
         lines.append(f"_총 후보 {total}개 생성 | distill {len(distill.written)} / career {len(career.written)}_")

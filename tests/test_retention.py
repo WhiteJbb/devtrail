@@ -185,3 +185,80 @@ def test_files_without_session_id_are_treated_as_independent_groups(tmp_path):
     remaining = list((tmp_path / "60_Candidates/SessionHandoffs/Devtrail").glob("*.md"))
     assert len(remaining) == 3
     assert len(result.deleted_handoffs) == 2
+
+
+# ── candidate TTL ────────────────────────────────────────────────────────────
+
+
+def _write_candidate(vault: Path, kind_dir: str, name: str, kind: str, created_at: str,
+                     status: str = "candidate", updated_at: str = "") -> Path:
+    path = vault / "60_Candidates" / kind_dir / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    meta = {"type": "candidate", "candidate_type": kind, "title": name, "status": status,
+            "created_at": created_at}
+    if updated_at:
+        meta["updated_at"] = updated_at
+    path.write_text(frontmatter.dumps(frontmatter.Post("본문", **meta)), encoding="utf-8")
+    return path
+
+
+def test_expired_regenerable_candidate_is_deleted(tmp_path):
+    _write_candidate(tmp_path, "Knowledge", "old.md", "knowledge", "2026-06-01")
+    result = cleanup_vault(tmp_path, now=_NOW)
+    assert result.deleted_candidates == ["60_Candidates/Knowledge/old.md"]
+    assert not (tmp_path / "60_Candidates/Knowledge/old.md").exists()
+
+
+def test_expired_decision_candidate_is_archived(tmp_path):
+    _write_candidate(tmp_path, "Decisions", "old-decision.md", "decision", "2026-06-01")
+    result = cleanup_vault(tmp_path, now=_NOW)
+    assert result.archived_candidates == ["60_Candidates/Decisions/old-decision.md"]
+    assert (tmp_path / "60_Candidates/_Archive/Decisions/old-decision.md").exists()
+    assert not (tmp_path / "60_Candidates/Decisions/old-decision.md").exists()
+
+
+def test_expired_memory_patch_is_archived(tmp_path):
+    _write_candidate(tmp_path, "MemoryPatches", "patch.md", "memory_patch", "2026-06-01")
+    result = cleanup_vault(tmp_path, now=_NOW)
+    assert result.archived_candidates == ["60_Candidates/MemoryPatches/patch.md"]
+
+
+def test_recent_candidate_survives(tmp_path):
+    _write_candidate(tmp_path, "Knowledge", "fresh.md", "knowledge", "2026-07-01")
+    result = cleanup_vault(tmp_path, now=_NOW)
+    assert result.deleted_candidates == []
+    assert (tmp_path / "60_Candidates/Knowledge/fresh.md").exists()
+
+
+def test_updated_at_keeps_candidate_alive(tmp_path):
+    """dedup 갱신(updated_at)이 최근이면 created_at이 오래돼도 살아남는다."""
+    _write_candidate(tmp_path, "Knowledge", "active.md", "knowledge", "2026-06-01",
+                     updated_at="2026-07-05")
+    result = cleanup_vault(tmp_path, now=_NOW)
+    assert result.deleted_candidates == []
+
+
+def test_promoted_candidate_deleted_regardless_of_kind(tmp_path):
+    """promote된 원본은 공식 영역에 사본이 있으므로 decision이라도 삭제한다."""
+    _write_candidate(tmp_path, "Decisions", "done.md", "decision", "2026-06-01", status="promoted")
+    result = cleanup_vault(tmp_path, now=_NOW)
+    assert result.deleted_candidates == ["60_Candidates/Decisions/done.md"]
+    assert result.archived_candidates == []
+
+
+def test_session_handoffs_not_touched_by_candidate_ttl(tmp_path):
+    """SessionHandoffs는 자체 정책(keep-N + 보존기간)만 적용된다."""
+    _write_handoff(tmp_path, "Devtrail", "recent-plan.md", "2026-07-05", session_id="s1")
+    result = cleanup_vault(tmp_path, now=_NOW, candidate_ttl_days=0)
+    assert result.deleted_candidates == []
+    assert result.archived_candidates == []
+
+
+def test_candidate_dry_run_reports_without_action(tmp_path):
+    _write_candidate(tmp_path, "Knowledge", "old.md", "knowledge", "2026-06-01")
+    _write_candidate(tmp_path, "Decisions", "old-d.md", "decision", "2026-06-01")
+    result = cleanup_vault(tmp_path, now=_NOW, dry_run=True)
+    assert len(result.deleted_candidates) == 1
+    assert len(result.archived_candidates) == 1
+    assert (tmp_path / "60_Candidates/Knowledge/old.md").exists()
+    assert (tmp_path / "60_Candidates/Decisions/old-d.md").exists()

@@ -63,6 +63,9 @@ AGENT_MEMORY_FILES = {
     "40_AgentMemory/03_WritingStyle.md": "Writing Style",
     "40_AgentMemory/04_CareerContext.md": "Career Context",
     "40_AgentMemory/05_OpenLoops.md": "Open Loops",
+    # 행동 교훈 착지점 — Agent Execution Notes 패치가 여기 반영돼 다음 세션
+    # briefing에 자동 포함된다 (OpenLoops는 "할 일", Lessons는 "일하는 방식").
+    "40_AgentMemory/06_Lessons.md": "Lessons",
 }
 
 
