@@ -57,6 +57,11 @@ _MEMORY_PRIORITY_FILES = (
     "40_AgentMemory/05_OpenLoops.md",
     "40_AgentMemory/06_Lessons.md",
 )
+# apply-memory-patch가 끝에 append하는 파일 — briefing에서 tail을 남겨야 최신이 보인다
+_MEMORY_APPEND_FILES = (
+    "40_AgentMemory/05_OpenLoops.md",
+    "40_AgentMemory/06_Lessons.md",
+)
 _MEMORY_FILE_MAX_CHARS = 700
 _MEMORY_STALE_DAYS = 30  # CurrentFocus/OpenLoops가 이보다 오래되면 briefing에 경고
 _ORPHAN_REATTACH_WINDOW_HOURS = 24
@@ -134,15 +139,32 @@ def _truncate(text: str, limit: int = _SECTION_MAX_CHARS) -> str:
     return text[:limit].rstrip() + "\n...(생략)"
 
 
+def _truncate_tail(text: str, limit: int = _SECTION_MAX_CHARS) -> str:
+    """앞이 아니라 뒤를 남기는 truncate — append형 파일(OpenLoops/Lessons)용.
+
+    이 파일들은 apply-memory-patch가 끝에 붙이는 구조라 최신 내용이 항상 꼬리에
+    있다. head 절단이면 파일이 한도를 넘는 순간 최신 교훈이 영영 안 보인다.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return "...(앞부분 생략)\n" + text[-limit:].lstrip()
+
+
 def _render_memory_briefing(agent_memory) -> str:
-    """운영 메모리(CurrentFocus/OpenLoops/Lessons)를 파일별 예산으로 렌더한다."""
+    """운영 메모리(CurrentFocus/OpenLoops/Lessons)를 파일별 예산으로 렌더한다.
+
+    append형 파일(OpenLoops/Lessons)은 최신 내용이 꼬리에 쌓이므로 tail을 남긴다.
+    사람이 위에서부터 관리하는 CurrentFocus는 head를 남긴다.
+    """
     parts: list[str] = []
     blocks = {b.rel_path: b for b in agent_memory.blocks}
     for rel in _MEMORY_PRIORITY_FILES:
         block = blocks.get(rel)
         if block is None or not block.body.strip():
             continue
-        parts.append(f"### {block.title}\n\n{_truncate(block.body, _MEMORY_FILE_MAX_CHARS)}")
+        cut = _truncate_tail if rel in _MEMORY_APPEND_FILES else _truncate
+        parts.append(f"### {block.title}\n\n{cut(block.body, _MEMORY_FILE_MAX_CHARS)}")
     return "\n\n".join(parts)
 
 
@@ -215,21 +237,70 @@ def _list_session_handoffs(vault_dir: Path, project: str) -> list[dict]:
 
 
 def _excerpt_sections(body: str, headings: tuple[str, ...]) -> str:
-    """body에서 지정된 '## Heading' 섹션만 발췌한다."""
+    """body에서 지정된 '## Heading' 섹션만 headings 순서대로 발췌한다.
+
+    문서 순서가 아니라 headings 인자 순서를 따른다 — excerpt는 뒤에서 truncate되므로
+    다음 세션에 가장 필요한 섹션(Next Session)을 앞에 둬야 잘려도 덜 아프다.
+    """
     lines = body.splitlines()
-    out: list[str] = []
-    capture = False
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("## "):
             heading = stripped[3:].strip()
-            capture = heading in headings
-            if capture:
-                out.append(line)
+            current = heading if heading in headings else None
+            if current is not None:
+                sections.setdefault(current, []).append(line)
             continue
-        if capture:
-            out.append(line)
-    return "\n".join(out).strip()
+        if current is not None:
+            sections[current].append(line)
+    ordered = ["\n".join(sections[h]).strip() for h in headings if h in sections]
+    return "\n\n".join(part for part in ordered if part).strip()
+
+
+def _find_session_handoff(vault_dir: Path, project: str, session_id: str, handoff_type: str) -> dict | None:
+    """같은 session_id·handoff_type의 기존 handoff를 찾는다 (재기록 = 갱신 판정용)."""
+    for h in _list_session_handoffs(vault_dir, project):
+        if h["session_id"] == session_id and h["handoff_type"] == handoff_type:
+            return h
+    return None
+
+
+def _rewrite_handoff(vault_dir: Path, rel_path: str, spec: CandidateSpec) -> CandidateWriteResult:
+    """기존 handoff 파일의 body를 교체한다 (created_at 보존, updated_at 갱신).
+
+    같은 세션이 Plan/Process를 다시 기록하면 새 파일을 만들지 않고 갱신한다 —
+    '(2)' 파일이 쌓이면 briefing의 최근 handoff 창을 같은 세션 산출물이 잠식하고,
+    낡은 스냅샷이 최신 기록과 나란히 남는다.
+    """
+    path = vault_dir / rel_path
+    post = frontmatter.loads(path.read_text(encoding="utf-8"))
+    post.metadata["updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    post.content = spec.body.strip() + "\n"
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    return CandidateWriteResult(spec=spec, path=path, rel_path=rel_path)
+
+
+def _update_worklog_note(vault_dir: Path, session_id: str, body: str) -> str | None:
+    """같은 session_id의 10_Worklog/Sessions 노트 본문을 갱신한다. 없으면 None."""
+    sessions_dir = vault_dir / "10_Worklog" / "Sessions"
+    if not sessions_dir.exists() or not session_id:
+        return None
+    for md_path in sorted(sessions_dir.glob("*.md")):
+        try:
+            post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if str(post.metadata.get("session_id", "")).strip() != session_id:
+            continue
+        first_line = post.content.strip().splitlines()[0] if post.content.strip() else ""
+        title_line = first_line if first_line.startswith("# ") else "# 작업 세션"
+        post.metadata["updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+09:00")
+        post.content = f"{title_line}\n\n{body.strip()}\n"
+        md_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        return str(md_path.relative_to(vault_dir)).replace("\\", "/")
+    return None
 
 
 def _reattach_orphan_plan_if_needed(vault_dir: Path, project: str, session_id: str) -> str:
@@ -455,7 +526,9 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     if recent:
         excerpt_parts = []
         for h in recent:
-            excerpt = _excerpt_sections(h["body"], ("Next Session", "What Changed", "Goal"))
+            # Next Session을 맨 앞에 — excerpt는 400자에서 잘리므로 다음 세션에
+            # 가장 필요한 정보가 먼저 살아남아야 한다 (Goal은 Plan 전용 섹션)
+            excerpt = _excerpt_sections(h["body"], ("Next Session", "Goal", "What Changed"))
             excerpt_parts.append(f"### {h['title']} ({h['handoff_type']})\n\n{_truncate(excerpt, 400)}")
             source_refs.append(h["rel_path"])
         sections.append("## Recent Session Handoff / Latest Plan-Process\n\n" + "\n\n".join(excerpt_parts))
@@ -558,7 +631,12 @@ def record_agent_improvement(
     """반복 실수/개선할 작업 방식/프로젝트별 주의사항을 MemoryPatch 후보로 기록한다."""
     vault_dir = _vault_dir(settings)
     writer = CandidateWriter(vault_dir)
-    title = f"{project} — {issue}" if project.strip() else issue
+    # 제목은 파일명이 된다 — issue 전문을 그대로 쓰면 Windows 260자 경로 제한에
+    # 걸릴 수 있으므로 60자로 자르고, 전문은 본문 '## 이슈'에 남긴다.
+    issue_title = " ".join(issue.split())
+    if len(issue_title) > 60:
+        issue_title = issue_title[:60].rstrip() + "…"
+    title = f"{project} — {issue_title}" if project.strip() else issue_title
     body = f"## 이슈\n\n{issue}\n\n## 개선\n\n{improvement}\n"
     spec = CandidateSpec(
         kind="memory_patch",
@@ -605,6 +683,11 @@ def write_work_plan(
         handoff_type="plan",
         session_id=session_id,
     )
+    # 같은 세션이 Plan을 다시 쓰면 갱신한다 — '(2)' 파일이 생기면 briefing의
+    # 최근 handoff 창을 같은 세션 산출물이 잠식한다.
+    existing = _find_session_handoff(vault_dir, project, session_id, "plan")
+    if existing:
+        return _rewrite_handoff(vault_dir, existing["rel_path"], spec)
     return writer.write(spec)
 
 
@@ -718,27 +801,37 @@ def write_session_process(
 
     date = datetime.now().strftime("%Y-%m-%d")
     title = f"Process — {project or '미지정'} — {date} — {session_id[:8]}"
-    process_result = writer.write(
-        CandidateSpec(
-            kind="session_handoff",
-            title=title,
-            body=body,
-            project=project,
-            handoff_type="process",
-            session_id=session_id,
-        )
-    )
-
-    worklog_result: CaptureResult = capture_agent.capture_session(
+    process_spec = CandidateSpec(
+        kind="session_handoff",
+        title=title,
+        body=body,
         project=project,
-        summary_text=body,
+        handoff_type="process",
         session_id=session_id,
-        from_agent=True,
-        source="mcp_session_process",
-        # Decision/MemoryPatch 분리를 이미 이 함수가 수행했으므로 nightly distill이
-        # 같은 내용을 다시 LLM에 넣어 중복 후보를 만들지 않도록 재증류 대상에서 뺀다.
-        needs_distill=False,
     )
+    # 같은 세션이 Process를 다시 쓰면(기록 후 작업이 이어진 경우) 갱신한다 —
+    # 안 그러면 낡은 중간 스냅샷과 최신 기록이 나란히 남아 다음 세션 briefing이
+    # 이미 끝난 Next Session 항목을 지시한다.
+    existing_process = _find_session_handoff(vault_dir, project, session_id, "process")
+    if existing_process:
+        process_result = _rewrite_handoff(vault_dir, existing_process["rel_path"], process_spec)
+        worklog_rel_path = _update_worklog_note(vault_dir, session_id, body)
+    else:
+        process_result = writer.write(process_spec)
+        worklog_rel_path = None
+
+    if worklog_rel_path is None:
+        worklog_result: CaptureResult = capture_agent.capture_session(
+            project=project,
+            summary_text=body,
+            session_id=session_id,
+            from_agent=True,
+            source="mcp_session_process",
+            # Decision/MemoryPatch 분리를 이미 이 함수가 수행했으므로 nightly distill이
+            # 같은 내용을 다시 LLM에 넣어 중복 후보를 만들지 않도록 재증류 대상에서 뺀다.
+            needs_distill=False,
+        )
+        worklog_rel_path = worklog_result.rel_path
 
     decision_result: CandidateWriteResult | None = None
     decision_text = str(decisions.get("decision", "")).strip()
@@ -761,19 +854,22 @@ def write_session_process(
         )
 
     memory_patch_result: CandidateWriteResult | None = None
-    has_notes_content = any(str(notes.get(k, "")).strip() for k in ("blocked", "mistakes", "next_checks", "better_approach"))
-    if has_notes_content:
-        patch_body = (
-            f"## 막힌 점\n\n{notes.get('blocked', '')}\n\n"
-            f"## 에이전트가 한 실수\n\n{notes.get('mistakes', '')}\n\n"
-            f"## 다음부터 먼저 확인할 점\n\n{notes.get('next_checks', '')}\n\n"
-            f"## 더 나은 작업 방식\n\n{notes.get('better_approach', '')}\n"
-        )
-        memory_patch_result = writer.write(
+    # Lessons에는 일반화 가능한 "일하는 방식" 교훈만 증류해 보낸다. 막힌 점·실수 같은
+    # 세션 한정 사실은 Process 기록에 이미 남아 있고, 통째로 append하면 Lessons가
+    # 세션 보일러플레이트로 비대해져 briefing 예산을 낭비한다.
+    lesson_lines: list[str] = []
+    next_checks = str(notes.get("next_checks", "")).strip()
+    better_approach = str(notes.get("better_approach", "")).strip()
+    if next_checks:
+        lesson_lines.append(f"- ({date}) 다음부터 먼저 확인: {next_checks}")
+    if better_approach:
+        lesson_lines.append(f"- ({date}) 더 나은 방식: {better_approach}")
+    if lesson_lines:
+        memory_patch_result = writer.upsert_exact(
             CandidateSpec(
                 kind="memory_patch",
                 title=f"{project or '미지정'} — Agent Execution Notes — {date}",
-                body=patch_body,
+                body="\n".join(lesson_lines) + "\n",
                 project=project,
                 evidence=str(notes.get("evidence", "")),
                 scope=str(notes.get("scope", "project")),
@@ -783,17 +879,15 @@ def write_session_process(
                 # 실행 노트는 "일하는 방식" 교훈이므로 OpenLoops(할 일)가 아니라
                 # Lessons에 반영한다 — apply 시 이 파일로 append된다.
                 target_file="40_AgentMemory/06_Lessons.md",
-            ),
-            # 제목이 "{project} — Agent Execution Notes — {date}" 고정 형식이라 날짜만
-            # 다른 이전 세션 제목과 유사도가 임계값을 넘는다. dedup을 켜두면 write()가
-            # 새 본문을 쓰지 않고 기존 파일 경로만 반환해 이번 세션의 노트가 유실된다.
-            dedup=False,
+            )
+            # upsert_exact: 제목이 정확히 같은(=같은 날 같은 프로젝트 재기록) 후보만
+            # 갱신하고, 날짜만 다른 이전 세션 후보는 유사도 dedup에 걸리지 않게 한다.
         )
 
     return SessionProcessResult(
         session_id=session_id,
         process=process_result,
-        worklog_rel_path=worklog_result.rel_path,
+        worklog_rel_path=worklog_rel_path,
         decision=decision_result,
         memory_patch=memory_patch_result,
     )

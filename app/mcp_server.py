@@ -105,7 +105,12 @@ def record_agent_improvement(project: str, issue: str, improvement: str, evidenc
 
 @mcp.tool()
 def write_work_plan(project: str, goal: str, context_read: str, scope: str, approach: str, risks: str) -> dict:
-    """작업 시작 전, 실제 수정 전에 Plan을 기록한다. session_id는 서버가 자동 주입한다."""
+    """작업 시작 전, 실제 수정 전에 Plan을 기록한다. session_id는 서버가 자동 주입한다.
+
+    여러 항목이 있는 필드는 한 문단으로 잇지 말고 markdown 불릿/번호 리스트로
+    작성한다 — 기록은 사람이 다시 읽는 문서다. 같은 세션에서 재호출하면 기존
+    Plan이 갱신된다(새 파일이 생기지 않음).
+    """
     result = vault_tools.write_work_plan(
         project, goal, context_read, scope, approach, risks, session_id=_SESSION_ID, settings=get_settings()
     )
@@ -130,6 +135,12 @@ def write_session_process(
     agent_execution_notes: {blocked, mistakes, next_checks, better_approach,
         evidence, scope, confidence, requires_user_review}
     learning_recovery: {ai_led, unclear_concepts, questions, related_candidates}
+
+    여러 항목이 있는 필드는 한 문단으로 잇지 말고 markdown 불릿/번호 리스트로
+    작성한다. 기록 후 작업이 더 이어졌다면(커밋 발생) 세션을 끝내기 전에 이 tool을
+    다시 호출한다 — 같은 세션 기록(Process/워크로그)이 새 파일 없이 갱신된다.
+    agent_execution_notes 중 next_checks/better_approach만 Lessons 패치 후보로
+    증류되므로, 이 두 필드는 다른 세션에도 통하는 일반화된 교훈으로 쓴다.
     """
     result = vault_tools.write_session_process(
         project=project,

@@ -286,7 +286,20 @@ def test_apply_memory_patch_target_lessons(tmp_path):
 
     assert result.promoted_path == "40_AgentMemory/06_Lessons.md"
     text = (tmp_path / "40_AgentMemory" / "06_Lessons.md").read_text(encoding="utf-8")
-    assert "작업 방식 교훈" in text
+    assert "후보 본문" in text
+    # 선행 H1(제목 보일러플레이트)은 append 시 제거된다 — 출처는 주석 마커의
+    # 경로가 담는다. 세션마다 H1이 쌓이면 Lessons가 비대해진다.
+    assert "# 작업 방식 교훈" not in text
+    assert rel in text  # 주석 마커에 출처 경로가 남는다
+
+
+def test_apply_memory_patch_keeps_title_only_body(tmp_path):
+    """H1 외 본문이 없는 후보는 H1을 지우지 않는다 — 내용 전멸 방지."""
+    rel = _write_candidate(tmp_path, "memory_patch", "제목만있는교훈", body="")
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    agent.apply_memory_patch(rel, target="lessons")
+    text = (tmp_path / "40_AgentMemory" / "06_Lessons.md").read_text(encoding="utf-8")
+    assert "제목만있는교훈" in text
 
 
 def test_apply_memory_patch_target_arg_overrides_frontmatter(tmp_path):

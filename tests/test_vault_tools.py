@@ -218,33 +218,79 @@ def test_write_session_process_worklog_is_not_marked_for_redistill(tmp_path):
     assert post.metadata["needs_distill"] is False
 
 
-def test_write_session_process_memory_patch_not_deduped_across_sessions(tmp_path):
-    """같은 프로젝트로 두 번째 세션을 돌려도 Agent Execution Notes가 유실되지 않아야 한다.
+def test_write_session_process_memory_patch_updated_for_same_session(tmp_path):
+    """같은 세션(같은 날·같은 프로젝트)의 재기록은 patch를 갱신해야 한다.
 
-    memory_patch 제목이 "{project} — Agent Execution Notes — {date}" 고정 형식이라
-    같은 날 두 번째 호출은 유사도 dedup에 걸려 기존 파일 경로만 반환되기 쉽다(P1.1).
+    이전에는 dedup=False로 항상 새 파일을 만들어 재기록 시 ' (2)' 후보가 쌓였다.
+    upsert_exact는 제목이 정확히 같은 후보만 갱신하고, 날짜가 다른(다른 세션)
+    후보는 건드리지 않는다(P1.1의 세션 간 유실 방지와 양립).
     """
     settings = _settings(tmp_path)
-    notes = {"mistakes": "경로를 잘못 짚음", "evidence": "로그 확인"}
+    notes1 = {"next_checks": "테스트 먼저 실행", "evidence": "로그 확인"}
+    notes2 = {"next_checks": "테스트와 린트를 먼저 실행", "evidence": "로그 확인"}
 
     result1 = vault_tools.write_session_process(
         project="Devtrail", what_changed="1차 변경", files_touched="a.py",
-        project_decisions={}, implementation_trace="x", agent_execution_notes=notes,
+        project_decisions={}, implementation_trace="x", agent_execution_notes=notes1,
         docs_update_candidates="", next_session="", learning_recovery={},
         session_id="sess-mp-1", settings=settings,
     )
     result2 = vault_tools.write_session_process(
         project="Devtrail", what_changed="2차 변경", files_touched="b.py",
-        project_decisions={}, implementation_trace="x", agent_execution_notes=notes,
+        project_decisions={}, implementation_trace="x", agent_execution_notes=notes2,
         docs_update_candidates="", next_session="", learning_recovery={},
-        session_id="sess-mp-2", settings=settings,
+        session_id="sess-mp-1", settings=settings,
     )
 
     assert result1.memory_patch is not None
     assert result2.memory_patch is not None
-    assert result1.memory_patch.rel_path != result2.memory_patch.rel_path
-    assert (tmp_path / result1.memory_patch.rel_path).exists()
-    assert (tmp_path / result2.memory_patch.rel_path).exists()
+    # 같은 날 같은 프로젝트 → 제목 동일 → 갱신 (새 파일 없음)
+    assert result1.memory_patch.rel_path == result2.memory_patch.rel_path
+    content = (tmp_path / result2.memory_patch.rel_path).read_text(encoding="utf-8")
+    assert "테스트와 린트를 먼저 실행" in content
+
+
+def test_write_session_process_memory_patch_distills_lessons_only(tmp_path):
+    """Lessons 패치에는 일반화 가능한 필드(next_checks/better_approach)만 들어간다.
+
+    막힌 점·실수는 세션 한정 사실이라 Process에만 남는다 — 통째로 append하면
+    Lessons가 세션 보일러플레이트로 비대해진다.
+    """
+    settings = _settings(tmp_path)
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="x", files_touched="x",
+        project_decisions={}, implementation_trace="x",
+        agent_execution_notes={
+            "blocked": "머지 권한 차단",
+            "mistakes": "경로 오탐",
+            "next_checks": "briefing은 실측 먼저",
+            "better_approach": "임시 repo 케이스 검증",
+        },
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="sess-distill", settings=settings,
+    )
+    assert result.memory_patch is not None
+    content = (tmp_path / result.memory_patch.rel_path).read_text(encoding="utf-8")
+    assert "briefing은 실측 먼저" in content
+    assert "임시 repo 케이스 검증" in content
+    assert "머지 권한 차단" not in content
+    assert "경로 오탐" not in content
+    # 세션 한정 사실은 Process 기록에는 남아야 한다
+    process_content = (tmp_path / result.process.rel_path).read_text(encoding="utf-8")
+    assert "머지 권한 차단" in process_content
+
+
+def test_write_session_process_no_memory_patch_for_session_specific_notes_only(tmp_path):
+    """blocked/mistakes만 있으면 Lessons 패치를 만들지 않는다 (Process에만 기록)."""
+    settings = _settings(tmp_path)
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="x", files_touched="x",
+        project_decisions={}, implementation_trace="x",
+        agent_execution_notes={"blocked": "권한 차단", "mistakes": "오탐"},
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="sess-no-patch", settings=settings,
+    )
+    assert result.memory_patch is None
 
 
 def test_write_session_process_no_decision_when_final_judge_key_missing(tmp_path):
@@ -313,7 +359,7 @@ def test_write_session_process_splits_memory_patch_when_notes_present(tmp_path):
         files_touched="x",
         project_decisions={},
         implementation_trace="x",
-        agent_execution_notes={"mistakes": "경로를 잘못 짚음", "evidence": "로그 확인", "confidence": "high"},
+        agent_execution_notes={"next_checks": "경로부터 확인", "evidence": "로그 확인", "confidence": "high"},
         docs_update_candidates="",
         next_session="",
         learning_recovery={},
@@ -742,3 +788,118 @@ def test_briefing_tags_candidate_decisions_as_pending(tmp_path):
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
     assert "미검토 결정" in briefing.text
     assert "검토 대기" in briefing.text
+
+
+# ── 같은 세션 재기록 = 갱신 (산출물 품질 개선) ───────────────────────────────
+
+
+def test_write_work_plan_same_session_updates_in_place(tmp_path):
+    """같은 session_id로 Plan을 다시 쓰면 '(2)' 파일 대신 기존 파일을 갱신한다."""
+    settings = _settings(tmp_path)
+    r1 = vault_tools.write_work_plan(
+        project="Devtrail", goal="1차 목표", context_read="c", scope="s",
+        approach="a", risks="r", session_id="sess-up", settings=settings,
+    )
+    r2 = vault_tools.write_work_plan(
+        project="Devtrail", goal="수정된 목표", context_read="c", scope="s",
+        approach="a", risks="r", session_id="sess-up", settings=settings,
+    )
+    assert r1.rel_path == r2.rel_path
+    content = (tmp_path / r2.rel_path).read_text(encoding="utf-8")
+    assert "수정된 목표" in content
+    assert "1차 목표" not in content
+
+
+def test_write_work_plan_different_session_creates_new_file(tmp_path):
+    settings = _settings(tmp_path)
+    r1 = vault_tools.write_work_plan(
+        project="Devtrail", goal="g1", context_read="c", scope="s",
+        approach="a", risks="r", session_id="sess-a", settings=settings,
+    )
+    r2 = vault_tools.write_work_plan(
+        project="Devtrail", goal="g2", context_read="c", scope="s",
+        approach="a", risks="r", session_id="sess-b", settings=settings,
+    )
+    assert r1.rel_path != r2.rel_path
+
+
+def test_write_session_process_rewrite_updates_process_and_worklog(tmp_path):
+    """Process 재기록은 handoff와 워크로그를 모두 갱신한다 — 중간 스냅샷 방지.
+
+    이 시나리오는 실제로 발생했다: 00:55 기록 후 머지·긴급수정이 이어졌는데
+    기록엔 없어서, 다음 세션 briefing이 이미 끝난 Next Session 항목을 지시했다.
+    """
+    settings = _settings(tmp_path)
+    r1 = vault_tools.write_session_process(
+        project="Devtrail", what_changed="1차 작업", files_touched="a.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="PR 머지하기", learning_recovery={},
+        session_id="sess-rw", settings=settings,
+    )
+    r2 = vault_tools.write_session_process(
+        project="Devtrail", what_changed="1차 작업 + 머지 + 긴급수정", files_touched="a.py, b.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="훅 실세션 검증", learning_recovery={},
+        session_id="sess-rw", settings=settings,
+    )
+    # handoff: 같은 파일 갱신
+    assert r1.process.rel_path == r2.process.rel_path
+    handoff = (tmp_path / r2.process.rel_path).read_text(encoding="utf-8")
+    assert "긴급수정" in handoff
+    assert "PR 머지하기" not in handoff
+    # 워크로그: 같은 파일 갱신 (session-2.md가 생기면 안 됨)
+    assert r1.worklog_rel_path == r2.worklog_rel_path
+    worklog = (tmp_path / r2.worklog_rel_path).read_text(encoding="utf-8")
+    assert "긴급수정" in worklog
+    sessions = list((tmp_path / "10_Worklog" / "Sessions").glob("*.md"))
+    assert len(sessions) == 1
+
+
+def test_excerpt_orders_next_session_first(tmp_path):
+    """handoff excerpt는 문서 순서가 아니라 Next Session 우선이어야 한다.
+
+    excerpt는 400자에서 잘리므로, What Changed가 길면 다음 세션에 가장 필요한
+    Next Session이 통째로 사멸했다.
+    """
+    settings = _settings(tmp_path)
+    vault_tools.write_session_process(
+        project="Devtrail", what_changed="아주 긴 변경 내역 " * 60, files_touched="a.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="남은일-마커-9163", learning_recovery={},
+        session_id="sess-ex", settings=settings,
+    )
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=settings)
+    assert "남은일-마커-9163" in briefing.text
+
+
+def test_briefing_shows_tail_of_long_append_memory(tmp_path):
+    """append형 파일(Lessons)은 길어지면 tail(최신)이 남아야 한다."""
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    old_lessons = "- 오래된 교훈\n" * 100
+    _write_agent_memory(tmp_path, "06_Lessons.md", old_lessons + "- 최신교훈-마커-3377")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "최신교훈-마커-3377" in briefing.text
+
+
+def test_candidate_summary_autofilled_from_body(tmp_path):
+    """summary를 안 넘겨도 본문 첫 의미 줄로 채워진다."""
+    settings = _settings(tmp_path)
+    result = vault_tools.record_note(
+        "knowledge", "요약 자동화 테스트", "## 배경\n\n- RAG 인덱스는 야간에 재구축한다\n", settings=settings,
+    )
+    post = frontmatter.loads((tmp_path / result.rel_path).read_text(encoding="utf-8"))
+    assert "RAG 인덱스는 야간에 재구축한다" in str(post.metadata.get("summary"))
+
+
+def test_record_agent_improvement_truncates_long_title(tmp_path):
+    """issue 전문이 길어도 제목(=파일명)은 상한이 있어야 한다 (Windows 260자 경로)."""
+    settings = _settings(tmp_path)
+    long_issue = "아주 긴 이슈 설명 " * 30
+    result = vault_tools.record_agent_improvement(
+        "Devtrail", long_issue, "개선 방법", settings=settings,
+    )
+    filename = result.rel_path.rsplit("/", 1)[-1]
+    assert len(filename) < 100
+    # 전문은 본문에 남는다
+    content = (tmp_path / result.rel_path).read_text(encoding="utf-8")
+    assert long_issue.strip() in content
