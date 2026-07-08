@@ -142,3 +142,91 @@ def test_cli_push_digest_daily_includes_review_question(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "오늘의 학습 회수" in sent["text"]
     assert "MCP stdio 서버를 실행하는 방식은 상시 데몬과 무엇이 다른가?" in sent["text"]
+
+
+# ── 학습 회수 루프 (answered 추적 · 답변 기록) ──────────────────────────────
+
+
+_TWO_QUESTIONS = (
+    "## Learning Recovery\n\n"
+    "### 내가 아직 완전히 이해하지 못한 개념\n- 개념 X\n\n"
+    "### 다음에 직접 설명해봐야 할 질문\n"
+    "1. 첫 번째 질문인가?\n"
+    "2. 두 번째 질문인가?\n"
+)
+
+
+def test_list_questions_returns_all_questions(tmp_path):
+    from app.services.review_question import list_questions
+
+    _write_session(tmp_path, "2026-07-05-s.md", "Devtrail", _TWO_QUESTIONS, created_at="2026-07-05T09:00:00")
+    qs = list_questions(tmp_path)
+    assert [q.question for q in qs] == ["첫 번째 질문인가?", "두 번째 질문인가?"]
+    assert all(not q.answered for q in qs)
+
+
+def test_legacy_double_bullet_question_is_normalized(tmp_path):
+    """구버전 세션 노트의 '1. - 질문' 이중 접두가 정규화돼야 한다."""
+    body = (
+        "## Learning Recovery\n\n"
+        "### 다음에 직접 설명해봐야 할 질문\n"
+        "1. - 레거시 질문인가?\n"
+    )
+    _write_session(tmp_path, "2026-07-05-s.md", "Devtrail", body, created_at="2026-07-05T09:00:00")
+    rq = pick_review_question(tmp_path)
+    assert rq.question == "레거시 질문인가?"
+
+
+def test_mark_answered_records_and_pick_skips(tmp_path):
+    from app.services.review_question import list_questions, mark_answered
+
+    _write_session(tmp_path, "2026-07-05-s.md", "Devtrail", _TWO_QUESTIONS, created_at="2026-07-05T09:00:00")
+    first = pick_review_question(tmp_path)
+    assert first.question == "첫 번째 질문인가?"
+
+    ok = mark_answered(tmp_path, first.source_rel_path, first.question, "이것이 내 설명이다")
+    assert ok
+
+    content = (tmp_path / first.source_rel_path).read_text(encoding="utf-8")
+    assert "답변(" in content
+    assert "이것이 내 설명이다" in content
+
+    qs = list_questions(tmp_path)
+    assert [(q.question, q.answered) for q in qs] == [
+        ("첫 번째 질문인가?", True),
+        ("두 번째 질문인가?", False),
+    ]
+    assert pick_review_question(tmp_path).question == "두 번째 질문인가?"
+
+
+def test_mark_answered_returns_false_for_unknown_question(tmp_path):
+    from app.services.review_question import mark_answered
+
+    _write_session(tmp_path, "2026-07-05-s.md", "Devtrail", _TWO_QUESTIONS, created_at="2026-07-05T09:00:00")
+    assert not mark_answered(tmp_path, "10_Worklog/Sessions/2026-07-05-s.md", "없는 질문?", "답")
+
+
+def test_list_questions_days_filter(tmp_path):
+    from datetime import datetime, timedelta
+
+    from app.services.review_question import list_questions
+
+    old = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%dT09:00:00")
+    recent = datetime.now().strftime("%Y-%m-%dT09:00:00")
+    _write_session(tmp_path, "old-s.md", "Devtrail", _TWO_QUESTIONS, created_at=old)
+    _write_session(
+        tmp_path, "new-s.md", "Devtrail",
+        _TWO_QUESTIONS.replace("첫 번째", "최근 첫").replace("두 번째", "최근 둘"),
+        created_at=recent,
+    )
+    qs = list_questions(tmp_path, days=7)
+    assert len(qs) == 2
+    assert all("최근" in q.question for q in qs)
+
+
+def test_format_review_block_includes_answer_hint(tmp_path):
+    from app.services.review_question import format_review_block
+
+    _write_session(tmp_path, "2026-07-05-s.md", "Devtrail", _LEARNING_RECOVERY, created_at="2026-07-05T09:00:00")
+    block = format_review_block(tmp_path)
+    assert "/answer" in block

@@ -32,6 +32,7 @@ def _write_candidate(
         "decision": "60_Candidates/Decisions",
         "memory_patch": "60_Candidates/MemoryPatches",
         "blog_idea": "60_Candidates/BlogIdeas",
+        "career_bullet": "60_Candidates/CareerBullets",
     }[kind]
     path = vault / subdir / f"{title}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,3 +326,16 @@ def test_apply_memory_patch_rejects_unknown_target(tmp_path):
     agent = CuratorAgent(settings=_settings(tmp_path))
     with pytest.raises(ValueError):
         agent.apply_memory_patch(rel, target="nonsense")
+
+
+# ── career_bullet 승격 목적지 ─────────────────────────────────────────
+
+
+def test_promote_career_bullet_goes_to_career_outputs_not_knowledge(tmp_path):
+    """career_bullet은 20_Knowledge(기본값)가 아니라 50_Outputs/Career로 승격돼야 한다."""
+    rel = _write_candidate(tmp_path, "career_bullet", "이력서 불릿 후보")
+    agent = CuratorAgent(settings=_settings(tmp_path))
+    result = agent.promote_candidate(rel)
+    assert result.promoted_path == "50_Outputs/Career/이력서 불릿 후보.md"
+    assert (tmp_path / result.promoted_path).exists()
+    assert not (tmp_path / "20_Knowledge" / "이력서 불릿 후보.md").exists()

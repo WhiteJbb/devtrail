@@ -519,6 +519,24 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     if recent_entries:
         sections.append("## Recent Decisions\n\n" + _truncate("\n".join(line for _, line, _ in recent_entries)))
 
+    # 미해결 학습 질문 — Learning Recovery 루프를 세션 시작 시점에 노출한다.
+    # AI가 답을 대신 말해버리면 학습 회수가 안 되므로 지시문을 함께 넣는다.
+    try:
+        from app.services.review_question import list_questions
+
+        unanswered = [q for q in list_questions(vault_dir) if not q.answered]
+        scoped = [q for q in unanswered if q.project.lower() == resolved_project.lower()] or unanswered
+        if scoped:
+            question_lines = "\n".join(f"- {q.question} ({q.source_rel_path})" for q in scoped[:3])
+            sections.append(
+                "## 미해결 학습 질문 (Learning Recovery)\n\n"
+                "작업 중 아래 주제를 다루게 되면 답을 대신 설명하지 말고, 사용자가 직접 "
+                "설명해보도록 권한다. 사용자가 설명하면 맞는지 확인해주고, 세션 기록의 "
+                "해당 질문에 답변이 기록되도록 안내한다.\n\n" + question_lines
+            )
+    except Exception:
+        pass
+
     plans = [h for h in handoffs if h["handoff_type"] == "plan"]
     processes = [h for h in handoffs if h["handoff_type"] == "process"]
     paired_ids = {p["session_id"] for p in processes}
@@ -691,6 +709,28 @@ def write_work_plan(
     return writer.write(spec)
 
 
+def _normalize_bullet_items(value) -> list[str]:
+    """str/list 값을 불릿 항목 리스트로 정규화한다.
+
+    호출자가 이미 markdown 불릿("- x\n- y")으로 넘겨도 접두를 벗겨 항목만 남긴다 —
+    렌더 단계에서 "- "를 다시 붙이므로, 여기서 안 벗기면 "- - x" 이중 불릿이 된다.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = [l.strip() for l in value.splitlines() if l.strip()]
+    else:
+        items = [str(v).strip() for v in value if str(v).strip()]
+    out: list[str] = []
+    for item in items:
+        item = re.sub(r"^\d+[.)]\s*", "", item)
+        while item[:2] in ("- ", "* "):
+            item = item[2:].strip()
+        if item and item != "-":
+            out.append(item)
+    return out
+
+
 def _render_process_body(
     what_changed: str,
     files_touched: str,
@@ -701,12 +741,10 @@ def _render_process_body(
     next_session: str,
     recovery: dict,
 ) -> str:
-    questions = recovery.get("questions") or []
-    if isinstance(questions, str):
-        questions = [q.strip() for q in questions.splitlines() if q.strip()]
-    related = recovery.get("related_candidates") or []
-    if isinstance(related, str):
-        related = [r.strip() for r in related.splitlines() if r.strip()]
+    questions = _normalize_bullet_items(recovery.get("questions"))
+    related = _normalize_bullet_items(recovery.get("related_candidates"))
+    ai_led = _normalize_bullet_items(recovery.get("ai_led"))
+    unclear = _normalize_bullet_items(recovery.get("unclear_concepts"))
 
     lines = [
         "# Process",
@@ -744,13 +782,11 @@ def _render_process_body(
         "",
         "## Learning Recovery",
         f"### {HEADING_AI_LED}",
-        f"- {recovery.get('ai_led', '')}",
-        "",
-        f"### {HEADING_UNCLEAR}",
-        f"- {recovery.get('unclear_concepts', '')}",
-        "",
-        f"### {HEADING_QUESTIONS}",
     ]
+    lines += [f"- {a}" for a in ai_led] if ai_led else ["- "]
+    lines += ["", f"### {HEADING_UNCLEAR}"]
+    lines += [f"- {u}" for u in unclear] if unclear else ["- "]
+    lines += ["", f"### {HEADING_QUESTIONS}"]
     lines += [f"{i + 1}. {q}" for i, q in enumerate(questions)] if questions else ["1. "]
     lines += ["", f"### {HEADING_RELATED}"]
     lines += [f"- {r}" for r in related] if related else ["- "]
