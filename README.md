@@ -121,31 +121,36 @@ OPENAI_MODEL=Qwen/Qwen2.5-14B-Instruct
 │  ├─ Memos/         # 텍스트·음성·이미지 캡처
 │  └─ Raw/           # 첨부 바이너리 파일
 ├─ 10_Worklog/
-│  ├─ Sessions/      # capture-session 출력 (AI 세션 요약)
+│  ├─ Sessions/      # capture-session / write_session_process 출력 (AI 세션 요약)
 │  ├─ Daily/         # daily-log (사람이 채우는 일지)
+│  ├─ GitSummaries/  # capture-commit 출력 (커밋별 git 요약)
 │  └─ Summaries/     # worklog 출력
-├─ 20_Knowledge/     # 확정된 지식 ← promote-candidate 목적지
-├─ 30_Projects/      # 프로젝트별 Context.md
-├─ 40_AgentMemory/   # AI 공용 메모리 (Core/, OpenLoops 등)
+├─ 20_Knowledge/     # 확정된 지식 ← promote-candidate 목적지 (프로젝트별 하위 폴더)
+├─ 30_Projects/      # 프로젝트 정본 문서 — Context.md · Decisions/ · Plans/ · Design/ · Conversations/
+├─ 40_AgentMemory/   # 전역 AI 메모리 (00_Profile.md ~ 06_Lessons.md)
 ├─ 50_Outputs/
 │  ├─ Digest/        # daily digest (nightly 자동 생성)
 │  ├─ WeeklyReview/  # 주간 회고 (weekly 자동 생성)
-│  ├─ Blog/          # 블로그 초안·발행본
+│  ├─ Blog/          # 블로그 초안·발행본 (Ideas / Drafts / Export)
+│  ├─ Career/        # 승격된 이력서·포폴 불릿 (career_bullet promote 시 생성)
 │  ├─ Portfolio/
 │  ├─ Resume/
+│  ├─ Interview/
 │  └─ Todo/
 ├─ 60_Candidates/    # distill 후보 — 사람 검토 전 임시 영역
 │  ├─ Knowledge/
 │  ├─ Decisions/
 │  ├─ MemoryPatches/
 │  ├─ BlogIdeas/
-│  └─ CareerBullets/
+│  ├─ CareerBullets/
+│  └─ SessionHandoffs/  # 세션 Plan/Process — promote 대상 아님, 다음 세션 briefing이 소비
+├─ 70_Tasks/         # Telegram /task 할 일 (Active.md + Done/)
 ├─ index.md
 └─ log.md
 ```
 
-**AI 쓰기 가능**: `00_Inbox/`, `10_Worklog/`, `50_Outputs/`, `60_Candidates/`  
-**직접 수정 금지** (candidate/patch 경유): `20_Knowledge/`, `40_AgentMemory/Core/`, `30_Projects/*/Context.md`
+**AI 쓰기 가능**: `00_Inbox/`, `10_Worklog/`, `50_Outputs/`, `60_Candidates/`, `70_Tasks/`(task 커맨드 경유)  
+**직접 수정 금지** (candidate/patch 경유): `20_Knowledge/`, `40_AgentMemory/`, `30_Projects/*/Context.md`, `30_Projects/*/Decisions/`
 
 Obsidian 템플릿은 [docs/vault-templates/](docs/vault-templates/)을 Vault의 `90_Templates/`에 복사해서 사용 (외부 AI 프롬프트 가이드 포함).
 
@@ -295,6 +300,19 @@ claude mcp add devtrail-vault -- devtrail mcp-serve
 1회 생성돼 모든 write 계열 tool에 자동 주입되므로 에이전트가 직접 들고 다닐 필요가
 없습니다(컴팩팅 중 분실 방지).
 
+### Claude Code 훅 활성화 (선택, 머신별 1회)
+
+```bash
+cp .claude/settings.example.json .claude/settings.json
+```
+
+이 한 번으로 세 가지 훅이 켜집니다 — SessionStart(briefing 자동 주입),
+Stop/PreCompact(`write_session_process` 미기록 상태로 세션을 끝내려 하면 차단·리마인드).
+훅 명령은 크로스플랫폼입니다: `scripts/hooks/run-hook.sh`(sh 디스패처)가 OS에 맞는
+python으로 훅 구현(`scripts/hooks/*.py`)을 실행합니다 — Windows는 Git for Windows의
+`sh.exe`, macOS는 `/bin/sh`. `settings.json`은 gitignore된 머신 로컬 파일이므로
+머신마다 위 복사를 한 번씩 해줘야 합니다.
+
 ---
 
 ## AI Agent 연동 (MCP 미지원 도구 — Cursor 등, 또는 fallback)
@@ -308,11 +326,11 @@ claude mcp add devtrail-vault -- devtrail mcp-serve
 OBSIDIAN_VAULT_PATH: D:/personal-vault
 
 ## 작업 시작 전 필독 파일
-- {VAULT}/40_AgentMemory/Core/<프로젝트명>.md — 핵심 컨텍스트
-- {VAULT}/40_AgentMemory/05_OpenLoops.md    — 미해결 이슈 목록
+- {VAULT}/30_Projects/<프로젝트명>/Context.md — 프로젝트 배경·목표·제약
+- {VAULT}/40_AgentMemory/00_Profile.md ~ 05_OpenLoops.md — 전역 메모리·미해결 이슈
 
 ## Vault 수정 규칙
-- 20_Knowledge/, 30_Projects/, 40_AgentMemory/Core/ 는 직접 수정하지 않는다.
+- 20_Knowledge/, 30_Projects/, 40_AgentMemory/ 는 직접 수정하지 않는다.
 - 모든 제안·초안은 60_Candidates/ 에 파일로 생성하고 사람이 검토 후 promote 한다.
 ```
 
@@ -426,10 +444,15 @@ devtrail serve-bot
 /capture <메모>     /distill           /candidates
 /search <검색어>    /context <주제>    /promote <path>
 /worklog            /todo              /briefing
-/sync
+/answer [설명]      /sync
 ```
 
 `/briefing`은 `40_AgentMemory/`를 요약해 보여줍니다. `/sync`는 Vault git 동기화를 수동 트리거합니다 (Windows 서버 전용, `scripts/windows/sync-vault.ps1` 실행).
+
+`/answer`는 오늘의 복습 질문(Learning Recovery)에 답을 남깁니다 — 인자 없이 보내면
+현재 질문을 확인하고, `/answer <설명>`으로 보내면 질문이 기록된 세션 노트의 해당 질문
+아래에 답변이 기록됩니다. 미답 질문은 다음 Claude Code 세션 briefing과 weekly digest에
+집계됩니다.
 
 **`/review`** — 후보를 한 건씩 인라인 버튼 카드로 검토합니다.
 
@@ -441,11 +464,12 @@ devtrail serve-bot
 ### 블로그
 
 ```
-/write <주제>       /list              /preview [경로]
-/revise [경로]      /export [경로]     /publish <URL>
+/topics             /write <주제>      /list
+/preview [경로]     /revise [경로]     /export [경로]
+/publish <URL>
 ```
 
-`/preview`, `/revise`, `/export`는 인자를 생략하면 최신 초안(latest)을 대상으로 합니다.
+`/topics`는 쌓인 기록에서 블로그 주제 후보를 뽑아 제안합니다. `/preview`, `/revise`, `/export`는 인자를 생략하면 최신 초안(latest)을 대상으로 합니다.
 
 ### 개인 문서 · 기타
 
@@ -493,6 +517,8 @@ install.ps1            # 최초 설치 스크립트 (Python + venv + PATH + hook
 
 scripts/
 ├─ hooks/post-commit       # git post-commit hook 스크립트 (기본 비활성)
+├─ hooks/run-hook.sh       # Claude Code 훅 디스패처 — OS에 맞는 python 선택 (win/mac 공용)
+├─ hooks/*.py              # Claude Code 훅 구현 (SessionStart briefing 주입 · Stop 기록 체크)
 ├─ windows/                # Task Scheduler 등록/실행 스크립트 (register-schedules.ps1 등)
 └─ mac/                    # launchd 등록/실행 스크립트 (register-schedules.sh 등)
 
