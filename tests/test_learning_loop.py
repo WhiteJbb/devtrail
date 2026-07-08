@@ -113,3 +113,42 @@ def test_render_plain_string_still_gets_bullet():
         "related_candidates": "",
     })
     assert "- 한 줄 설명" in body
+
+
+# ── /topics 라우터 핸들러 (인텐트 위임 dead-end 수정) ────────────────────────
+
+
+def test_router_topics_lists_titles(monkeypatch):
+    """자연어 suggest-topics 인텐트가 위임하는 /topics가 도움말이 아니라 주제를 반환해야 한다."""
+    from types import SimpleNamespace
+
+    result = SimpleNamespace(
+        written=[SimpleNamespace(spec=SimpleNamespace(title="LLM 커밋 요약 자동화"))]
+    )
+
+    class FakeDistill:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def suggest_blog_topics(self):
+            return result
+
+    monkeypatch.setattr("app.agents.DistillAgent", FakeDistill)
+    reply = CommandRouter().handle("/topics")
+    assert "LLM 커밋 요약 자동화" in reply
+    assert "알 수 없는 명령" not in reply
+
+
+def test_router_topics_empty(monkeypatch):
+    from types import SimpleNamespace
+
+    class FakeDistill:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def suggest_blog_topics(self):
+            return SimpleNamespace(written=[])
+
+    monkeypatch.setattr("app.agents.DistillAgent", FakeDistill)
+    reply = CommandRouter().handle("/topics")
+    assert "주제가 안 보여요" in reply

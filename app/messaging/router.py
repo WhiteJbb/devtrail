@@ -338,6 +338,20 @@ class CommandRouter:
             lines.append("\n/review 로 하나씩 검토해보세요 — 버튼으로 승격/건너뛰기/삭제할 수 있어요.")
             return "\n".join(lines)
 
+        if cmd == "topics":
+            from app.agents import DistillAgent
+            result = DistillAgent().suggest_blog_topics()
+            if not result.written:
+                return (
+                    "기록을 훑어봤는데 아직 블로그로 풀 만한 주제가 안 보여요.\n"
+                    "메모와 세션 기록이 더 쌓이면 다시 제안해드릴게요."
+                )
+            lines = [f"블로그 주제 후보 {len(result.written)}개를 뽑았어요:"]
+            for item in result.written:
+                lines.append(f"· {item.spec.title}")
+            lines.append("\n/write <주제> 로 초안을 시작할 수 있어요.")
+            return "\n".join(lines)
+
         if cmd in ("context", "ctx"):
             if not arg:
                 return "어떤 주제의 컨텍스트를 모을까요? 주제를 함께 보내주세요.\n예: /context XCoreChat RAG"
