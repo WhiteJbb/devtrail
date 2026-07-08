@@ -233,7 +233,14 @@ class DistillAgent:
         if not terms:
             return []
         query = " ".join(list(terms)[:12])
-        results = self.wiki_service.search(query, limit=_MAX_RELATED * 2)
+        # prefixes 필터를 반드시 건다 — 전역 top-N을 먼저 뽑으면 노트가 많은
+        # 폴더(세션 로그 등)가 순위를 채워 Knowledge/Projects 결과가 잘려나가고,
+        # 그 결과 후보의 "## 관련 노트"가 항상 "(없음)"이 된다.
+        results = self.wiki_service.search(
+            query,
+            limit=_MAX_RELATED * 2,
+            prefixes=_KNOWLEDGE_PREFIXES + (_CANDIDATE_PREFIX,),
+        )
         related: list[WikiNote] = []
         for r in results:
             note = r.note
@@ -248,10 +255,30 @@ class DistillAgent:
                 break
         return related
 
+    _WIKILINK_PAT = re.compile(r"\[\[([^\]\[]+?)\]\]")
+
+    def _sanitize_wikilinks(self, body: str, valid_stems: set[str]) -> str:
+        """존재하지 않는 노트를 가리키는 wikilink를 일반 텍스트로 강등한다.
+
+        LLM이 body 안에 관련 노트를 지어내 링크하면(프롬프트의 [[stem]] 예시를
+        그대로 베끼는 경우 포함) vault에 깨진 링크가 쌓인다 — 대상이 실제로
+        존재하는 링크만 남긴다.
+        """
+        def _repl(m: re.Match) -> str:
+            raw = m.group(1)
+            target = raw.split("|")[0].split("#")[0].strip()
+            alias = raw.split("|", 1)[1].strip() if "|" in raw else target
+            if target and Path(target).stem.lower() in valid_stems:
+                return m.group(0)
+            return alias
+        return self._WIKILINK_PAT.sub(_repl, body)
+
     def _inject_related_links(self, results: list[CandidateWriteResult], related: list[WikiNote]) -> None:
-        """LLM 출력과 무관하게 related 노트를 ## 관련 노트 섹션에 주입한다."""
+        """LLM 출력과 무관하게 related 노트를 ## 관련 노트 섹션에 주입하고,
+        본문에 남은 깨진 wikilink를 일반 텍스트로 정리한다."""
         if not results:
             return
+        valid_stems = {Path(n.path).stem.lower() for n in self.wiki_service.scan_notes()}
         # related 없으면 placeholder로 정리; 있으면 실제 wikilink 주입
         content = (
             "\n".join(f"- [[{Path(r.path).stem}|{r.title}]]" for r in related)
@@ -264,7 +291,7 @@ class DistillAgent:
                 post = fm.loads(result.path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            body: str = post.content
+            body: str = self._sanitize_wikilinks(post.content, valid_stems)
             if "## 관련 노트" in body:
                 # LLM이 넣은 내용(placeholder 또는 임의 링크)과 무관하게 교체
                 body = _SECTION_PAT.sub(

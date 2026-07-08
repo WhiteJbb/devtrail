@@ -127,6 +127,53 @@ def test_distill_today_without_today_sources_returns_empty(tmp_path):
     assert result.source_refs == []
 
 
+# ── Obsidian 링크 연결 ───────────────────────────────────────────────────────
+
+
+def test_find_related_knowledge_survives_noisy_vault(tmp_path):
+    """세션 노트가 많아도 관련 Knowledge 노트를 찾아야 한다.
+
+    prefixes 필터 없이 전역 top-N을 먼저 뽑으면 노트가 많은 폴더(세션 로그)가
+    순위를 채워 Knowledge 결과가 잘려나가고, 후보의 '## 관련 노트'가 항상
+    '(없음)'이 된다 — 실제 vault에서 wikilink가 16개뿐이던 원인 중 하나.
+    """
+    knowledge_dir = tmp_path / "20_Knowledge" / "Devtrail"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "RAG-검색-전략.md").write_text(
+        "---\ntags: [rag]\n---\n\n# RAG 검색 전략\n\nRAG 검색 Devtrail 정리\n",
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "10_Worklog" / "Sessions"
+    sessions.mkdir(parents=True)
+    for i in range(30):  # 전역 top-24를 채우고도 남을 노이즈
+        (sessions / f"2026-06-2{i % 3}-devtrail-session-{i}.md").write_text(
+            f"---\nproject: Devtrail\ncreated_at: 2026-06-23T09:00:0{i % 10}\n---\n\n"
+            "# Devtrail 작업 세션\n\nRAG 검색 Devtrail 작업 기록\n",
+            encoding="utf-8",
+        )
+    agent = DistillAgent(settings=_settings(tmp_path), llm=FakeLLM("{}"), now=datetime(2026, 6, 23, 10, 0, 0))
+    notes = agent._raw_notes(today_only=True)
+
+    related = agent._find_related_knowledge(notes)
+
+    assert any(n.path.startswith("20_Knowledge/") for n in related)
+
+
+def test_sanitize_wikilinks_demotes_fabricated_links(tmp_path):
+    """존재하지 않는 노트를 가리키는 wikilink는 일반 텍스트로 강등된다."""
+    knowledge_dir = tmp_path / "20_Knowledge"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "실존-노트.md").write_text("# 실존\n", encoding="utf-8")
+    agent = DistillAgent(settings=_settings(tmp_path), llm=FakeLLM("{}"), now=datetime(2026, 6, 23))
+
+    body = "관련: [[실존-노트]] 그리고 [[지어낸-노트|별칭]] 및 [[stem]]"
+    out = agent._sanitize_wikilinks(body, {"실존-노트"})
+
+    assert "[[실존-노트]]" in out
+    assert "[[지어낸-노트" not in out and "별칭" in out
+    assert "[[stem]]" not in out and "stem" in out
+
+
 # ── distill_kinds 스코프 제한 (MCP 세션 노트) ────────────────────────────────
 
 
