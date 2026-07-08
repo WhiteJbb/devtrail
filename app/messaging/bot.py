@@ -90,6 +90,9 @@ class MessengerBot:
         self._offset: int | None = _load_offset()
         self._pending: dict[str, object] = {}  # chat_id → 확인 대기 중인 Intent
         self._review_queue: dict[str, list] = {}  # chat_id → CandidateItem 목록
+        # chat_id → {목록에 보여준 번호: 태스크 ID}. 완료/삭제로 번호가 밀려도
+        # 사용자가 마지막으로 본 번호가 그대로 통하게 하는 스냅샷.
+        self._task_snapshot: dict[str, dict[int, str]] = {}
 
     def _is_allowed(self, chat_id: str) -> bool:
         return not self.allowed_chat_ids or chat_id in self.allowed_chat_ids
@@ -107,19 +110,26 @@ class MessengerBot:
         if chat_id in self._pending:
             if low in _YES:
                 intent = self._pending.pop(chat_id)
+                intent = self._adjust_task_intent(chat_id, intent)
                 try:
-                    return self.assistant.execute(intent)
+                    reply = self.assistant.execute(intent)
                 except Exception as e:
                     return f"실행하다가 문제가 생겼어요: {e}"
+                if getattr(intent, "command", "") == "task-list":
+                    self._snapshot_tasks(chat_id)
+                return reply
             if low in _NO:
                 self._pending.pop(chat_id)
                 return "취소했어요."
             # 그 외 입력은 새 요청으로 본다(대기 해제 후 계속)
             self._pending.pop(chat_id)
 
-        # 2) 슬래시 명령은 그대로 실행
+        # 2) 슬래시 명령은 그대로 실행 (태스크 번호는 스냅샷 기준으로 치환)
         if t.startswith("/"):
-            return self.router.handle(t)
+            reply = self.router.handle(self._rewrite_task_numbers(chat_id, t))
+            if _is_tasks_cmd(t):
+                self._snapshot_tasks(chat_id)
+            return reply
 
         # 3) 자유 문장 → 비서가 있으면 의도 분류 후 확인, 없으면 도움말
         if self.assistant is None:
@@ -135,6 +145,68 @@ class MessengerBot:
 
         self._pending[chat_id] = intent
         return f"이렇게 이해했어요: {self.assistant.describe(intent)}\n실행할까요? (예/아니오)"
+
+    # ── 태스크 번호 스냅샷 ─────────────────────────────────────────────
+    #
+    # 목록을 보여준 직후의 "번호 → 안정 ID" 매핑을 기억해둔다. 이후 완료/삭제로
+    # 번호가 재배열돼도, 사용자가 마지막으로 본 번호를 그 항목의 ID로 치환해
+    # 처리하므로 "5번 완료"는 항상 사용자가 봤던 5번을 가리킨다.
+    # 새 목록을 보여주면 스냅샷이 갱신된다.
+
+    def _snapshot_tasks(self, chat_id: str) -> None:
+        try:
+            from app.agents.task_agent import TaskAgent
+            tasks = TaskAgent().service.list_tasks()
+            self._task_snapshot[chat_id] = {t.number: t.id for t in tasks if t.id}
+        except Exception:
+            self._task_snapshot.pop(chat_id, None)
+
+    def _resolve_task_arg(self, chat_id: str, arg: str) -> str:
+        """스냅샷이 있으면 번호 인자를 ^ID로 치환한다. 치환 불가면 원본 유지."""
+        snap = self._task_snapshot.get(chat_id)
+        if not snap:
+            return arg
+        try:
+            n = int(arg.strip())
+        except (ValueError, AttributeError):
+            return arg
+        task_id = snap.get(n)
+        return f"^{task_id}" if task_id else arg
+
+    def _rewrite_task_numbers(self, chat_id: str, text: str) -> str:
+        """슬래시 태스크 명령(/done·/del·/edit)의 번호 인자를 스냅샷 기준으로 치환한다."""
+        parts = text.split(maxsplit=1)
+        cmd = parts[0].lstrip("/").lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        if not arg:
+            return text
+        if cmd in ("done", "del", "delete", "rm"):
+            resolved = self._resolve_task_arg(chat_id, arg)
+            if resolved != arg:
+                return f"{parts[0]} {resolved}"
+        elif cmd == "edit":
+            head, *rest = arg.split(maxsplit=1)
+            resolved = self._resolve_task_arg(chat_id, head)
+            if resolved != head:
+                return f"{parts[0]} {resolved}" + (f" {rest[0]}" if rest else "")
+        return text
+
+    def _adjust_task_intent(self, chat_id: str, intent):
+        """자연어 태스크 intent의 번호 인자를 스냅샷 기준으로 치환한다."""
+        command = getattr(intent, "command", "")
+        arg = getattr(intent, "arg", "")
+        if command in ("task-done", "task-delete"):
+            new_arg = self._resolve_task_arg(chat_id, arg)
+        elif command == "task-edit" and arg:
+            head, *rest = arg.split(maxsplit=1)
+            resolved = self._resolve_task_arg(chat_id, head)
+            new_arg = resolved + (f" {rest[0]}" if rest else "") if resolved != head else arg
+        else:
+            return intent
+        if new_arg == arg:
+            return intent
+        from app.assistant.intent import Intent
+        return Intent(command=command, arg=new_arg, reason=getattr(intent, "reason", ""))
 
     def _build_task_buttons(self) -> list[list[dict]] | None:
         """현재 할 일 목록을 기반으로 인라인 버튼 행을 만든다."""
@@ -312,8 +384,11 @@ class MessengerBot:
                         self.provider.send_with_buttons(msg.chat_id, reply, buttons)
                         handled += 1
                         continue
-                    except Exception:
-                        pass  # 버튼 전송 실패 시 일반 메시지로 폴백
+                    except Exception as exc:
+                        # 일반 메시지로 폴백하되, 원인은 로그에 남긴다
+                        resp = getattr(exc, "response", None)
+                        detail = f" — {resp.text[:200]}" if resp is not None else ""
+                        print(f"[bot] 버튼 전송 실패, 일반 메시지로 폴백: {exc}{detail}", flush=True)
 
             self.provider.send(msg.chat_id, reply)
             handled += 1
