@@ -26,6 +26,9 @@ _PROMOTE_TARGETS = {
     "decision": "30_Projects",
     "memory_patch": "40_AgentMemory",
     "blog_idea": "50_Outputs/Blog/Ideas",
+    # career_bullet은 이력서/포폴 소재지 지식이 아니다 — 20_Knowledge(기본값)로
+    # 떨어지면 지식 영역이 이력서용 추상 제목으로 오염된다.
+    "career_bullet": "50_Outputs/Career",
 }
 
 _KIND_LABEL = {
@@ -33,6 +36,7 @@ _KIND_LABEL = {
     "decision": "Decision",
     "memory_patch": "MemoryPatch",
     "blog_idea": "BlogIdea",
+    "career_bullet": "CareerBullet",
 }
 
 
@@ -300,6 +304,8 @@ class CuratorAgent:
             "memory_patches": "memory_patch",
             "blog": "blog_idea",
             "blog_ideas": "blog_idea",
+            "career": "career_bullet",
+            "career_bullets": "career_bullet",
             "candidate": "",
             "session_handoffs": "session_handoff",
             "handoff": "session_handoff",

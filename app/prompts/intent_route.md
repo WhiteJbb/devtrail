@@ -14,13 +14,13 @@
 - preview — 초안 미리보기 (arg = slug, 비우면 최신)
 - export-tistory — 초안을 티스토리용으로 변환 (arg = slug, 비우면 최신)
 - publish-done — 게시 완료 기록 (arg = 게시된 글 URL)
-- sync-notion — Notion 동기화
 - capture-session — 현재 작업 세션을 구조화된 노트로 저장 (arg = 프로젝트명, 없으면 빈 문자열)
 - worklog — 최근 작업 회고 생성
 - todo — 다음 할 일 제안
+- distill — 오늘 기록을 지식/블로그 후보로 정제
+- answer — 복습 질문에 답변 기록 (arg = 답변 내용 전체, 질문만 보려면 빈 문자열)
 - portfolio — 포트폴리오 초안 생성
 - resume — 이력서/자기소개서 초안 생성
-- wiki-query — wiki에서 기술 내용 검색/질답 (arg = 질문 전체)
 - ask-vault — Vault(노트/후보)에 저장된 결정·지식을 찾는 질문 (arg = 질문 전체)
 - help — 무엇을 할 수 있는지 안내
 - unknown — 위 어디에도 해당하지 않음
@@ -35,6 +35,9 @@
 - "삭제", "지워", "없애", "N번 삭제", "N번 지워" → task-delete (arg = 번호만)
 - "수정", "바꿔", "변경", "N번 ~ 로 바꿔", "N번 ~ 으로 수정" → task-edit (arg = "번호 새내용")
 - "지난번 결정 뭐였지", "Vault에서 찾아줘", "저장된 노트에", "예전에 뭐라고 했지" → ask-vault (arg = 질문 전체)
+- "오늘 기록 정제해줘", "후보 뽑아줘", "distill 돌려줘" → distill
+- "복습 질문 보여줘", "오늘 질문 뭐야" → answer (arg = 빈 문자열)
+- "복습 질문에 답할게 ...", "설명해볼게 ...", "그 질문 답은 ..." → answer (arg = 답변 내용 전체)
 
 # 규칙
 - 요청에 가장 잘 맞는 명령 하나를 고른다. 애매하거나 해당 없음이면 unknown.

@@ -28,6 +28,8 @@ DESCRIPTIONS = {
     "publish-done": "게시 완료 기록",
     "worklog": "작업 회고 생성",
     "todo": "다음 할 일 제안",
+    "distill": "오늘 기록 정제 (지식/블로그 후보 생성)",
+    "answer": "복습 질문 답변 기록",
     "portfolio": "포트폴리오 초안 생성",
     "resume": "이력서/자기소개서 초안 생성",
     "capture-session": "작업 세션 노트 저장",
@@ -48,6 +50,8 @@ _ROUTER_CMD = {
     "preview": "preview",
     "export-tistory": "export",
     "publish-done": "publish",
+    "distill": "distill",
+    "answer": "answer",
 }
 
 _HELP = (

@@ -245,6 +245,23 @@ class NightlyDistillAgent:
             review_block = format_review_block(self.vault_dir)
             if review_block:
                 lines += ["", review_block]
+        else:
+            # 한 주간 답하지 않은 학습 질문을 모아 보여준다 — daily에서 하루
+            # 지나면 증발하던 질문의 두 번째 회수 기회.
+            from app.services.review_question import list_questions
+
+            try:
+                unanswered = [
+                    q for q in list_questions(self.vault_dir, max_sessions=30, days=7)
+                    if not q.answered
+                ]
+            except Exception:
+                unanswered = []
+            if unanswered:
+                lines += ["", "## 이번 주 미답 학습 질문", ""]
+                for q in unanswered[:10]:
+                    lines.append(f"- {q.question} ({q.source_rel_path})")
+                lines += ["", "Telegram에서 /answer <설명> 으로 답하면 세션 노트에 기록돼요."]
 
         return "\n".join(lines)
 
