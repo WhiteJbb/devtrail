@@ -36,7 +36,9 @@ function Send-TelegramAlert($text) {
     }
 }
 
-$wa       = "$RepoRoot\.venv\Scripts\devtrail.exe"
+$venvWa = "$RepoRoot\.venv\Scripts\devtrail.exe"
+$wa = if (Test-Path $venvWa) { $venvWa } else { (Get-Command devtrail.exe -ErrorAction SilentlyContinue).Source }
+if (-not $wa) { Log "devtrail.exe를 찾을 수 없습니다 (.venv 없고 PATH에도 없음)."; exit 1 }
 $LockFile = "$RepoRoot\.weekly.lock"
 
 # 중복 실행 방지

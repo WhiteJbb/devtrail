@@ -1,0 +1,41 @@
+{
+  "//": "머신별 Claude Code 설정 템플릿 — `cp .claude/settings.example.json .claude/settings.json`으로 활성화한다. 훅 명령은 크로스플랫폼이다(Windows는 Git sh.exe, macOS는 /bin/sh).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh scripts/hooks/run-hook.sh session-start-briefing",
+            "timeout": 30,
+            "statusMessage": "devtrail 프로젝트 브리핑 로딩 중..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh scripts/hooks/run-hook.sh stop-process-check",
+            "timeout": 20,
+            "statusMessage": "세션 기록 여부 확인 중..."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh scripts/hooks/run-hook.sh stop-process-check",
+            "timeout": 20,
+            "statusMessage": "컴팩팅 전 세션 기록 여부 확인 중..."
+          }
+        ]
+      }
+    ]
+  }
+}
