@@ -129,6 +129,26 @@ def test_dedup_updates_existing_candidate_body(tmp_path):
     assert "10_Worklog/Sessions/b.md" in post.metadata["source_refs"]
 
 
+def test_long_title_produces_short_filename_but_full_title_preserved(tmp_path):
+    """title이 길어도 파일명은 잘리고(경로 길이 제한 회피), frontmatter/본문 title은 그대로 남는다."""
+    writer = _writer(tmp_path)
+    long_title = (
+        "Devtrail — Windows에서 셸 스크립트를 만들거나 이동하면 git에 실행 비트 없이(100644) 커밋된다. "
+        "PR #35의 scripts/mac 이동이 그렇게 커밋돼, Mac nightly가 07-06부터 매일 밤 'Permission denied'로 "
+        "1단계(update-devtrail)에서 중단됐다."
+    )
+    spec = CandidateSpec(kind="memory_patch", title=long_title, body="원인과 해결")
+    result = writer.write(spec)
+
+    filename = result.path.stem
+    assert len(filename) <= 50
+    assert not filename.endswith(" ")
+
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["title"] == long_title
+    assert long_title in post.content  # 본문 H1에도 원문 그대로
+
+
 def test_dedup_does_not_touch_promoted_candidate(tmp_path):
     """사람이 promote한 파일(status!=candidate)은 덮어쓰지 않는다."""
     writer = _writer(tmp_path)

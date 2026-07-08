@@ -15,6 +15,7 @@ from app.services.wiki_service import WikiService
 
 _DEDUP_THRESHOLD = 0.85  # 제목 유사도 임계값
 _DEDUP_LOOKBACK_DAYS = 14  # 최근 N일 이내 후보만 dedup 대상
+_FILENAME_MAX_LEN = 50  # 파일명 길이 상한 — title 원문은 frontmatter/본문에 그대로 남는다
 
 
 _CANDIDATE_DIRS = {
@@ -274,8 +275,18 @@ class CandidateWriter:
         return re.sub(r"\s+", " ", t).strip()
 
     def _slug(self, value: str) -> str:
-        """파일시스템 금지 문자만 제거하고 제목을 그대로 파일명으로 사용한다."""
-        return slug_component(value)
+        """파일시스템 금지 문자를 제거하고, 파일명 길이를 안전한 수준으로 자른다.
+
+        title 원문은 frontmatter·본문 H1에 그대로 남으므로 정보 손실은 없다 — 파일명은
+        Windows MAX_PATH(260자) 등 OS 경로 길이 제한을 피하기 위해서만 축약한다.
+        """
+        text = slug_component(value)
+        if len(text) <= _FILENAME_MAX_LEN:
+            return text
+        truncated = text[:_FILENAME_MAX_LEN]
+        if " " in truncated:
+            truncated = truncated.rsplit(" ", 1)[0]
+        return truncated.rstrip(" .-—–,") or text[:_FILENAME_MAX_LEN]
 
     def _now(self) -> datetime:
         return self.now or datetime.now()
