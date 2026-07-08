@@ -80,20 +80,26 @@ class TaskAgent:
         return TaskResult(ok=True, message=f"🗑 삭제했어요\n~~{task.text}~~", task=task)
 
     def edit(self, arg: str) -> TaskResult:
-        """`arg` = '2 새내용' 형식."""
+        """`arg` = '2 새내용' 또는 '^id 새내용' 형식."""
         parts = arg.strip().split(maxsplit=1)
         if len(parts) < 2:
             return TaskResult(
                 ok=False,
                 message="어떻게 바꿀까요? 번호와 새 내용을 함께 보내주세요.\n예: /edit 2 코드 리뷰 내일까지",
             )
-        try:
-            n = int(parts[0])
-        except ValueError:
-            return TaskResult(
-                ok=False,
-                message="맨 앞은 태스크 번호여야 해요.\n예: /edit 2 코드 리뷰 내일까지",
-            )
+        if parts[0].startswith("^"):
+            target = next((t for t in self.service.list_tasks() if t.id == parts[0][1:]), None)
+            if target is None:
+                return TaskResult(ok=False, message="그 태스크를 못 찾았어요.\n/tasks 로 목록을 확인해주세요.")
+            n = target.number
+        else:
+            try:
+                n = int(parts[0])
+            except ValueError:
+                return TaskResult(
+                    ok=False,
+                    message="맨 앞은 태스크 번호여야 해요.\n예: /edit 2 코드 리뷰 내일까지",
+                )
 
         new_raw = parts[1].strip()
         new_text, new_due, new_section = _parse_task(new_raw)

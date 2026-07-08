@@ -136,6 +136,17 @@ class TelegramProvider:
             print("[bot] 409 Conflict: 다른 봇 인스턴스가 실행 중입니다. 30초 후 재시도...", flush=True)
             time.sleep(30)
             return [], offset if offset is not None else 0
+        if resp.status_code == 429:
+            # 레이트리밋 — Telegram이 알려준 retry_after만큼 기다렸다가 재시도
+            retry_after = 30
+            try:
+                retry_after = int(resp.json().get("parameters", {}).get("retry_after", retry_after))
+            except Exception:
+                pass
+            retry_after = min(max(retry_after, 1), 120)
+            print(f"[bot] 429 Too Many Requests: {retry_after}초 대기 후 재시도...", flush=True)
+            time.sleep(retry_after)
+            return [], offset if offset is not None else 0
         resp.raise_for_status()
         data = resp.json()
 
