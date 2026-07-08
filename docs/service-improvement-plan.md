@@ -52,7 +52,7 @@ and promote reviewed knowledge into durable project memory.
 - 원본 기록: `capture`, `capture-commit`, `capture-session`, `daily-log`, Telegram 미디어 캡처
 - 정제 후보 생성: `distill-today`, `suggest-knowledge`, `suggest-blog-topics`, `suggest-memory-patch`, `build-context`
 - 후보 관리: `list-candidates`, `preview-candidate`, `promote-candidate`, `apply-memory-patch`
-- 결과물 생성: `write-blog`, `worklog`, `todo`, `resume`, `portfolio`, `interview-questions`
+- 결과물 생성: `blog write`, `worklog`, `todo`, `resume`, `portfolio`, `interview-questions`
 - 자동화와 전송: `nightly-distill`, `push-digest`, `serve-bot`, post-commit hook
 
 즉 서비스의 병목은 "기록이 부족함"이 아니라 "기록된 메모리가 개발 세션에서 자동으로 소비되지 않음"이다.

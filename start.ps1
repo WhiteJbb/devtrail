@@ -208,7 +208,7 @@ Write-Host "    $PYTHON -m app.cli build-context 'XCoreChat 개발환경 분리'
 Write-Host ""
 
 Write-Host "  [글쓰기]" -ForegroundColor White
-Write-Host "    $PYTHON -m app.cli write-blog 'XCoreChat RAG 전략'" -ForegroundColor DarkGray
+Write-Host "    $PYTHON -m app.cli blog write 'XCoreChat RAG 전략'" -ForegroundColor DarkGray
 Write-Host "    $PYTHON -m app.cli summarize-project XCoreChat" -ForegroundColor DarkGray
 Write-Host "    $PYTHON -m app.cli interview-questions XCoreChat" -ForegroundColor DarkGray
 Write-Host ""

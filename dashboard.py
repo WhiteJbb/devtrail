@@ -116,15 +116,15 @@ PHASES: list[tuple[str, str, list]] = [
         [
             ("worklog",               "오늘 작업 정리",          []),
             ("todo",                  "다음 할 일 목록",         []),
-            ("write-blog",            "블로그 초안 작성", [
+            ("blog write",            "블로그 초안 작성", [
                 ("topic",             "주제",                    True,  "str"),
                 ("--project",         "프로젝트명 (Enter=스킵)", False, "str"),
             ]),
-            ("revise-blog",           "블로그 초안 다듬기", [
+            ("blog revise",           "블로그 초안 다듬기", [
                 ("path",              "초안 파일 경로",          True,  "path"),
             ]),
-            ("list",                  "블로그 초안 목록",        []),
-            ("preview",               "최신 초안 미리보기", [
+            ("blog list",             "블로그 초안 목록",        []),
+            ("blog preview",          "최신 초안 미리보기", [
                 ("target",            "파일명 (Enter=최신)",     False, "str"),
             ]),
             ("portfolio",             "포트폴리오 전체 초안",    []),
@@ -544,7 +544,7 @@ class DevtrailApp(App):
         log = self.query_one("#output", RichLog)
         try:
             proc = subprocess.Popen(
-                [PYTHON, "-m", "app.cli", cmd, *args],
+                [PYTHON, "-m", "app.cli", *cmd.split(), *args],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
