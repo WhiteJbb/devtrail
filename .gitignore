@@ -17,6 +17,7 @@ venv/
 .claude/*
 !.claude/global.md
 !.claude/github.example.json
+!.claude/settings.example.json
 
 # Notion mock store
 workspace/.notion_mock.json
