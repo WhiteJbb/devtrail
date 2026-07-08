@@ -286,7 +286,7 @@ class CandidateWriter:
         truncated = text[:_FILENAME_MAX_LEN]
         if " " in truncated:
             truncated = truncated.rsplit(" ", 1)[0]
-        return truncated.rstrip(" .-—–,") or text[:_FILENAME_MAX_LEN]
+        return truncated.rstrip(" .-—–,·([") or text[:_FILENAME_MAX_LEN]
 
     def _now(self) -> datetime:
         return self.now or datetime.now()

@@ -141,14 +141,18 @@ class CaptureAgent:
         source: str = "agent_session",
         title: str | None = None,
         needs_distill: bool = True,
+        distill_kinds: list[str] | None = None,
     ) -> CaptureResult:
         """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Sessions/에 저장한다.
 
         summary_text가 주어지면 summary_file보다 우선한다(MCP처럼 요약 텍스트를 직접
         전달하는 호출 경로에서 임시 파일을 만들 필요가 없게 한다).
 
-        needs_distill=False는 write_session_process처럼 이미 Decision/MemoryPatch
-        분리까지 끝낸 호출 경로가 nightly distill의 재추출·중복 생성을 막기 위해 쓴다.
+        needs_distill=False는 nightly distill의 재추출·중복 생성을 막기 위해 쓴다.
+        distill_kinds는 부분 제외용이다 — write_session_process처럼 Decision/MemoryPatch
+        분리는 끝냈지만 knowledge/blog_idea 추출은 distill에 맡겨야 하는 경로가
+        ["knowledge", "blog_idea"]를 넘기면, DistillAgent가 이 노트에서는 해당 종류만
+        후보로 만든다.
         """
         date = self._date()
         project = (project or "").strip()
@@ -200,6 +204,8 @@ class CaptureAgent:
             "source_refs": [f"git:{commit[:10]}" for commit in ([commit] if commit else [])],
             "tags": ["session", "worklog"],
         }
+        if distill_kinds:
+            metadata["distill_kinds"] = list(distill_kinds)
 
         body = self._build_session_body(
             title=title or (f"{project} 작업 세션" if project else "작업 세션"),
