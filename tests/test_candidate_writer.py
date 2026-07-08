@@ -163,3 +163,28 @@ def test_dedup_does_not_touch_promoted_candidate(tmp_path):
     final = frontmatter.loads(r1.path.read_text(encoding="utf-8"))
     assert "원본" in final.content
     assert "변경 시도" not in final.content
+
+
+def test_source_refs_render_as_wikilinks(tmp_path):
+    """body의 ## Source Refs는 vault 내부 노트를 wikilink로 렌더링해야 한다.
+
+    일반 텍스트 경로는 Obsidian 그래프/백링크에 잡히지 않아 후보 노트가 소스
+    세션/메모와 연결되지 않는다. git 커밋 참조 같은 노트 외 참조는 그대로 둔다.
+    """
+    writer = _writer(tmp_path)
+    spec = CandidateSpec(
+        kind="knowledge",
+        title="링크 렌더링 테스트",
+        body="본문",
+        source_refs=["10_Worklog/Sessions/2026-07-08-devtrail-session.md", "git:abc1234567"],
+    )
+    result = writer.write(spec)
+
+    text = result.path.read_text(encoding="utf-8")
+    assert "- [[10_Worklog/Sessions/2026-07-08-devtrail-session]]" in text
+    assert "- git:abc1234567" in text
+    # frontmatter의 source_refs는 코드가 읽는 데이터라 평문 경로를 유지한다
+    post = frontmatter.loads(text)
+    assert post.metadata["source_refs"] == [
+        "10_Worklog/Sessions/2026-07-08-devtrail-session.md", "git:abc1234567",
+    ]

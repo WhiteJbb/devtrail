@@ -160,7 +160,7 @@ class NightlyDistillAgent:
         lines += ["## 오늘 한 일", ""]
         if sessions:
             for s in sessions:
-                lines.append(f"- {s.title}")
+                lines.append(f"- {self._session_headline(s)}")
         else:
             lines.append("- (session 노트 없음)")
         lines.append("")
@@ -318,6 +318,20 @@ class NightlyDistillAgent:
             except OSError:
                 continue
         return entries
+
+    def _session_headline(self, note: WikiNote) -> str:
+        """digest '오늘 한 일'용 한 줄 요약 — 세션 노트 제목은 대부분
+        '<프로젝트> 작업 세션'으로 동일해 제목만 나열하면 하루 목록이 구분되지 않는다.
+        본문 첫 불릿(What Changed 첫 항목)을 붙여 각 세션이 무엇이었는지 드러낸다."""
+        for line in note.body.splitlines():
+            text = line.strip()
+            if text.startswith("- "):
+                headline = text[2:].replace("**", "").strip()
+                if len(headline) > 90:
+                    headline = headline[:90].rstrip() + "…"
+                if headline:
+                    return f"{note.title} — {headline}"
+        return note.title
 
     def _today_sessions(self) -> list[WikiNote]:
         today = self._date()

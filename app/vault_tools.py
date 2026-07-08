@@ -297,6 +297,10 @@ def _update_worklog_note(vault_dir: Path, session_id: str, body: str) -> str | N
         first_line = post.content.strip().splitlines()[0] if post.content.strip() else ""
         title_line = first_line if first_line.startswith("# ") else "# 작업 세션"
         post.metadata["updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+09:00")
+        # 재기록으로 본문이 바뀌었으니 distill 대상으로 되살린다 — 이미 distill이 지나간
+        # 노트(needs_distill=False)에 새 내용이 들어와도 다시 증류되도록.
+        post.metadata["needs_distill"] = True
+        post.metadata.setdefault("distill_kinds", ["knowledge", "blog_idea"])
         post.content = f"{title_line}\n\n{body.strip()}\n"
         md_path.write_text(frontmatter.dumps(post), encoding="utf-8")
         return str(md_path.relative_to(vault_dir)).replace("\\", "/")
@@ -863,9 +867,12 @@ def write_session_process(
             session_id=session_id,
             from_agent=True,
             source="mcp_session_process",
-            # Decision/MemoryPatch 분리를 이미 이 함수가 수행했으므로 nightly distill이
-            # 같은 내용을 다시 LLM에 넣어 중복 후보를 만들지 않도록 재증류 대상에서 뺀다.
-            needs_distill=False,
+            # Decision/MemoryPatch는 이 함수가 구조화 필드에서 직접 추출하므로 distill이
+            # 다시 만들면 중복이다. 하지만 knowledge/blog_idea는 여기서 추출하지 않으므로
+            # 노트를 통째로 빼면(과거 needs_distill=False) 세션 기록에서 지식 후보가
+            # 영원히 나오지 않는다 — distill_kinds로 부분 허용한다.
+            needs_distill=True,
+            distill_kinds=["knowledge", "blog_idea"],
         )
         worklog_rel_path = worklog_result.rel_path
 

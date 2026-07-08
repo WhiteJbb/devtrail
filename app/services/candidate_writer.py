@@ -219,9 +219,21 @@ class CandidateWriter:
         else:
             rendered = f"# {spec.title.strip()}\n\n{body}"
         if spec.source_refs:
-            refs = "\n".join(f"- {ref}" for ref in spec.source_refs)
+            refs = "\n".join(f"- {self._ref_line(ref)}" for ref in spec.source_refs)
             rendered += f"\n\n## Source Refs\n\n{refs}"
         return rendered.strip() + "\n"
+
+    @staticmethod
+    def _ref_line(ref: str) -> str:
+        """vault 내부 노트 참조는 wikilink로 렌더링한다.
+
+        일반 텍스트 경로는 Obsidian 그래프/백링크에 잡히지 않아 후보가 소스와
+        연결되지 않는다. `git:abc123` 같은 노트 외 참조는 그대로 둔다.
+        """
+        r = str(ref).strip().replace("\\", "/")
+        if r.endswith(".md"):
+            return f"[[{r[:-3]}]]"
+        return r
 
     def _unique_rel_path(self, kind: str, title: str, project: str = "") -> str:
         base_dir = _CANDIDATE_DIRS[kind]
@@ -286,7 +298,7 @@ class CandidateWriter:
         truncated = text[:_FILENAME_MAX_LEN]
         if " " in truncated:
             truncated = truncated.rsplit(" ", 1)[0]
-        return truncated.rstrip(" .-—–,") or text[:_FILENAME_MAX_LEN]
+        return truncated.rstrip(" .-—–,·([") or text[:_FILENAME_MAX_LEN]
 
     def _now(self) -> datetime:
         return self.now or datetime.now()

@@ -202,11 +202,13 @@ def test_write_session_process_double_writes_worklog(tmp_path):
     assert result.worklog_rel_path.startswith("10_Worklog/Sessions/")
 
 
-def test_write_session_process_worklog_is_not_marked_for_redistill(tmp_path):
-    """write_session_process가 남긴 worklog 노트는 needs_distill=False여야 한다(P1.3).
+def test_write_session_process_worklog_allows_knowledge_distill_only(tmp_path):
+    """write_session_process가 남긴 worklog 노트는 distill 대상이되 종류가 제한돼야 한다.
 
-    True로 남으면 nightly distill이 이미 구조화된 Process를 재추출해 방금 분리 생성한
-    Decision/MemoryPatch와 중복 후보를 만든다.
+    과거처럼 needs_distill=False로 통째로 빼면 MCP 세션 기록(가장 풍부한 소스)에서
+    knowledge/blog_idea 후보가 영원히 나오지 않는다. 대신 needs_distill=True +
+    distill_kinds로 Decision/MemoryPatch 중복만 막는다 — 그 둘은 이 함수가 구조화
+    필드에서 직접 추출한다.
     """
     settings = _settings(tmp_path)
     result = vault_tools.write_session_process(
@@ -215,7 +217,38 @@ def test_write_session_process_worklog_is_not_marked_for_redistill(tmp_path):
         next_session="", learning_recovery={}, session_id="sess-nd", settings=settings,
     )
     post = frontmatter.loads((tmp_path / result.worklog_rel_path).read_text(encoding="utf-8"))
-    assert post.metadata["needs_distill"] is False
+    assert post.metadata["needs_distill"] is True
+    assert post.metadata["distill_kinds"] == ["knowledge", "blog_idea"]
+
+
+def test_write_session_process_rerecord_revives_needs_distill(tmp_path):
+    """재기록(upsert)된 worklog 노트는 needs_distill이 다시 True가 돼야 한다.
+
+    distill이 지나가 needs_distill=False가 된 뒤 같은 세션이 Process를 다시 쓰면
+    본문이 새 내용으로 바뀌므로, False가 유지되면 새 내용이 증류되지 않는다.
+    """
+    settings = _settings(tmp_path)
+    first = vault_tools.write_session_process(
+        project="Devtrail", what_changed="1차", files_touched="x", project_decisions={},
+        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={}, session_id="sess-re", settings=settings,
+    )
+    # distill이 처리한 상태를 재현
+    note_path = tmp_path / first.worklog_rel_path
+    post = frontmatter.loads(note_path.read_text(encoding="utf-8"))
+    post.metadata["needs_distill"] = False
+    note_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    second = vault_tools.write_session_process(
+        project="Devtrail", what_changed="2차 — 커밋 추가", files_touched="x",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="sess-re", settings=settings,
+    )
+    assert second.worklog_rel_path == first.worklog_rel_path
+    post = frontmatter.loads(note_path.read_text(encoding="utf-8"))
+    assert post.metadata["needs_distill"] is True
+    assert post.metadata["distill_kinds"] == ["knowledge", "blog_idea"]
 
 
 def test_write_session_process_memory_patch_updated_for_same_session(tmp_path):

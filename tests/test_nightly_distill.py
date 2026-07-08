@@ -101,6 +101,25 @@ def test_run_saves_digest(tmp_path):
     assert "블로그 후보" in text
 
 
+def test_digest_session_line_includes_first_bullet(tmp_path):
+    """digest '오늘 한 일'은 제목만이 아니라 본문 첫 불릿을 붙여야 한다.
+
+    세션 노트 제목은 대부분 '<프로젝트> 작업 세션'으로 동일해, 제목만 나열하면
+    같은 줄이 세션 수만큼 반복돼 하루를 구분할 수 없다.
+    """
+    CaptureAgent(settings=_settings(tmp_path), now=datetime(2026, 6, 23, 9, 0, 0)).capture_session(
+        project="Devtrail",
+        summary_text="## What Changed\n- **훅 크로스플랫폼화** — sh 디스패처 도입\n- weekly fallback 추가",
+        from_agent=True,
+    )
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert "Devtrail 작업 세션 — 훅 크로스플랫폼화 — sh 디스패처 도입" in result.digest_text
+
+
 def test_daily_digest_includes_review_question_block(tmp_path):
     """nightly-distill의 daily digest에도 push-digest --daily와 같은 복습 질문이 붙어야 한다(P5.5).
 

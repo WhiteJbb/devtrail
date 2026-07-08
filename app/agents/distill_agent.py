@@ -88,7 +88,9 @@ class DistillAgent:
         except JSONParseError as e:
             raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
+        specs, scope_dropped = self._filter_by_note_kinds(specs, notes)
         specs, dropped = self._critic_filter(specs, context=context, related_section=related_section)
+        dropped = scope_dropped + dropped
         written = self.writer.write_many(specs)
         self._inject_related_links(written, related)
         from app.services.wiki_service import mark_distilled
@@ -97,6 +99,41 @@ class DistillAgent:
 
     def _llm(self) -> LLMProvider:
         return self.llm or get_task_llm_provider("distill", self.settings)
+
+    def _filter_by_note_kinds(
+        self, specs: list[CandidateSpec], notes: list[WikiNote]
+    ) -> tuple[list[CandidateSpec], list[str]]:
+        """노트 frontmatter의 distill_kinds 제한을 후보에 적용한다.
+
+        write_session_process가 만든 세션 노트는 Decision/MemoryPatch를 이미 구조화
+        필드에서 추출했으므로 distill_kinds=["knowledge", "blog_idea"]로 제한된다 —
+        그 노트만을 근거로 한 decision/memory_patch 후보는 중복이므로 버린다.
+        distill_kinds가 없는 노트는 모든 종류를 허용한다(기존 동작).
+        """
+        allowed_by_path: dict[str, set[str] | None] = {}
+        for note in notes:
+            kinds = note.metadata.get("distill_kinds")
+            if isinstance(kinds, list) and kinds:
+                allowed_by_path[note.path] = {str(k) for k in kinds}
+            else:
+                allowed_by_path[note.path] = None  # 제한 없음
+
+        kept: list[CandidateSpec] = []
+        dropped: list[str] = []
+        for spec in specs:
+            allowed = False
+            for ref in spec.source_refs:
+                note_kinds = allowed_by_path.get(str(ref))
+                if note_kinds is None or spec.kind in note_kinds:
+                    allowed = True
+                    break
+            if allowed:
+                kept.append(spec)
+            else:
+                dropped.append(
+                    f"{spec.title} — 소스 노트가 {spec.kind} 추출을 허용하지 않음 (이미 구조화 경로로 기록됨)"
+                )
+        return kept, dropped
 
     def _critic_filter(
         self, specs: list[CandidateSpec], context: str, related_section: str
@@ -196,7 +233,14 @@ class DistillAgent:
         if not terms:
             return []
         query = " ".join(list(terms)[:12])
-        results = self.wiki_service.search(query, limit=_MAX_RELATED * 2)
+        # prefixes 필터를 반드시 건다 — 전역 top-N을 먼저 뽑으면 노트가 많은
+        # 폴더(세션 로그 등)가 순위를 채워 Knowledge/Projects 결과가 잘려나가고,
+        # 그 결과 후보의 "## 관련 노트"가 항상 "(없음)"이 된다.
+        results = self.wiki_service.search(
+            query,
+            limit=_MAX_RELATED * 2,
+            prefixes=_KNOWLEDGE_PREFIXES + (_CANDIDATE_PREFIX,),
+        )
         related: list[WikiNote] = []
         for r in results:
             note = r.note
@@ -211,10 +255,30 @@ class DistillAgent:
                 break
         return related
 
+    _WIKILINK_PAT = re.compile(r"\[\[([^\]\[]+?)\]\]")
+
+    def _sanitize_wikilinks(self, body: str, valid_stems: set[str]) -> str:
+        """존재하지 않는 노트를 가리키는 wikilink를 일반 텍스트로 강등한다.
+
+        LLM이 body 안에 관련 노트를 지어내 링크하면(프롬프트의 [[stem]] 예시를
+        그대로 베끼는 경우 포함) vault에 깨진 링크가 쌓인다 — 대상이 실제로
+        존재하는 링크만 남긴다.
+        """
+        def _repl(m: re.Match) -> str:
+            raw = m.group(1)
+            target = raw.split("|")[0].split("#")[0].strip()
+            alias = raw.split("|", 1)[1].strip() if "|" in raw else target
+            if target and Path(target).stem.lower() in valid_stems:
+                return m.group(0)
+            return alias
+        return self._WIKILINK_PAT.sub(_repl, body)
+
     def _inject_related_links(self, results: list[CandidateWriteResult], related: list[WikiNote]) -> None:
-        """LLM 출력과 무관하게 related 노트를 ## 관련 노트 섹션에 주입한다."""
+        """LLM 출력과 무관하게 related 노트를 ## 관련 노트 섹션에 주입하고,
+        본문에 남은 깨진 wikilink를 일반 텍스트로 정리한다."""
         if not results:
             return
+        valid_stems = {Path(n.path).stem.lower() for n in self.wiki_service.scan_notes()}
         # related 없으면 placeholder로 정리; 있으면 실제 wikilink 주입
         content = (
             "\n".join(f"- [[{Path(r.path).stem}|{r.title}]]" for r in related)
@@ -227,7 +291,7 @@ class DistillAgent:
                 post = fm.loads(result.path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            body: str = post.content
+            body: str = self._sanitize_wikilinks(post.content, valid_stems)
             if "## 관련 노트" in body:
                 # LLM이 넣은 내용(placeholder 또는 임의 링크)과 무관하게 교체
                 body = _SECTION_PAT.sub(
@@ -270,6 +334,9 @@ class DistillAgent:
             date = self._note_date(note)
             if date:
                 meta.append(f"date={date}")
+            kinds = note.metadata.get("distill_kinds")
+            if isinstance(kinds, list) and kinds:
+                meta.append(f"추출허용={','.join(str(k) for k in kinds)}")
             header = f"### {note.path}"
             if meta:
                 header += f" ({', '.join(meta)})"

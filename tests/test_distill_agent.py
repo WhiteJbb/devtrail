@@ -127,6 +127,111 @@ def test_distill_today_without_today_sources_returns_empty(tmp_path):
     assert result.source_refs == []
 
 
+# ── Obsidian 링크 연결 ───────────────────────────────────────────────────────
+
+
+def test_find_related_knowledge_survives_noisy_vault(tmp_path):
+    """세션 노트가 많아도 관련 Knowledge 노트를 찾아야 한다.
+
+    prefixes 필터 없이 전역 top-N을 먼저 뽑으면 노트가 많은 폴더(세션 로그)가
+    순위를 채워 Knowledge 결과가 잘려나가고, 후보의 '## 관련 노트'가 항상
+    '(없음)'이 된다 — 실제 vault에서 wikilink가 16개뿐이던 원인 중 하나.
+    """
+    knowledge_dir = tmp_path / "20_Knowledge" / "Devtrail"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "RAG-검색-전략.md").write_text(
+        "---\ntags: [rag]\n---\n\n# RAG 검색 전략\n\nRAG 검색 Devtrail 정리\n",
+        encoding="utf-8",
+    )
+    sessions = tmp_path / "10_Worklog" / "Sessions"
+    sessions.mkdir(parents=True)
+    for i in range(30):  # 전역 top-24를 채우고도 남을 노이즈
+        (sessions / f"2026-06-2{i % 3}-devtrail-session-{i}.md").write_text(
+            f"---\nproject: Devtrail\ncreated_at: 2026-06-23T09:00:0{i % 10}\n---\n\n"
+            "# Devtrail 작업 세션\n\nRAG 검색 Devtrail 작업 기록\n",
+            encoding="utf-8",
+        )
+    agent = DistillAgent(settings=_settings(tmp_path), llm=FakeLLM("{}"), now=datetime(2026, 6, 23, 10, 0, 0))
+    notes = agent._raw_notes(today_only=True)
+
+    related = agent._find_related_knowledge(notes)
+
+    assert any(n.path.startswith("20_Knowledge/") for n in related)
+
+
+def test_sanitize_wikilinks_demotes_fabricated_links(tmp_path):
+    """존재하지 않는 노트를 가리키는 wikilink는 일반 텍스트로 강등된다."""
+    knowledge_dir = tmp_path / "20_Knowledge"
+    knowledge_dir.mkdir(parents=True)
+    (knowledge_dir / "실존-노트.md").write_text("# 실존\n", encoding="utf-8")
+    agent = DistillAgent(settings=_settings(tmp_path), llm=FakeLLM("{}"), now=datetime(2026, 6, 23))
+
+    body = "관련: [[실존-노트]] 그리고 [[지어낸-노트|별칭]] 및 [[stem]]"
+    out = agent._sanitize_wikilinks(body, {"실존-노트"})
+
+    assert "[[실존-노트]]" in out
+    assert "[[지어낸-노트" not in out and "별칭" in out
+    assert "[[stem]]" not in out and "stem" in out
+
+
+# ── distill_kinds 스코프 제한 (MCP 세션 노트) ────────────────────────────────
+
+
+def _seed_mcp_session(vault, when=datetime(2026, 6, 23, 9, 0, 0)):
+    """write_session_process가 만드는 것과 같은 스코프 제한 세션 노트를 심는다."""
+    return CaptureAgent(settings=_settings(vault), now=when).capture_session(
+        project="Devtrail",
+        summary_text="## What Changed\n- 훅 크로스플랫폼화",
+        from_agent=True,
+        source="mcp_session_process",
+        needs_distill=True,
+        distill_kinds=["knowledge", "blog_idea"],
+    )
+
+
+def test_distill_respects_note_distill_kinds(tmp_path):
+    """스코프 제한 세션 노트만 근거인 decision/memory_patch 후보는 버려진다.
+
+    write_session_process가 Decision/MemoryPatch를 이미 구조화 필드에서 추출했으므로
+    distill이 같은 노트에서 다시 만들면 중복이다. knowledge/blog_idea는 통과해야 한다
+    — 과거 needs_distill=False 방식은 이 둘까지 막아 세션 기록에서 지식 후보가
+    영원히 나오지 않았다.
+    """
+    seeded = _seed_mcp_session(tmp_path)
+    response = json.loads(_distill_response())
+    for items in response.values():
+        for item in items:
+            item["source_refs"] = [seeded.rel_path]
+    llm = FakeLLM(json.dumps(response, ensure_ascii=False))
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    result = agent.distill_today()
+
+    kinds = sorted(w.spec.kind for w in result.written)
+    assert kinds == ["blog_idea", "knowledge"]
+    assert len(result.dropped) == 2
+    assert all("허용하지 않음" in d for d in result.dropped)
+    # 프롬프트 컨텍스트 헤더에도 스코프 힌트가 실린다
+    assert "추출허용=knowledge,blog_idea" in llm.prompts[0]
+
+
+def test_distill_kinds_union_allows_unrestricted_source(tmp_path):
+    """무제한 노트(memo)가 근거에 함께 있으면 decision/memory_patch도 유지된다."""
+    _seed_capture(tmp_path)  # 무제한 memo (같은 날)
+    _seed_mcp_session(tmp_path)
+    # _distill_response의 source_refs는 존재하지 않는 경로 → grounding이 fallback으로
+    # 두 노트 전체를 refs로 넣으므로, 무제한 memo 덕에 4종 모두 허용된다.
+    llm = FakeLLM(_distill_response())
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    result = agent.distill_today()
+
+    assert sorted(w.spec.kind for w in result.written) == [
+        "blog_idea", "decision", "knowledge", "memory_patch",
+    ]
+    assert result.dropped == []
+
+
 def test_cli_suggest_blog_topics(monkeypatch):
     spec = CandidateSpec(kind="blog_idea", title="글감", body="본문")
     result = SimpleNamespace(
