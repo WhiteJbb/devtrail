@@ -1,6 +1,19 @@
 {
   "//": "머신별 Claude Code 설정 템플릿 — `cp .claude/settings.example.json .claude/settings.json`으로 활성화한다. 훅 명령은 크로스플랫폼이다(Windows는 Git sh.exe, macOS는 /bin/sh).",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh scripts/hooks/run-hook.sh plan-check",
+            "timeout": 10,
+            "statusMessage": "Plan 기록 여부 확인 중..."
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

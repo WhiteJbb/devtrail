@@ -102,6 +102,49 @@ def test_write_session_process_updates_marker_file(vault_env, monkeypatch):
     assert after["session_id"] == mod._SESSION_ID
 
 
+def test_write_work_plan_sets_plan_written_marker(vault_env, monkeypatch):
+    """write_work_plan은 마커에 plan_written=True를 기록해야 한다.
+
+    PreToolUse 훅(plan-check)이 이 값을 읽어 Plan 없는 코드 수정을 차단한다 —
+    값이 안 쓰이면 훅이 Plan을 이미 남긴 세션까지 계속 차단한다.
+    """
+    import json
+
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    mod._write_session_marker(process_written=False, plan_written=False)
+
+    write_work_plan = mod.mcp._tool_manager.get_tool("write_work_plan").fn
+    write_work_plan(
+        project="Devtrail", goal="목표", context_read="컨텍스트", scope="범위", approach="접근", risks="위험"
+    )
+
+    marker = json.loads(mod._session_marker_path().read_text(encoding="utf-8"))
+    assert marker["plan_written"] is True
+    assert marker["process_written"] is False  # 다른 필드는 보존
+
+
+def test_write_session_process_preserves_plan_written(vault_env, monkeypatch):
+    """Process 기록이 마커를 갱신할 때 plan_written을 잃으면 안 된다.
+
+    잃으면 Process 기록 직후의 후속 코드 수정이 plan-check 훅에 다시 차단된다.
+    """
+    import json
+
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    mod._write_session_marker(process_written=False, plan_written=True)
+
+    write_session_process = mod.mcp._tool_manager.get_tool("write_session_process").fn
+    write_session_process(
+        project="Devtrail", what_changed="변경", files_touched="파일", project_decisions={},
+        implementation_trace="흐름", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={},
+    )
+
+    marker = json.loads(mod._session_marker_path().read_text(encoding="utf-8"))
+    assert marker["process_written"] is True
+    assert marker["plan_written"] is True
+
+
 def test_record_note_returns_plain_dict(vault_env, monkeypatch):
     mod = _reload_mcp_server(vault_env, monkeypatch)
     record_note = mod.mcp._tool_manager.get_tool("record_note").fn
