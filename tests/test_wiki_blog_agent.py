@@ -129,7 +129,7 @@ def test_cli_write_blog_success(monkeypatch, tmp_path):
         ),
     )
 
-    out = runner.invoke(cli.app, ["write-blog", "RAG 검색 전략"])
+    out = runner.invoke(cli.app, ["blog", "write", "RAG 검색 전략"])
 
     assert out.exit_code == 0, out.output
     assert "블로그 초안 생성 완료" in out.output
@@ -147,6 +147,6 @@ def test_cli_write_blog_fails_without_vault(monkeypatch):
         ),
     )
 
-    out = runner.invoke(cli.app, ["write-blog", "주제"])
+    out = runner.invoke(cli.app, ["blog", "write", "주제"])
 
     assert out.exit_code != 0

@@ -7,7 +7,7 @@ runner = CliRunner()
 
 
 class _FakeDistillAgent:
-    """CLI 테스트용 DistillAgent 대역 (suggest-topics용)."""
+    """CLI 테스트용 DistillAgent 대역 (suggest-blog-topics용)."""
 
     raise_llm: bool = False
     suggest_result = None
@@ -24,7 +24,7 @@ class _FakeDistillAgent:
 def test_suggest_topics_llm_not_configured(monkeypatch):
     _FakeDistillAgent.raise_llm = True
     monkeypatch.setattr(cli, "DistillAgent", _FakeDistillAgent)
-    result = runner.invoke(cli.app, ["suggest-topics"])
+    result = runner.invoke(cli.app, ["suggest-blog-topics"])
     assert result.exit_code == 1
     assert "LLM이 연결되어 있지 않습니다" in result.output
 
@@ -40,7 +40,7 @@ def test_suggest_topics_prints(monkeypatch):
     _FakeDistillAgent.suggest_result = DistillResult(written=written, source_refs=[])
 
     monkeypatch.setattr(cli, "DistillAgent", _FakeDistillAgent)
-    result = runner.invoke(cli.app, ["suggest-topics"])
+    result = runner.invoke(cli.app, ["suggest-blog-topics"])
     assert result.exit_code == 0
     assert "RAG 환경 분리" in result.output
 

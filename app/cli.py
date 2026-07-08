@@ -29,6 +29,13 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+blog_app = typer.Typer(
+    add_completion=False,
+    help="블로그 초안 작성·다듬기·목록·게시 관리",
+    no_args_is_help=True,
+)
+app.add_typer(blog_app, name="blog")
+
 
 def _fail(message: str) -> None:
     typer.secho(message, fg=typer.colors.RED, err=True)
@@ -638,7 +645,7 @@ def apply_memory_patch(
     typer.echo(f"  반영됨: {result.promoted_path}")
 
 
-@app.command("write-blog")
+@blog_app.command("write")
 def write_blog(
     topic: str = typer.Argument(..., help="블로그 주제"),
     project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
@@ -646,7 +653,7 @@ def write_blog(
     """Context Pack을 기반으로 블로그 초안을 생성해 50_Outputs/Blog/Drafts/에 저장한다."""
     settings = get_settings()
     if not settings.obsidian_vault_root:
-        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. write-draft로 기존 흐름을 사용하거나 .env에서 경로를 설정하세요.")
+        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
     try:
         agent = WikiBlogAgent(settings=settings)
     except RuntimeError as e:
@@ -662,7 +669,7 @@ def write_blog(
         typer.echo(f"  source_refs: {len(draft.source_refs)}개")
 
 
-@app.command("revise-blog")
+@blog_app.command("revise")
 def revise_blog(
     vault_path: str = typer.Argument(..., help="수정할 초안 경로 (vault 기준, 예: 50_Outputs/Blog/Drafts/abc.md)"),
 ) -> None:
@@ -684,7 +691,7 @@ def revise_blog(
     typer.echo(f"  status: review")
 
 
-@app.command("publish-ready")
+@blog_app.command("publish-ready")
 def publish_ready(
     vault_path: str = typer.Argument(..., help="게시 준비 완료할 초안 경로 (vault 기준)"),
 ) -> None:
@@ -706,37 +713,6 @@ def publish_ready(
     typer.echo(f"  status: review")
 
 
-@app.command("suggest-topics")
-def suggest_topics() -> None:
-    """vault raw 기록에서 BlogIdea 후보를 만든다 (suggest-blog-topics와 동일)."""
-    result = _handle_llm_errors(lambda: _distill_agent().suggest_blog_topics())
-    _print_distill_result("suggest-topics", result)
-
-
-@app.command("write-draft")
-def write_draft(
-    topic: str = typer.Argument(..., help="블로그 주제"),
-    source_project: str = typer.Option("", "--project", help="관련 프로젝트명"),
-) -> None:
-    """블로그 초안을 50_Outputs/Blog/Drafts/에 저장한다 (write-blog와 동일)."""
-    settings = get_settings()
-    if not settings.obsidian_vault_root:
-        _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 경로를 설정하세요.")
-    try:
-        agent = WikiBlogAgent(settings=settings)
-    except RuntimeError as e:
-        _fail(str(e))
-
-    draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=source_project))
-    typer.secho(f"\n블로그 초안 생성 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  파일: {draft.path}")
-    typer.echo(f"  vault path: {draft.rel_path}")
-    if draft.tags:
-        typer.echo(f"  태그: {', '.join(draft.tags)}")
-    if draft.source_refs:
-        typer.echo(f"  source_refs: {len(draft.source_refs)}개")
-
-
 _STATUS_COLOR = {
     "idea": typer.colors.BRIGHT_BLACK,
     "draft": typer.colors.YELLOW,
@@ -745,7 +721,7 @@ _STATUS_COLOR = {
 }
 
 
-@app.command("list")
+@blog_app.command("list")
 def list_drafts() -> None:
     """Vault 블로그 초안 목록을 상태/날짜와 함께 보여준다."""
     settings = get_settings()
@@ -754,7 +730,7 @@ def list_drafts() -> None:
     agent = WikiBlogAgent(settings=settings)
     drafts = agent.list_drafts()
     if not drafts:
-        typer.echo("저장된 초안이 없습니다. write-blog 로 먼저 생성하세요.")
+        typer.echo("저장된 초안이 없습니다. blog write 로 먼저 생성하세요.")
         return
 
     for draft in drafts:
@@ -768,7 +744,7 @@ def list_drafts() -> None:
     typer.echo(f"\n  총 {len(drafts)}건")
 
 
-@app.command("preview")
+@blog_app.command("preview")
 def preview(target: str = typer.Argument("latest", help="latest 또는 vault rel_path")) -> None:
     """최신(또는 지정) Vault 초안의 메타데이터와 본문 일부를 보여준다."""
     settings = get_settings()
@@ -777,7 +753,7 @@ def preview(target: str = typer.Argument("latest", help="latest 또는 vault rel
     agent = WikiBlogAgent(settings=settings)
     result = agent.preview_draft(target)
     if result is None:
-        typer.echo("초안을 찾지 못했습니다." if target != "latest" else "저장된 초안이 없습니다. write-blog 로 먼저 생성하세요.")
+        typer.echo("초안을 찾지 못했습니다." if target != "latest" else "저장된 초안이 없습니다. blog write 로 먼저 생성하세요.")
         return
 
     draft, excerpt = result
@@ -792,7 +768,7 @@ def preview(target: str = typer.Argument("latest", help="latest 또는 vault rel
     typer.echo(excerpt)
 
 
-@app.command("export-tistory")
+@blog_app.command("export-tistory")
 def export_tistory(
     target: str = typer.Argument("latest", help="latest 또는 vault rel_path"),
     fmt: str = typer.Option("html", "--format", help="html 또는 md"),
@@ -808,7 +784,7 @@ def export_tistory(
         _fail(str(e))
 
     if result is None:
-        typer.echo("초안을 찾지 못했습니다." if target != "latest" else "저장된 초안이 없습니다. write-blog 로 먼저 생성하세요.")
+        typer.echo("초안을 찾지 못했습니다." if target != "latest" else "저장된 초안이 없습니다. blog write 로 먼저 생성하세요.")
         return
 
     typer.secho(f"\n티스토리용 변환 완료 ({result.fmt})", fg=typer.colors.GREEN, bold=True)
@@ -821,7 +797,7 @@ def export_tistory(
     typer.echo("  (티스토리 공식 API는 2024년 종료되어 자동 게시는 지원하지 않습니다)")
 
 
-@app.command("publish-done")
+@blog_app.command("publish-done")
 def publish_done(
     target: str = typer.Argument("latest", help="latest 또는 vault rel_path"),
     url: str = typer.Option("", "--url", help="게시된 티스토리 글 주소"),
