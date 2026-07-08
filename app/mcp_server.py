@@ -37,21 +37,32 @@ def _session_marker_path() -> Path:
     return Path.cwd() / ".claude" / ".vault-mcp" / "current_session.json"
 
 
-def _write_session_marker(process_written: bool) -> None:
+def _write_session_marker(
+    process_written: bool | None = None, plan_written: bool | None = None
+) -> None:
+    """세션 마커를 갱신한다. None인 필드는 같은 세션의 기존 값을 보존한다.
+
+    process_written은 Stop 훅(stop-process-check)이, plan_written은 PreToolUse
+    훅(plan-check)이 읽는다 — write_work_plan 없이 코드 수정을 시작하면 차단하기
+    위한 상태다.
+    """
     marker = _session_marker_path()
+    data = {"session_id": _SESSION_ID, "process_written": False, "plan_written": False}
+    try:
+        existing = json.loads(marker.read_text(encoding="utf-8"))
+        if existing.get("session_id") == _SESSION_ID:
+            data["process_written"] = bool(existing.get("process_written"))
+            data["plan_written"] = bool(existing.get("plan_written"))
+    except (OSError, ValueError):
+        pass
+    if process_written is not None:
+        data["process_written"] = process_written
+    if plan_written is not None:
+        data["plan_written"] = plan_written
+    data["updated_at"] = datetime.now().isoformat()
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            json.dumps(
-                {
-                    "session_id": _SESSION_ID,
-                    "process_written": process_written,
-                    "updated_at": datetime.now().isoformat(),
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
+        marker.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass  # 훅 연동은 best-effort — 마커 기록 실패로 tool 자체를 막지 않는다
 
@@ -114,6 +125,7 @@ def write_work_plan(project: str, goal: str, context_read: str, scope: str, appr
     result = vault_tools.write_work_plan(
         project, goal, context_read, scope, approach, risks, session_id=_SESSION_ID, settings=get_settings()
     )
+    _write_session_marker(plan_written=True)
     return _candidate_result_dict(result)
 
 
@@ -169,7 +181,7 @@ def main() -> None:
     # 모듈 import 시점이 아니라 서버가 실제로 시작될 때만 마커를 (재)생성한다 —
     # import만으로 마커가 생기면(REPL, 향후 eager import 등) 라이브 세션의 진짜
     # 마커를 덮어쓸 수 있다.
-    _write_session_marker(process_written=False)
+    _write_session_marker(process_written=False, plan_written=False)
     mcp.run(transport="stdio")
 
 
