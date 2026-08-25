@@ -71,8 +71,10 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 
 ### 브랜치 · 커밋 · PR
 
-- 새 Agent / CLI 커맨드 / 계층 구조 변경은 `feat/` 또는 `refactor/` 브랜치에서.
-  문서(md)만 수정할 때는 main 직접 커밋 허용.
+- 통합 브랜치는 `dev`다. 기능·수정은 `feat/`·`fix/`·`refactor/` 브랜치를 dev에서
+  파서 작업하고, **GitHub PR(base: dev)을 올려 squash merge로 반영한다** — 로컬
+  직접 merge 금지. main 반영은 dev가 안정된 시점에 별도 PR로.
+  문서(md)만 수정할 때는 대상 브랜치 직접 커밋 허용.
 - 커밋 메시지: `type: 설명` (feat/fix/docs/style/refactor), 본문 한국어.
 - 커밋·push는 사용자 요청이 있을 때만.
 - 커밋 메시지와 PR 본문에 AI 작성 표시(`Co-Authored-By`, `Generated with` 등)를
