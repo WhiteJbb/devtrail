@@ -251,6 +251,40 @@ def test_write_session_process_rerecord_revives_needs_distill(tmp_path):
     assert post.metadata["distill_kinds"] == ["knowledge", "blog_idea"]
 
 
+def test_write_session_process_rerecord_preserves_context_sections(tmp_path):
+    """재기록이 본문을 교체해도 Context Questions/Recovery 섹션은 보존돼야 한다.
+
+    Recovery에는 사람이 Telegram으로 직접 답한 맥락이 들어 있다 — 재기록으로
+    지워지면 복구 불가능한 데이터 손실이다.
+    """
+    settings = _settings(tmp_path)
+    first = vault_tools.write_session_process(
+        project="Devtrail", what_changed="1차", files_touched="x", project_decisions={},
+        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={}, session_id="sess-ctx", settings=settings,
+    )
+    # nightly 질문 생성 + 사람 답변이 쌓인 상태를 재현
+    note_path = tmp_path / first.worklog_rel_path
+    post = frontmatter.loads(note_path.read_text(encoding="utf-8"))
+    post.content += (
+        "\n\n## Context Questions\n\n- [x] [WHY] pi-metrics를 재시작한 이유는?\n"
+        "\n## Context Recovery\n\n- **[WHY] pi-metrics를 재시작한 이유는?** (2026-08-25) — 포트 충돌 해소\n"
+    )
+    note_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    vault_tools.write_session_process(
+        project="Devtrail", what_changed="2차 — 커밋 추가", files_touched="x",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="sess-ctx", settings=settings,
+    )
+    content = frontmatter.loads(note_path.read_text(encoding="utf-8")).content
+    assert "2차 — 커밋 추가" in content
+    assert "## Context Questions" in content
+    assert "## Context Recovery" in content
+    assert "포트 충돌 해소" in content
+
+
 def test_write_session_process_memory_patch_updated_for_same_session(tmp_path):
     """같은 세션(같은 날·같은 프로젝트)의 재기록은 patch를 갱신해야 한다.
 
