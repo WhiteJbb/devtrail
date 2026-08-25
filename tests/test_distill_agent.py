@@ -424,3 +424,58 @@ def test_distill_prompt_includes_existing_threads_and_merges(tmp_path):
     text = result.written[0].path.read_text(encoding="utf-8")
     assert "title: 홈랩 구축기" in text
     assert "- 2026-06-23: NAS 연결 삽질" in text
+
+
+def test_thread_continuation_bypasses_critic(tmp_path):
+    """기존 thread의 연속인 blog_idea는 critic이 "중복"으로 탈락시켜도 병합돼야 한다.
+
+    critic은 기존 아이디어와 유사한 후보를 중복으로 버리는데, thread 연속 후보는
+    중복이 아니라 병합 대상이다 — 탈락하면 새 세션 ref가 thread에 누적되지 못한다.
+    """
+    from app.services.candidate_writer import CandidateSpec as Spec, CandidateWriter
+
+    CandidateWriter(tmp_path, now=datetime(2026, 6, 22)).write(
+        Spec(
+            kind="blog_idea",
+            title="홈랩 구축기",
+            body="## 핵심 메시지\n\n1일차 이야기\n",
+            thread="homelab-build-2026",
+            source_refs=["10_Worklog/Sessions/day1.md"],
+        )
+    )
+    _seed_capture(tmp_path)
+    distill_response = json.dumps(
+        {
+            "knowledge": [],
+            "decisions": [],
+            "memory_patches": [],
+            "blog_ideas": [
+                {
+                    "title": "홈랩 구축기 3일차",
+                    "summary": "모니터링 추가",
+                    "body": "## 핵심 메시지\n\n3일차 이야기\n",
+                    "thread": "homelab-build-2026",
+                    "source_refs": [],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+    # critic이 유일한 후보(index 0)를 중복으로 탈락시키는 상황
+    critic_response = json.dumps(
+        {"verdicts": [{"index": 0, "keep": False, "reason": "기존 아이디어와 중복"}]},
+        ensure_ascii=False,
+    )
+    agent = DistillAgent(
+        settings=_settings(tmp_path),
+        llm=_SeqLLM([distill_response, critic_response]),
+        now=datetime(2026, 6, 23, 10, 0, 0),
+    )
+
+    result = agent.distill_today()
+
+    assert len(result.written) == 1
+    assert result.dropped == []
+    text = result.written[0].path.read_text(encoding="utf-8")
+    assert "title: 홈랩 구축기" in text
+    assert "- 2026-06-23: 모니터링 추가" in text
