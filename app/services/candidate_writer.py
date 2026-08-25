@@ -30,6 +30,10 @@ _CANDIDATE_DIRS = {
 _NO_DEDUP_KINDS = {"session_handoff"}
 
 SESSION_HANDOFF_DIR = _CANDIDATE_DIRS["session_handoff"]
+BLOG_IDEA_DIR = _CANDIDATE_DIRS["blog_idea"]
+
+_UPDATES_HEADING = "## Updates"
+_UPDATES_PAT = re.compile(r"(?s)(## Updates[ \t]*\n)(.*?)(?=\n## |\Z)")
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,7 @@ class CandidateSpec:
     confidence: str = ""
     requires_user_review: bool = False
     target_file: str = ""  # memory_patch 전용: apply 시 반영될 40_AgentMemory 파일
+    thread: str = ""  # blog_idea 전용: 여러 세션을 묶는 thread 슬러그
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,12 @@ class CandidateWriter:
         if not spec.title.strip():
             raise ValueError("candidate title is empty")
 
+        slug = thread_slug(spec.thread) if kind == "blog_idea" else ""
+        if slug:
+            merged = self._merge_thread(slug, spec)
+            if merged is not None:
+                return merged
+
         effective_dedup = dedup and kind not in _NO_DEDUP_KINDS
         if effective_dedup:
             existing = self.find_duplicate(spec)
@@ -138,6 +149,9 @@ class CandidateWriter:
         if kind == "session_handoff":
             metadata["handoff_type"] = spec.handoff_type
             metadata["session_id"] = spec.session_id
+        if slug:
+            metadata["thread"] = slug
+            metadata["thread_last_added"] = len(spec.source_refs)
         if kind == "memory_patch":
             metadata["evidence"] = spec.evidence
             metadata["scope"] = spec.scope
@@ -182,6 +196,57 @@ class CandidateWriter:
                     return updated
         return self.write(spec, dedup=False)
 
+    def _merge_thread(self, slug: str, spec: CandidateSpec) -> CandidateWriteResult | None:
+        """같은 thread 슬러그의 기존 BlogIdea 후보에 소스와 Updates 한 줄을 누적한다.
+
+        제목·핵심 메시지·목차는 그대로 둔다 — 매일 새 LLM 출력으로 덮으면 여러 날
+        쌓이는 thread가 불안정해지므로, 새 사실은 Updates에만 append한다.
+        일치하는 후보가 없으면 None(= 새 파일로 생성).
+        """
+        cand_dir = self.vault_dir / BLOG_IDEA_DIR
+        if not cand_dir.exists():
+            return None
+
+        for md_path in sorted(cand_dir.glob("*.md")):
+            try:
+                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if thread_slug(str(post.metadata.get("thread") or "")) != slug:
+                continue
+            if str(post.metadata.get("status", "") or "").strip().lower() != "candidate":
+                continue
+
+            existing_refs = [str(r) for r in (post.metadata.get("source_refs") or [])]
+            merged_refs = list(dict.fromkeys(existing_refs + [str(r) for r in spec.source_refs]))
+            post.metadata["source_refs"] = merged_refs
+            post.metadata["thread"] = slug
+            post.metadata["thread_last_added"] = len(merged_refs) - len(existing_refs)
+            # retention TTL이 updated_at을 보고 살아있는 thread를 만료시키지 않게 한다.
+            post.metadata["updated_at"] = self._now().strftime("%Y-%m-%dT%H:%M:%S")
+            post.content = self._append_thread_update(post.content, spec, merged_refs)
+            md_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+            rel = str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
+            self.wiki_service.append_vault_log("thread-append", spec.title, [rel])
+            return CandidateWriteResult(spec=spec, path=md_path, rel_path=rel)
+        return None
+
+    def _append_thread_update(self, body: str, spec: CandidateSpec, refs: list[str]) -> str:
+        """본문에 "YYYY-MM-DD: 요지" 한 줄을 Updates 섹션에 붙이고 Source Refs를 갱신한다."""
+        head = body.split("\n## Source Refs", 1)[0].rstrip()
+        line = f"- {self._now().strftime('%Y-%m-%d')}: " + (
+            spec.summary.strip() or self._derive_summary(spec.body) or spec.title.strip()
+        )
+        if _UPDATES_HEADING in head:
+            head = _UPDATES_PAT.sub(
+                lambda m: f"{m.group(1)}{m.group(2).rstrip()}\n{line}\n", head, count=1
+            ).rstrip()
+        else:
+            head += f"\n\n{_UPDATES_HEADING}\n\n{line}"
+        refs_block = "\n".join(f"- {self._ref_line(r)}" for r in refs)
+        return f"{head}\n\n## Source Refs\n\n{refs_block}\n"
+
     def _update_existing(self, rel_path: str, spec: CandidateSpec) -> CandidateWriteResult | None:
         """유사 후보를 새 내용으로 갱신한다. status=candidate가 아니면 None (건드리지 않음).
 
@@ -196,11 +261,14 @@ class CandidateWriter:
         if str(existing.metadata.get("status", "") or "").strip().lower() != "candidate":
             return None
 
-        merged_refs = list(dict.fromkeys(
-            [str(r) for r in (existing.metadata.get("source_refs") or [])] + list(spec.source_refs)
-        ))
+        old_refs = [str(r) for r in (existing.metadata.get("source_refs") or [])]
+        merged_refs = list(dict.fromkeys(old_refs + list(spec.source_refs)))
         existing.metadata["updated_at"] = self._now().strftime("%Y-%m-%dT%H:%M:%S")
         existing.metadata["source_refs"] = merged_refs
+        if spec.thread:
+            # 제목 유사도로 잡힌 기존 후보에도 thread를 새겨야 다음 세션이 여기로 이어붙는다.
+            existing.metadata["thread"] = thread_slug(spec.thread)
+            existing.metadata["thread_last_added"] = len(merged_refs) - len(old_refs)
         new_summary = spec.summary or self._derive_summary(spec.body)
         if new_summary:
             existing.metadata["summary"] = new_summary
@@ -308,6 +376,16 @@ def slug_component(value: str) -> str:
     """경로 한 조각(파일명/폴더명)에 쓸 수 있게 파일시스템 금지 문자만 제거한다."""
     text = re.sub(r'[\\/:*?"<>|]', "", value.strip())
     return re.sub(r"\s+", " ", text).strip() or "candidate"
+
+
+def thread_slug(value: str) -> str:
+    """thread 값을 kebab-case로 정규화한다.
+
+    LLM이 "Homelab Build 2026" 같은 표기를 섞어 내도 같은 thread로 이어붙도록,
+    쓰기·비교 양쪽에서 항상 이 함수를 거친다.
+    """
+    text = re.sub(r"[^0-9a-z가-힣]+", "-", value.strip().lower())
+    return text.strip("-")
 
 
 def handoff_project_dir(project: str) -> str:

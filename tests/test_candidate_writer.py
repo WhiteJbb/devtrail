@@ -188,3 +188,99 @@ def test_source_refs_render_as_wikilinks(tmp_path):
     assert post.metadata["source_refs"] == [
         "10_Worklog/Sessions/2026-07-08-devtrail-session.md", "git:abc1234567",
     ]
+
+
+# ── blog_idea thread 누적 ────────────────────────────────────────────
+
+
+def _thread_spec(**kw) -> CandidateSpec:
+    base = dict(
+        kind="blog_idea",
+        title="홈랩 구축기 — 1일차",
+        summary="1일차 요지",
+        body="## 핵심 메시지\n\n집에서 서버를 굴린 이야기.\n\n## 목차 초안\n\n1. 도입\n",
+        thread="homelab-build-2026",
+        source_refs=["10_Worklog/Sessions/day1.md"],
+    )
+    base.update(kw)
+    return CandidateSpec(**base)
+
+
+def test_thread_creates_new_file_with_thread_frontmatter(tmp_path):
+    result = _writer(tmp_path, now=datetime(2026, 8, 24)).write(_thread_spec())
+
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["thread"] == "homelab-build-2026"
+    assert post.metadata["thread_last_added"] == 1
+
+
+def test_thread_merges_into_existing_candidate(tmp_path):
+    first = _writer(tmp_path, now=datetime(2026, 8, 24)).write(_thread_spec())
+    second = _writer(tmp_path, now=datetime(2026, 8, 25)).write(
+        _thread_spec(
+            title="홈랩 구축기 — 2일차 NAS 붙이기",
+            summary="NAS를 붙이며 겪은 문제",
+            body="## 핵심 메시지\n\n완전히 다른 목차\n",
+            source_refs=["10_Worklog/Sessions/day1.md", "10_Worklog/Sessions/day2.md"],
+        )
+    )
+
+    ideas = list((tmp_path / "60_Candidates/BlogIdeas").glob("*.md"))
+    assert len(ideas) == 1  # 새 파일이 생기지 않는다
+    assert second.rel_path == first.rel_path
+
+    post = frontmatter.loads(second.path.read_text(encoding="utf-8"))
+    assert post.metadata["source_refs"] == [
+        "10_Worklog/Sessions/day1.md",
+        "10_Worklog/Sessions/day2.md",
+    ]
+    assert post.metadata["title"] == "홈랩 구축기 — 1일차"  # 제목은 유지
+    assert "완전히 다른 목차" not in post.content
+    assert "## Updates" in post.content
+    assert "- 2026-08-25: NAS를 붙이며 겪은 문제" in post.content
+    assert post.metadata["updated_at"].startswith("2026-08-25")
+    assert post.metadata["thread_last_added"] == 1
+    # 본문 Source Refs도 누적본으로 갱신된다
+    assert "[[10_Worklog/Sessions/day2]]" in post.content
+
+
+def test_thread_merge_appends_second_update_line(tmp_path):
+    _writer(tmp_path, now=datetime(2026, 8, 24)).write(_thread_spec())
+    _writer(tmp_path, now=datetime(2026, 8, 25)).write(
+        _thread_spec(summary="2일차", source_refs=["10_Worklog/Sessions/day2.md"])
+    )
+    result = _writer(tmp_path, now=datetime(2026, 8, 26)).write(
+        _thread_spec(summary="3일차", source_refs=["10_Worklog/Sessions/day3.md"])
+    )
+
+    content = frontmatter.loads(result.path.read_text(encoding="utf-8")).content
+    assert content.index("- 2026-08-25: 2일차") < content.index("- 2026-08-26: 3일차")
+    assert content.index("- 2026-08-26: 3일차") < content.index("## Source Refs")
+
+
+def test_thread_slug_normalized_when_matching(tmp_path):
+    first = _writer(tmp_path, now=datetime(2026, 8, 24)).write(_thread_spec())
+    second = _writer(tmp_path, now=datetime(2026, 8, 25)).write(
+        _thread_spec(thread="Homelab Build 2026", summary="표기만 다른 같은 thread")
+    )
+    assert second.rel_path == first.rel_path
+
+
+def test_different_thread_slug_creates_separate_candidate(tmp_path):
+    _writer(tmp_path, now=datetime(2026, 8, 24)).write(_thread_spec())
+    _writer(tmp_path, now=datetime(2026, 8, 25)).write(
+        _thread_spec(title="Vault 마이그레이션기", thread="vault-mcp-migration")
+    )
+
+    assert len(list((tmp_path / "60_Candidates/BlogIdeas").glob("*.md"))) == 2
+
+
+def test_blog_idea_without_thread_keeps_existing_behavior(tmp_path):
+    writer = _writer(tmp_path, now=datetime(2026, 8, 24))
+    writer.write(_thread_spec(thread=""))
+    result = writer.write(_thread_spec(title="완전히 다른 글감", thread="", summary="다른 요지"))
+
+    assert len(list((tmp_path / "60_Candidates/BlogIdeas").glob("*.md"))) == 2
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert "thread" not in post.metadata
+    assert "## Updates" not in post.content

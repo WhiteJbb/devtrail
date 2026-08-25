@@ -68,6 +68,18 @@ blog_idea 배열에 넣으려면 다음 세 질문 **모두** "예"여야 한다
 
 blog_idea가 없으면 `"blog_ideas": []`로 두는 것이 억지로 채우는 것보다 낫다.
 
+## thread — 여러 날에 걸친 글감 묶기
+
+구축기·연재형 주제는 하루에 끝나지 않는다. 각 blog_idea에 `thread` 필드를 준다.
+
+- 이 자료가 아래 "진행 중인 thread" 목록의 주제와 이어지는 내용이면 **그 슬러그를 그대로** 쓴다. 그러면 새 후보를 만들지 않고 기존 후보에 이번 세션이 누적된다.
+- 목록에 없지만 여러 세션에 걸쳐 이어질 주제(구축기, 마이그레이션, 장기 실험 등)면 새 kebab-case 슬러그를 만든다. 예: `homelab-build-2026`, `vault-mcp-migration`.
+- 하루로 끝나는 단발성 아이디어면 `thread`를 빈 문자열로 둔다.
+- 기존 thread에 이어붙일 때도 title·summary·body는 이번 자료 기준으로 쓴다 — 제목·목차는 기존 후보의 것이 유지되고 이번 요지는 Updates로만 기록된다.
+
+### 진행 중인 thread
+{{THREADS}}
+
 # 관련 기존 지식 노트 (body 안에서 [[stem]] wikilink로 참조 가능)
 {{RELATED_KNOWLEDGE}}
 
@@ -188,6 +200,7 @@ body에 쓰는 모든 구체적 주장은 "# Raw Source" 텍스트에서 직접 
       "body": "위 blog_idea body 구조를 따른 상세 Markdown (200자 이상)",
       "project": "관련 프로젝트명 또는 빈 문자열",
       "tags": ["blog-idea"],
+      "thread": "이어지는 thread 슬러그 또는 새 kebab-case 슬러그, 단발성이면 \"\"",
       "source_refs": ["10_Worklog/GitSummaries/...md"]
     }
   ]

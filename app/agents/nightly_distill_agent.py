@@ -258,9 +258,13 @@ class NightlyDistillAgent:
         lines.append(f"_총 후보 {total}개 생성 | distill {len(distill.written)} / career {len(career.written)}_")
 
         if not weekly:
+            from app.services.blog_thread import format_thread_block
             from app.services.context_question import format_context_block
             from app.services.review_question import format_review_block
 
+            thread_block = format_thread_block(self.vault_dir, date)
+            if thread_block:
+                lines += ["", thread_block]
             review_block = format_review_block(self.vault_dir)
             if review_block:
                 lines += ["", review_block]
