@@ -69,6 +69,9 @@ class NightlyDistillAgent:
 
         expired, archived = cleanup_candidates(self.vault_dir, now=self.now)
 
+        if not weekly:
+            self._generate_context_questions()
+
         # 저위험 패치 자동 반영 — requires_user_review=False로 명시된 것만.
         # Lessons/OpenLoops는 append 전용이라 오염 반경이 작아 검토 게이트를 생략한다.
         auto_applied = self._auto_apply_low_risk_patches()
@@ -95,6 +98,21 @@ class NightlyDistillAgent:
             archived_candidates=archived,
             auto_applied_patches=auto_applied,
         )
+
+    def _generate_context_questions(self) -> None:
+        """오늘 세션 노트의 맥락 빈칸 질문을 만든다 (digest 블록으로 함께 발송된다).
+
+        fail-open: 질문 생성 실패가 nightly 전체를 막지 않는다 — 정제·digest가
+        본업이고 질문은 부가 기능이다.
+        """
+        from app.services.context_question import generate_context_questions
+
+        try:
+            generate_context_questions(
+                self.vault_dir, llm=self.llm, settings=self.settings, now=self.now
+            )
+        except Exception:
+            return
 
     def _auto_apply_low_risk_patches(self) -> list[str]:
         """requires_user_review=False인 MemoryPatch 후보를 대상 파일에 자동 반영한다."""
@@ -240,11 +258,15 @@ class NightlyDistillAgent:
         lines.append(f"_총 후보 {total}개 생성 | distill {len(distill.written)} / career {len(career.written)}_")
 
         if not weekly:
+            from app.services.context_question import format_context_block
             from app.services.review_question import format_review_block
 
             review_block = format_review_block(self.vault_dir)
             if review_block:
                 lines += ["", review_block]
+            context_block = format_context_block(self.vault_dir)
+            if context_block:
+                lines += ["", context_block]
         else:
             # 한 주간 답하지 않은 학습 질문을 모아 보여준다 — daily에서 하루
             # 지나면 증발하던 질문의 두 번째 회수 기회.

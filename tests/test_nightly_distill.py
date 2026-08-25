@@ -163,6 +163,45 @@ def test_weekly_digest_does_not_include_review_question_block(tmp_path):
     assert "오늘의 학습 회수" not in result.digest_text
 
 
+def test_daily_digest_includes_context_question_block(tmp_path):
+    """Phase 2 — 맥락 회수 질문도 daily digest(=Telegram 전송본)에 붙는다."""
+    session_path = tmp_path / "10_Worklog" / "Sessions" / "2026-06-23-devtrail-session.md"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text(
+        "---\nproject: Devtrail\ncreated_at: 2026-06-23T09:00:00\n---\n\n"
+        "## Context Questions\n\n- [ ] [WHY] 훅을 왜 sh 디스패처로 바꿨어?\n",
+        encoding="utf-8",
+    )
+
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+    result = agent.run()
+
+    assert "맥락 회수 질문" in result.digest_text
+    assert "훅을 왜 sh 디스패처로 바꿨어?" in result.digest_text
+
+
+def test_run_survives_context_question_failure(tmp_path):
+    """질문 생성이 터져도 nightly 본업(정제·digest)은 정상 완료된다."""
+    _seed_session(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("context question 생성 실패")
+
+    import app.services.context_question as cq
+    original = cq.generate_context_questions
+    cq.generate_context_questions = _boom
+    try:
+        llm = _MultiCallLLM([_distill_response(), _career_response()])
+        agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+        result = agent.run()
+    finally:
+        cq.generate_context_questions = original
+
+    assert len(result.distill.written) == 2
+    assert result.digest_path is not None
+
+
 def test_run_no_llm_call_when_no_notes(tmp_path):
     """오늘 노트가 없으면 LLM을 호출하지 않는다."""
     llm = _MultiCallLLM([_distill_response(), _career_response()])
