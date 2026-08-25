@@ -97,7 +97,20 @@ class DistillAgent:
             raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
         specs, scope_dropped = self._filter_by_note_kinds(specs, notes)
-        specs, dropped = self._critic_filter(specs, context=context, related_section=related_section)
+        # 기존 thread의 연속인 blog_idea는 critic을 거치지 않는다 — critic은 이런 후보를
+        # "기존 아이디어와 중복"으로 탈락시키는데, 중복이 아니라 병합 대상이다.
+        # 탈락하면 새 세션 ref가 thread에 누적될 기회를 잃는다.
+        from app.services.blog_thread import list_threads
+        from app.services.candidate_writer import thread_slug
+
+        existing_threads = {t.slug for t in list_threads(self.vault_dir)}
+        thread_specs = [
+            s for s in specs
+            if s.kind == "blog_idea" and thread_slug(s.thread) in existing_threads
+        ]
+        rest = [s for s in specs if s not in thread_specs]
+        rest, dropped = self._critic_filter(rest, context=context, related_section=related_section)
+        specs = thread_specs + rest
         dropped = scope_dropped + dropped
         written = self.writer.write_many(specs)
         self._inject_related_links(written, related)
