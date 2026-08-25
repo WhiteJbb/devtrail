@@ -647,19 +647,36 @@ def apply_memory_patch(
 
 @blog_app.command("write")
 def write_blog(
-    topic: str = typer.Argument(..., help="블로그 주제"),
+    topic: str = typer.Argument("", help="블로그 주제 (--idea 지정 시 생략 가능)"),
     project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+    idea: str = typer.Option(
+        "", "--idea", help="BlogIdea 후보 파일명(부분 일치) 또는 vault 상대 경로"
+    ),
 ) -> None:
-    """Context Pack을 기반으로 블로그 초안을 생성해 50_Outputs/Blog/Drafts/에 저장한다."""
+    """Context Pack 또는 BlogIdea 후보를 기반으로 초안을 생성해 50_Outputs/Blog/Drafts/에 저장한다."""
     settings = get_settings()
     if not settings.obsidian_vault_root:
         _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
+    if not topic and not idea:
+        _fail("블로그 주제를 입력하거나 --idea로 BlogIdea 후보를 지정하세요.")
     try:
         agent = WikiBlogAgent(settings=settings)
     except RuntimeError as e:
         _fail(str(e))
 
-    draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=project))
+    if idea:
+        try:
+            idea_rel = agent.resolve_idea(idea)
+        except ValueError as e:
+            _fail(str(e))
+        typer.echo(f"  idea: {idea_rel}")
+        draft, warnings = _handle_llm_errors(
+            lambda: agent.write_blog_from_idea(idea_rel, project=project)
+        )
+        for warning in warnings:
+            typer.secho(f"  ⚠ {warning}", fg=typer.colors.YELLOW)
+    else:
+        draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=project))
     typer.secho(f"\n블로그 초안 생성 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {draft.path}")
     typer.echo(f"  vault path: {draft.rel_path}")
