@@ -25,6 +25,11 @@ _CANDIDATE_PREFIX = "60_Candidates/"
 _MAX_NOTE_CHARS = 3000
 _MAX_RELATED = 12
 _CHARS_PER_TOKEN = 3  # 한국어 혼용 기준 보수적 추정
+_RANGE_MODE_NOTE = (
+    "## 종합 모드 안내\n"
+    "아래 노트에는 이미 개별 증류된 세션이 포함되어 있다. 개별 세션의 단일 사실을 "
+    "다시 후보로 만들지 말고, 여러 세션을 관통하는 패턴·종합만 후보로 만들어라.\n\n"
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,7 @@ class DistillAgent:
             DATE=self._date(),
             CONTEXT=context,
             RELATED_KNOWLEDGE=related_section,
+            MODE_NOTE=_RANGE_MODE_NOTE if days > 0 else "",
         )
         try:
             data = complete_json(self._llm(), prompt)
@@ -93,8 +99,11 @@ class DistillAgent:
         dropped = scope_dropped + dropped
         written = self.writer.write_many(specs)
         self._inject_related_links(written, related)
-        from app.services.wiki_service import mark_distilled
-        mark_distilled(self.vault_dir, notes)
+        if days <= 0:
+            # range(weekly) 모드는 종합 전용 pass다 — daily가 이미 마킹한 노트를
+            # 다시 읽어야 하므로 여기서 마킹하면 안 된다. 생명주기 마킹은 daily 단독 책임.
+            from app.services.wiki_service import mark_distilled
+            mark_distilled(self.vault_dir, notes)
         return DistillResult(written=written, source_refs=[n.path for n in notes], dropped=dropped)
 
     def _llm(self) -> LLMProvider:
@@ -192,12 +201,15 @@ class DistillAgent:
     def _raw_notes(self, today_only: bool, days: int = 0) -> list[WikiNote]:
         from datetime import timedelta
         today = self._date()
+        # range(days>0) 모드는 daily가 이미 마킹한 노트까지 포함해 종합해야 하므로
+        # needs_distill 필터를 걸지 않는다 — today_only/days==0(daily, suggest-*)는 기존대로.
+        apply_distill_filter = days <= 0
         notes = [
             note
             for note in self.wiki_service.scan_notes()
             if note.path.startswith(_RAW_PREFIXES)
             and not note.path.startswith("10_Worklog/GitSummaries/index")
-            and note.metadata.get("needs_distill") is not False
+            and (not apply_distill_filter or note.metadata.get("needs_distill") is not False)
         ]
         if today_only:
             notes = [note for note in notes if self._note_date(note) == today]

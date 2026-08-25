@@ -195,5 +195,5 @@ body에 쓰는 모든 구체적 주장은 "# Raw Source" 텍스트에서 직접 
 
 요청 종류가 `all`이 아니면 해당 종류 배열만 채우고 나머지는 빈 배열로 둔다.
 
-# Raw Source
+{{MODE_NOTE}}# Raw Source
 {{CONTEXT}}

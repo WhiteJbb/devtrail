@@ -127,6 +127,68 @@ def test_distill_today_without_today_sources_returns_empty(tmp_path):
     assert result.source_refs == []
 
 
+# ── range(weekly) 종합 모드 ──────────────────────────────────────────────────
+
+
+def _seed_mcp_session_dated(vault, when, needs_distill):
+    """지정 날짜로 needs_distill 값을 명시한 세션 노트를 심는다."""
+    return CaptureAgent(settings=_settings(vault), now=when).capture_session(
+        project="Devtrail",
+        summary_text="## What Changed\n- 세션 기록",
+        from_agent=True,
+        source="mcp_session_process",
+        needs_distill=needs_distill,
+    )
+
+
+def test_distill_range_includes_already_marked_sessions(tmp_path):
+    """weekly(distill_range)는 daily가 이미 needs_distill=False로 마킹한 세션도
+    컨텍스트에 포함해야 한다 — range는 종합 pass이지 미처리 pass가 아니다."""
+    seeded = _seed_mcp_session_dated(tmp_path, datetime(2026, 6, 20, 9, 0, 0), needs_distill=False)
+    llm = FakeLLM(_distill_response())
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    result = agent.distill_range(days=7)
+
+    assert seeded.rel_path in llm.prompts[0]
+    assert len(result.written) == 4
+
+
+def test_distill_range_does_not_mark_notes_distilled(tmp_path):
+    """range 모드 실행 후에도 어떤 노트의 needs_distill 값도 바뀌지 않는다 —
+    생명주기 마킹은 daily 단독 책임으로 남긴다."""
+    marked = _seed_mcp_session_dated(tmp_path, datetime(2026, 6, 20, 9, 0, 0), needs_distill=False)
+    unmarked = _seed_mcp_session_dated(tmp_path, datetime(2026, 6, 21, 9, 0, 0), needs_distill=True)
+    llm = FakeLLM(_distill_response())
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    agent.distill_range(days=7)
+
+    notes_by_path = {n.path: n for n in agent.wiki_service.scan_notes()}
+    assert notes_by_path[marked.rel_path].metadata.get("needs_distill") is False
+    assert notes_by_path[unmarked.rel_path].metadata.get("needs_distill") is True
+
+
+def test_distill_range_prompt_includes_mode_note(tmp_path):
+    _seed_capture(tmp_path)
+    llm = FakeLLM(_distill_response())
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    agent.distill_range(days=7)
+
+    assert "종합 모드 안내" in llm.prompts[0]
+
+
+def test_distill_today_prompt_excludes_mode_note(tmp_path):
+    _seed_capture(tmp_path)
+    llm = FakeLLM(_distill_response())
+    agent = DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0))
+
+    agent.distill_today()
+
+    assert "종합 모드 안내" not in llm.prompts[0]
+
+
 # ── Obsidian 링크 연결 ───────────────────────────────────────────────────────
 
 
