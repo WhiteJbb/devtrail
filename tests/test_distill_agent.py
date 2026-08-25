@@ -377,3 +377,50 @@ def test_critic_missing_verdicts_keeps_all(tmp_path):
     result = agent.distill_today()
 
     assert len(result.written) == 4
+
+
+# ── blog thread ─────────────────────────────────────────────────────────────
+
+
+def test_distill_prompt_includes_existing_threads_and_merges(tmp_path):
+    """기존 thread가 프롬프트에 제시되고, 같은 슬러그 후보는 새 파일 없이 누적된다."""
+    from app.services.candidate_writer import CandidateSpec as Spec, CandidateWriter
+
+    CandidateWriter(tmp_path, now=datetime(2026, 6, 22)).write(
+        Spec(
+            kind="blog_idea",
+            title="홈랩 구축기",
+            body="## 핵심 메시지\n\n1일차 이야기\n",
+            thread="homelab-build-2026",
+            source_refs=["10_Worklog/Sessions/day1.md"],
+        )
+    )
+    _seed_capture(tmp_path)
+    response = json.dumps(
+        {
+            "knowledge": [],
+            "decisions": [],
+            "memory_patches": [],
+            "blog_ideas": [
+                {
+                    "title": "홈랩 구축기 2일차",
+                    "summary": "NAS 연결 삽질",
+                    "body": "## 핵심 메시지\n\n2일차 이야기\n",
+                    "thread": "homelab-build-2026",
+                    "source_refs": [],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+    agent = DistillAgent(
+        settings=_settings(tmp_path), llm=FakeLLM(response), now=datetime(2026, 6, 23, 10, 0, 0)
+    )
+
+    result = agent.distill_today()
+
+    assert "homelab-build-2026" in agent.llm.prompts[0]
+    assert len(list((tmp_path / "60_Candidates/BlogIdeas").glob("*.md"))) == 1
+    text = result.written[0].path.read_text(encoding="utf-8")
+    assert "title: 홈랩 구축기" in text
+    assert "- 2026-06-23: NAS 연결 삽질" in text

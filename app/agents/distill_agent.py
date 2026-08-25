@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMError, LLMProvider
 from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
+from app.services.blog_thread import format_thread_context
 from app.services.candidate_writer import CandidateSpec, CandidateWriteResult, CandidateWriter
 from app.services.json_utils import JSONParseError, complete_json
 from app.services.wiki_service import WikiNote, WikiService
@@ -87,6 +88,7 @@ class DistillAgent:
             DATE=self._date(),
             CONTEXT=context,
             RELATED_KNOWLEDGE=related_section,
+            THREADS=format_thread_context(self.vault_dir),
             MODE_NOTE=_RANGE_MODE_NOTE if days > 0 else "",
         )
         try:
@@ -414,6 +416,7 @@ class DistillAgent:
             project=str(item.get("project") or ""),
             tags=[str(t) for t in tags],
             source_refs=[str(ref) for ref in source_refs],
+            thread=str(item.get("thread") or "").strip() if kind == "blog_idea" else "",
         )
 
     def _date(self) -> str:

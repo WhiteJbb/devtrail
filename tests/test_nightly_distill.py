@@ -287,3 +287,34 @@ def test_run_leaves_review_required_patches_alone(tmp_path):
 
     assert result.auto_applied_patches == []
     assert fm.loads(patch.read_text(encoding="utf-8")).metadata["status"] == "candidate"
+
+
+def test_digest_includes_thread_block_only_when_updated_today(tmp_path):
+    from app.services.candidate_writer import CandidateSpec, CandidateWriter
+
+    thread_spec = CandidateSpec(
+        kind="blog_idea",
+        title="홈랩 구축기",
+        body="## 핵심 메시지\n\n서버 이야기\n",
+        thread="homelab-build-2026",
+        source_refs=["10_Worklog/Sessions/day1.md"],
+    )
+    CandidateWriter(tmp_path, now=datetime(2026, 6, 22)).write(thread_spec)
+    _seed_session(tmp_path)
+
+    def _run():
+        llm = _MultiCallLLM([_distill_response(), _career_response()])
+        return NightlyDistillAgent(
+            settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23)
+        ).run()
+
+    assert "글감 thread 현황" not in _run().digest_text
+
+    CandidateWriter(tmp_path, now=datetime(2026, 6, 23)).write(
+        CandidateSpec(**{**thread_spec.__dict__, "summary": "2일차", "source_refs": ["10_Worklog/Sessions/day2.md"]})
+    )
+    text = _run().digest_text
+
+    assert "글감 thread 현황" in text
+    assert "홈랩 구축기" in text
+    assert "누적 소스 2개" in text
