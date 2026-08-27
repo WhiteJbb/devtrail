@@ -47,6 +47,7 @@ _ALLOWED_READ_PREFIXES = _STABLE_PREFIXES + (_CANDIDATE_PREFIX,) + _RAW_PREFIXES
 
 _STATUS_RANK = {"stable": 0, "candidate": 1, "raw": 2}
 _SEARCH_FETCH_ALL = 1_000_000  # 사실상 무제한 — status 우선순위 재정렬을 vault_tools가 직접 한다
+_RAW_RESULT_QUOTA = 3  # 정본·후보가 limit을 다 채워도 raw에 남겨두는 최대 자리 수
 
 _RECORD_NOTE_KINDS = {"knowledge", "decision", "blog_idea", "career_bullet"}
 
@@ -377,7 +378,25 @@ def search_vault(query: str, limit: int = 10, settings: Settings | None = None) 
     ]
 
     hits.sort(key=lambda h: (_STATUS_RANK[h.status], -h.score, h.path))
-    return hits[:limit]
+    return _reserve_raw_slots(hits, limit)
+
+
+def _reserve_raw_slots(hits: list[SearchHit], limit: int) -> list[SearchHit]:
+    """raw 몫을 남기고 자른다.
+
+    status 순 절단만 하면 정본·후보가 limit을 다 채우는 순간 세션 원문이 한 건도
+    안 나온다 — "지난주에 뭐 했지"처럼 raw를 찾는 질문에서 정확히 실패한다.
+    반대로 raw는 노트 수가 압도적이라 몫을 크게 주면 정본을 밀어내므로
+    limit의 1/3까지만(최대 _RAW_RESULT_QUOTA) 예약한다.
+    """
+    if len(hits) <= limit:
+        return hits
+    raw = [h for h in hits if h.status == "raw"]
+    quota = min(_RAW_RESULT_QUOTA, len(raw), limit // 3)
+    if quota <= 0:
+        return hits[:limit]
+    upper = [h for h in hits if h.status != "raw"]
+    return upper[: limit - quota] + raw[:quota]
 
 
 def read_note(rel_path: str, settings: Settings | None = None) -> str:
