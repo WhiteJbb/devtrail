@@ -178,6 +178,17 @@ devtrail daily-log [-p project]                                # 오늘 데일�
 devtrail daily-log [-p project] --from-agent                   # LLM이 오늘 컨텍스트 미리 채움
 ```
 
+셸 활동 수집(커밋 없는 작업 — SSH·Docker·홈랩 운영):
+
+```bash
+devtrail activity install [--shell pwsh|bash|all]         # 셸 프로필에 수집 훅 설치
+devtrail activity install --shell bash --profile <경로>   # WSL·원격 노드용
+devtrail activity status                                  # 훅 설치 여부·오늘 이벤트 수
+devtrail activity uninstall [--shell ...]                 # 훅 블록 제거
+```
+
+훅은 명령 한 줄씩 `~/.devtrail/activity/<날짜>.jsonl`에 append하고, 비밀값 패턴(토큰·API 키)은 디스크에 닿기 전에 훅 안에서 `***`로 치환된다. JSONL은 로컬 전용이며, 세션 노트 생성은 다음 단계(sessionizer)에서 붙는다.
+
 `--from-agent` 플래그: daily-log는 오늘 캡처·OpenLoops를 읽어 Done/Next 등 미리 채움.
 
 > **참고**: post-commit hook은 기본적으로 비활성화(`exit 0`) 상태로 설치됩니다. 커밋마다 LLM 호출로 커밋 속도가 저하되고 diff가 800자로 잘려 실질적 가치가 낮았기 때문입니다. `capture-commit` 명령 자체는 남아 있어 수동 실행은 가능하며, `nightly-distill`이 세션 노트 기반으로 하루치를 종합 처리하는 것으로 대체됐습니다.
