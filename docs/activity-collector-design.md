@@ -154,7 +154,7 @@ Claude Code 작업 중의 셸 이벤트는 MCP `write_session_process` 노트와
 
 | PR | 내용 | 비고 |
 |----|------|------|
-| A | 훅 스크립트(pwsh/bash) + `activity install/uninstall/status` | LLM 무관, 셸별 수동 검증 |
+| A | ~~훅 스크립트(pwsh/bash) + `activity install/uninstall/status`~~ **완료 (2026-08-27)** | bash는 git-bash 실전 검증, pwsh는 마스킹·JSONL 스모크 검증. WSL·원격 노드는 `--profile`로 지정 |
 | B | sessionizer + 노트 생성 + 테스트 | JSONL fixture 기반, LLM은 fake |
 | C | nightly 통합(fail-open) + retention + `sessionize --date` | e2e는 testvault 재사용 |
 

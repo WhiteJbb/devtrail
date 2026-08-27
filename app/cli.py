@@ -36,6 +36,13 @@ blog_app = typer.Typer(
 )
 app.add_typer(blog_app, name="blog")
 
+activity_app = typer.Typer(
+    add_completion=False,
+    help="셸 활동 수집 훅 설치·제거·상태",
+    no_args_is_help=True,
+)
+app.add_typer(activity_app, name="activity")
+
 
 def _fail(message: str) -> None:
     typer.secho(message, fg=typer.colors.RED, err=True)
@@ -1445,6 +1452,81 @@ def project_briefing(
         typer.echo(f"(briefing 조회 실패: {e})")
         return
     typer.echo(briefing.text)
+
+
+@activity_app.command("install")
+def activity_install(
+    shell: str = typer.Option("all", "--shell", "-s", help="pwsh | bash | all"),
+    profile: Path = typer.Option(None, "--profile", help="프로필 경로 직접 지정 (WSL·원격 노드용)"),
+) -> None:
+    """셸 프로필에 활동 수집 훅 블록을 넣는다. 재실행하면 최신 블록으로 갈아끼운다."""
+    from app.services import activity_hook
+
+    targets = _activity_targets(shell)
+    if profile and len(targets) > 1:
+        _fail("--profile은 셸 하나를 지정할 때만 쓸 수 있습니다 (--shell pwsh 또는 bash).")
+
+    for name in targets:
+        try:
+            path = activity_hook.install(name, profile)
+        except activity_hook.ActivityHookError as e:
+            typer.secho(f"  {name}: 건너뜀 — {e}", fg=typer.colors.YELLOW)
+            continue
+        typer.secho(f"  {name}: 설치 완료 — {path}", fg=typer.colors.GREEN)
+
+    typer.echo("\n새 셸을 열면 명령이 ~/.devtrail/activity/<날짜>.jsonl에 쌓입니다.")
+
+
+@activity_app.command("uninstall")
+def activity_uninstall(
+    shell: str = typer.Option("all", "--shell", "-s", help="pwsh | bash | all"),
+    profile: Path = typer.Option(None, "--profile", help="프로필 경로 직접 지정"),
+) -> None:
+    """프로필에서 훅 블록만 제거한다. 이미 쌓인 JSONL은 지우지 않는다."""
+    from app.services import activity_hook
+
+    targets = _activity_targets(shell)
+    if profile and len(targets) > 1:
+        _fail("--profile은 셸 하나를 지정할 때만 쓸 수 있습니다 (--shell pwsh 또는 bash).")
+
+    for name in targets:
+        try:
+            removed = activity_hook.uninstall(name, profile)
+        except activity_hook.ActivityHookError as e:
+            typer.secho(f"  {name}: 건너뜀 — {e}", fg=typer.colors.YELLOW)
+            continue
+        if removed:
+            typer.secho(f"  {name}: 제거 완료", fg=typer.colors.GREEN)
+        else:
+            typer.echo(f"  {name}: 설치된 훅이 없습니다")
+
+
+@activity_app.command("status")
+def activity_status() -> None:
+    """훅 설치 여부와 오늘 수집된 이벤트 수를 보여준다."""
+    from app.services import activity_hook
+
+    result = activity_hook.status()
+    typer.secho("\n활동 수집 상태", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  저장 경로: {result.activity_dir}")
+    for shell in result.shells:
+        mark = "설치됨" if shell.installed else "미설치"
+        detail = shell.error or str(shell.profile)
+        typer.echo(f"  {shell.shell}: {mark} — {detail}")
+
+    typer.echo(f"  오늘 이벤트: {result.today_events}건")
+    if result.last_event:
+        typer.echo(f"  마지막: {result.last_event.get('ts', '?')}  {result.last_event.get('cmd', '')}")
+
+
+def _activity_targets(shell: str) -> list[str]:
+    from app.services import activity_hook
+
+    if shell == "all":
+        return list(activity_hook.SHELLS)
+    if shell not in activity_hook.SHELLS:
+        _fail(f"지원하지 않는 셸입니다: {shell} (가능: {', '.join(activity_hook.SHELLS)}, all)")
+    return [shell]
 
 
 if __name__ == "__main__":
