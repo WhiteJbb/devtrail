@@ -4,7 +4,8 @@ docs/service-improvement-plan.md P1/P2의 정본 함수를 제공한다. 새 로
 기존 WikiService/CandidateWriter/CaptureAgent/AgentMemoryLoader/ProjectMemoryLoader/
 ContextPackBuilder를 조합만 한다.
 
-read_scope: 20_Knowledge/, 30_Projects/, 40_AgentMemory/(stable), 60_Candidates/(candidate).
+read_scope: 20_Knowledge/, 30_Projects/, 40_AgentMemory/(stable), 60_Candidates/(candidate),
+10_Worklog/, 50_Outputs/, 70_Tasks/(raw). 00_Inbox/는 캡처 노이즈라 제외한다.
 write_scope: record_note는 knowledge/decision/blog_idea/career_bullet만, write_work_plan과
 write_session_process는 60_Candidates/SessionHandoffs/<Project>/만, record_agent_improvement는
 60_Candidates/MemoryPatches/만 기록한다. 공식 영역(20_Knowledge/, 30_Projects/, 40_AgentMemory/)은
@@ -39,7 +40,13 @@ from app.services.wiki_service import WikiService
 
 _STABLE_PREFIXES = ("20_Knowledge/", "30_Projects/", "40_AgentMemory/")
 _CANDIDATE_PREFIX = "60_Candidates/"
-_ALLOWED_READ_PREFIXES = _STABLE_PREFIXES + (_CANDIDATE_PREFIX,)
+# 원문 기록 — 검증된 지식이 아니라 "언제 무엇을 했는가"의 근거다. 읽기만 허용하고
+# 검색 순위는 stable/candidate 뒤로 민다. 00_Inbox/는 캡처 노이즈라 제외한다.
+_RAW_PREFIXES = ("10_Worklog/", "50_Outputs/", "70_Tasks/")
+_ALLOWED_READ_PREFIXES = _STABLE_PREFIXES + (_CANDIDATE_PREFIX,) + _RAW_PREFIXES
+
+_STATUS_RANK = {"stable": 0, "candidate": 1, "raw": 2}
+_SEARCH_FETCH_ALL = 1_000_000  # 사실상 무제한 — status 우선순위 재정렬을 vault_tools가 직접 한다
 
 _RECORD_NOTE_KINDS = {"knowledge", "decision", "blog_idea", "career_bullet"}
 
@@ -79,7 +86,7 @@ class VaultScopeError(ValueError):
 class SearchHit:
     path: str
     title: str
-    status: str  # "stable" | "candidate"
+    status: str  # "stable" | "candidate" | "raw"
     score: int
     summary: str
 
@@ -129,7 +136,11 @@ def _normalize_scoped_path(rel_path: str) -> str:
 
 
 def _status_of(rel_path: str) -> str:
-    return "candidate" if rel_path.startswith(_CANDIDATE_PREFIX) else "stable"
+    if rel_path.startswith(_CANDIDATE_PREFIX):
+        return "candidate"
+    if rel_path.startswith(_RAW_PREFIXES):
+        return "raw"
+    return "stable"
 
 
 def _truncate(text: str, limit: int = _SECTION_MAX_CHARS) -> str:
@@ -347,22 +358,25 @@ def _reattach_orphan_plan_if_needed(vault_dir: Path, project: str, session_id: s
 
 
 def search_vault(query: str, limit: int = 10, settings: Settings | None = None) -> list[SearchHit]:
-    """read_scope 안의 노트를 검색하고 status=stable/candidate를 함께 반환한다.
+    """read_scope 안의 노트를 검색하고 status=stable/candidate/raw를 함께 반환한다.
 
-    stable 결과가 candidate보다 먼저 정렬된다.
+    stable → candidate → raw 순으로 정렬된다.
     """
     vault_dir = _vault_dir(settings)
     wiki = WikiService(vault_dir)
-    # 점수화·절단 전에 read_scope로 필터링한다 — 사후 필터링하면 00_Inbox/10_Worklog처럼
+    # 점수화·절단 전에 read_scope로 필터링한다 — 사후 필터링하면 00_Inbox처럼
     # 노트가 많은 폴더가 전역 top-N을 채워 스코프 안 결과가 아예 안 보일 수 있다.
-    raw = wiki.search(query, limit=limit, prefixes=_ALLOWED_READ_PREFIXES)
+    # 절단 없이 다 받아 여기서 status 우선순위로 재정렬한 뒤 자른다 — raw(10_Worklog 등)는
+    # 노트 수가 압도적이라 wiki 쪽에서 limit으로 자르면 stable이 재정렬 전에 이미 사라진다.
+    # 점수화는 어차피 스코프 안 전 노트에 대해 일어나므로 늘어나는 비용은 리스트 길이뿐이다.
+    results = wiki.search(query, limit=_SEARCH_FETCH_ALL, prefixes=_ALLOWED_READ_PREFIXES)
 
     hits = [
         SearchHit(path=r.note.path, title=r.note.title, status=_status_of(r.note.path), score=r.score, summary=r.note.summary)
-        for r in raw
+        for r in results
     ]
 
-    hits.sort(key=lambda h: (0 if h.status == "stable" else 1, -h.score, h.path))
+    hits.sort(key=lambda h: (_STATUS_RANK[h.status], -h.score, h.path))
     return hits[:limit]
 
 
