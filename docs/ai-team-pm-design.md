@@ -57,9 +57,10 @@
 
 ### 변경이 필요한 최소 영역
 
-- `_ALLOWED_READ_PREFIXES`에 `10_Worklog/`·`50_Outputs/` 추가
-  (+ `_status_of`에 라벨, 테스트). write scope는 손대지 않는다.
-  `00_Inbox/`는 캡처 노이즈라 우선 제외, `70_Tasks/`는 필요 확인 후.
+- ~~`_ALLOWED_READ_PREFIXES`에 `10_Worklog/`·`50_Outputs/` 추가~~ **완료 (2026-08-27)**:
+  `10_Worklog/`·`50_Outputs/`·`70_Tasks/`를 raw 등급으로 추가하고
+  `_status_of`에 `raw` 라벨 + `stable→candidate→raw` 정렬을 넣었다.
+  `00_Inbox/`는 캡처 노이즈라 제외 확정. write scope는 그대로다.
 - (조건부, 후순위) discussion형 handoff 필드 — Process 필드 유용(流用)이
   실사용에서 어색하다고 확인된 뒤에만 tool 추가를 검토한다.
 
@@ -150,7 +151,7 @@ Candidate → 정본  = 사람이 promote-candidate / apply-memory-patch (기존
 
 ### 필수 (이것만)
 
-1. **devtrail PR 1개**: read scope에 `10_Worklog/`·`50_Outputs/` 추가 (소, 테스트 포함).
+1. ~~**devtrail PR 1개**: read scope에 `10_Worklog/`·`50_Outputs/` 추가~~ — 완료.
 2. **pm-repo 생성**: CLAUDE.md(PM 규약 — briefing 먼저, 결정 즉시 기록,
    checkpoint 규칙, brief 양식) + `.mcp.json`.
 3. **위임은 수동으로 시작**: PM이 brief를 만들면 사용자가 실행을 승인하고
@@ -203,7 +204,7 @@ Candidate → 정본  = 사람이 promote-candidate / apply-memory-patch (기존
 
 ## 9. 다음 행동
 
-1. read scope PR 범위 확정 — `10_Worklog/`·`50_Outputs/` 우선,
-   `00_Inbox/`(노이즈)·`70_Tasks/`는 포함 여부만 결정.
+1. ~~read scope PR~~ — 완료. `10_Worklog/`·`50_Outputs/`·`70_Tasks/` 포함,
+   `00_Inbox/` 제외.
 2. pm-repo CLAUDE.md 초안 작성 (PM 규약 + checkpoint 규칙 + brief 양식).
 3. 실사용 1~2주 후 후순위 항목(discussion handoff, briefing 창 조정) 재평가.

@@ -156,7 +156,7 @@ class Assistant:
                 return "관련된 노트를 못 찾았어요. 다른 키워드로 물어봐주시겠어요?"
             lines = [f"Vault에서 {len(hits)}건 찾았어요:"]
             for h in hits:
-                label = "초안에 따르면" if h.status == "candidate" else "확정 지식"
+                label = {"candidate": "초안에 따르면", "raw": "기록에 따르면"}.get(h.status, "확정 지식")
                 lines.append(f"· [{label}] {h.title} ({h.path})")
             return "\n".join(lines)
 

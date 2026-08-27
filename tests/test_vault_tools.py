@@ -111,17 +111,58 @@ def test_search_vault_stable_sorted_before_candidate(tmp_path):
 def test_search_vault_scope_note_not_crowded_out_by_out_of_scope_notes(tmp_path):
     """스코프 밖 노트가 많아도 스코프 안 결과가 top-N에서 밀려나면 안 된다(P3.3).
 
-    사후 필터링(전역 top-N을 먼저 뽑고 걸러내기)이면 00_Inbox/10_Worklog처럼
-    노트가 많은 폴더가 default limit(10)을 다 채워, 실제로 스코프 안에 있는
-    유일한 결과가 아예 반환되지 않을 수 있다.
+    사후 필터링(전역 top-N을 먼저 뽑고 걸러내기)이면 00_Inbox처럼 노트가 많은
+    폴더가 default limit(10)을 다 채워, 실제로 스코프 안에 있는 유일한 결과가
+    아예 반환되지 않을 수 있다.
     """
     for i in range(45):
-        _write(tmp_path, f"10_Worklog/Sessions/session-{i:02d}.md", body="프로젝트희귀검색어 반복 등장")
+        _write(tmp_path, f"00_Inbox/Memos/memo-{i:02d}.md", body="프로젝트희귀검색어 반복 등장")
     _write(tmp_path, "20_Knowledge/rag.md", body="프로젝트희귀검색어 관련 지식")
 
     settings = _settings(tmp_path)
     hits = vault_tools.search_vault("프로젝트희귀검색어", settings=settings)  # 기본 limit=10
     assert any(h.path == "20_Knowledge/rag.md" for h in hits)
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    ["10_Worklog/Sessions/2026-08-20.md", "50_Outputs/Digest/2026-W34.md", "70_Tasks/Active.md"],
+)
+def test_read_note_allows_raw_scope(tmp_path, rel_path):
+    """PM이 과거 세션·산출물·태스크를 근거로 조회할 수 있어야 한다."""
+    _write(tmp_path, rel_path, body="원문 기록 본문")
+    content = vault_tools.read_note(rel_path, settings=_settings(tmp_path))
+    assert "원문 기록 본문" in content
+
+
+def test_search_vault_labels_raw_status(tmp_path):
+    _write(tmp_path, "10_Worklog/Sessions/s1.md", body="검색어 포함")
+    hits = vault_tools.search_vault("검색어", settings=_settings(tmp_path))
+    assert hits and hits[0].status == "raw"
+
+
+def test_search_vault_raw_sorted_after_stable_and_candidate(tmp_path):
+    _write(tmp_path, "10_Worklog/Sessions/s1.md", body="공통검색어 원문")
+    _write(tmp_path, "60_Candidates/Knowledge/cand.md", body="공통검색어 후보")
+    _write(tmp_path, "20_Knowledge/stable.md", body="공통검색어 안정")
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert [h.status for h in hits] == ["stable", "candidate", "raw"]
+
+
+def test_search_vault_stable_not_crowded_out_by_raw_notes(tmp_path):
+    """raw는 노트 수가 압도적이라, limit만큼만 뽑으면 stable이 재정렬 전에 잘린다."""
+    for i in range(45):
+        _write(tmp_path, f"10_Worklog/Sessions/session-{i:02d}.md", body="공통검색어 " * 20)
+    _write(tmp_path, "20_Knowledge/rag.md", body="공통검색어 관련 지식")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert hits[0].path == "20_Knowledge/rag.md"
+
+
+def test_read_note_still_rejects_inbox(tmp_path):
+    _write(tmp_path, "00_Inbox/Memos/secret.md")
+    with pytest.raises(vault_tools.VaultScopeError):
+        vault_tools.read_note("00_Inbox/Memos/secret.md", settings=_settings(tmp_path))
 
 
 # ── record_note ──────────────────────────────────────────────────────────────
