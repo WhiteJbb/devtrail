@@ -159,6 +159,50 @@ def test_search_vault_stable_not_crowded_out_by_raw_notes(tmp_path):
     assert hits[0].path == "20_Knowledge/rag.md"
 
 
+def test_search_vault_reserves_slots_for_raw(tmp_path):
+    """정본·후보가 limit을 다 채워도 세션 원문이 한 건도 안 나오면
+    "지난주에 뭐 했지" 질문이 정확히 실패한다."""
+    for i in range(5):
+        _write(tmp_path, f"20_Knowledge/k{i}.md", body="공통검색어 지식")
+        _write(tmp_path, f"60_Candidates/Knowledge/c{i}.md", body="공통검색어 후보")
+    for i in range(3):
+        _write(tmp_path, f"10_Worklog/Sessions/s{i}.md", body="공통검색어 세션")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+
+    assert len(hits) == 10
+    assert [h.status for h in hits[-3:]] == ["raw"] * 3  # 순서는 stable→candidate→raw 유지
+    assert sum(1 for h in hits if h.status == "stable") == 5
+
+
+def test_search_vault_raw_quota_does_not_shrink_small_result_sets(tmp_path):
+    _write(tmp_path, "20_Knowledge/k.md", body="공통검색어 지식")
+    _write(tmp_path, "10_Worklog/Sessions/s.md", body="공통검색어 세션")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert [h.status for h in hits] == ["stable", "raw"]
+
+
+def test_search_vault_raw_quota_never_dominates_small_limit(tmp_path):
+    """limit이 작으면 raw 몫도 같이 줄어든다 — 정본이 raw에 밀리면 안 된다."""
+    for i in range(5):
+        _write(tmp_path, f"20_Knowledge/k{i}.md", body="공통검색어 지식")
+    for i in range(5):
+        _write(tmp_path, f"10_Worklog/Sessions/s{i}.md", body="공통검색어 세션")
+
+    hits = vault_tools.search_vault("공통검색어", limit=2, settings=_settings(tmp_path))
+    assert [h.status for h in hits] == ["stable", "stable"]
+
+
+def test_search_vault_without_raw_hits_fills_limit(tmp_path):
+    for i in range(12):
+        _write(tmp_path, f"20_Knowledge/k{i}.md", body="공통검색어 지식")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert len(hits) == 10
+    assert all(h.status == "stable" for h in hits)
+
+
 def test_read_note_still_rejects_inbox(tmp_path):
     _write(tmp_path, "00_Inbox/Memos/secret.md")
     with pytest.raises(vault_tools.VaultScopeError):
