@@ -101,6 +101,71 @@ def _print_distill_result(label: str, result) -> None:
         typer.echo(f"    {item.rel_path}")
 
 
+@app.command("doctor")
+def doctor(
+    repo: Path = typer.Option(Path("."), "--repo", "-r", help="점검할 repo 경로 (기본: 현재 디렉터리)"),
+    fix: bool = typer.Option(False, "--fix", help="고칠 수 있는 항목을 실제로 고친다 (기존 파일은 덮어쓰지 않음)"),
+    project: str = typer.Option("", "--project", "-p", help="vault.json에 저장할 프로젝트명 (후보가 여럿일 때 필요)"),
+    skip_mcp: bool = typer.Option(False, "--skip-mcp", help="claude mcp list 호출을 건너뛴다"),
+) -> None:
+    """이 머신에서 devtrail 기록 루프가 실제로 돌 상태인지 진단한다.
+
+    `.claude/settings.json`(훅)·`.claude/vault.json`(프로젝트 매핑)은 gitignore된
+    머신 로컬 파일이라 clone만으로는 생기지 않고, 없어도 아무 경고가 나오지 않는다.
+    그 조용한 실패를 찾는 것이 이 커맨드의 목적이다.
+    """
+    from app.services import doctor as doctor_service
+
+    repo_dir = repo.resolve()
+    if not repo_dir.is_dir():
+        _fail(f"repo 경로가 디렉터리가 아닙니다: {repo_dir}")
+
+    settings = get_settings()
+    report = doctor_service.diagnose(repo_dir, settings.obsidian_vault_root, check_mcp=not skip_mcp)
+
+    _marks = {
+        doctor_service.OK: ("OK  ", typer.colors.GREEN),
+        doctor_service.WARN: ("WARN", typer.colors.YELLOW),
+        doctor_service.FAIL: ("FAIL", typer.colors.RED),
+        doctor_service.UNKNOWN: ("?   ", typer.colors.BRIGHT_BLACK),
+    }
+
+    typer.secho("\ndevtrail doctor", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  repo: {repo_dir}")
+    for check in report.checks:
+        mark, color = _marks.get(check.severity, ("?   ", typer.colors.WHITE))
+        typer.secho(f"  [{mark}] {check.name}", fg=color, nl=False)
+        typer.echo(f" — {check.detail}")
+        if check.hint and check.severity != doctor_service.OK:
+            typer.secho(f"         → {check.hint}", fg=typer.colors.BRIGHT_BLACK)
+
+    if fix:
+        repairs = doctor_service.repair(report, project=project)
+        if not repairs:
+            typer.echo("\n고칠 수 있는 항목이 없습니다.")
+        else:
+            typer.secho("\n수리", fg=typer.colors.CYAN, bold=True)
+            for r in repairs:
+                color = typer.colors.GREEN if r.changed else typer.colors.YELLOW
+                typer.secho(f"  {r.name}: {r.detail}", fg=color)
+            typer.echo("\n다시 `devtrail doctor`로 확인하세요.")
+    elif report.fixable:
+        typer.echo(f"\n--fix로 고칠 수 있는 항목 {len(report.fixable)}개: " + ", ".join(c.name for c in report.fixable))
+
+    if report.failures:
+        typer.secho(f"\n실패 {len(report.failures)}개 — 위 안내를 따라 해결하세요.", fg=typer.colors.RED)
+    elif report.healthy:
+        typer.secho("\n치명적 문제 없음.", fg=typer.colors.GREEN)
+
+    # 파일 존재는 확인해도 Claude Code가 그 설정을 실제로 로드했는지는 프로세스 밖에서
+    # 알 수 없다. doctor를 과신하지 않게 한계를 밝힌다.
+    typer.secho(
+        "\n참고: 훅 설정 파일의 존재만 확인합니다. 실제 발동 여부는 새 세션에서 briefing이 "
+        "주입되는지로 확인하세요.",
+        fg=typer.colors.BRIGHT_BLACK,
+    )
+
+
 @app.command("init-vault")
 def init_vault() -> None:
     """Obsidian LLM Wiki Core 기본 폴더와 루트 파일을 만든다."""

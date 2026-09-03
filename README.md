@@ -161,6 +161,7 @@ Obsidian 템플릿은 [docs/vault-templates/](docs/vault-templates/)을 Vault의
 ### Vault 초기화
 
 ```bash
+devtrail doctor [--fix] [--project <이름>]       # 머신별 설치·연동 상태 진단·수리
 devtrail init-vault                             # 볼트 폴더 구조 생성
 devtrail install-hooks <repo> [-p project]      # git post-commit hook 설치
 devtrail index-vault                            # index.md 갱신
@@ -311,7 +312,28 @@ claude mcp add devtrail-vault -- devtrail mcp-serve
 1회 생성돼 모든 write 계열 tool에 자동 주입되므로 에이전트가 직접 들고 다닐 필요가
 없습니다(컴팩팅 중 분실 방지).
 
+### 새 머신 점검 — `devtrail doctor`
+
+```bash
+devtrail doctor          # 진단만
+devtrail doctor --fix    # 고칠 수 있는 것만 수리 (기존 파일은 덮어쓰지 않음)
+```
+
+`.claude/settings.json`(훅)과 `.claude/vault.json`(프로젝트 매핑)은 gitignore된
+**머신 로컬 파일**이라 clone만으로는 생기지 않습니다. 그리고 없어도 아무 경고가
+나오지 않습니다 — 훅 없이 몇 주간 작업하고 세션 기록이 0건인 것을 나중에 알게
+되는 종류의 실패입니다. `doctor`는 그 조용한 실패를 찾습니다.
+
+점검 항목: vault 경로(`.env`) · `mcp` 패키지 · 훅 설정 파일 · 훅 실행 전제(python) ·
+프로젝트 매핑(값이 Vault에 실재하는지까지) · vault 구조 · MCP 등록.
+
+`--fix`가 하는 것은 `settings.json` 복사, `vault.json` 생성(Vault 프로젝트 후보가
+하나일 때 — 여러 개면 `--project <이름>`), `init-vault` 재실행뿐입니다. `.env` 편집과
+`claude mcp add`는 하지 않고 명령만 안내합니다.
+
 ### Claude Code 훅 활성화 (선택, 머신별 1회)
+
+`devtrail doctor --fix`가 이 복사를 대신 해줍니다. 직접 하려면:
 
 ```bash
 cp .claude/settings.example.json .claude/settings.json
