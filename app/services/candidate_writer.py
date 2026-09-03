@@ -11,6 +11,7 @@ from typing import Any
 
 import frontmatter
 
+from app.services.identity import resolve_agent, resolve_host
 from app.services.wiki_service import WikiService
 
 _DEDUP_THRESHOLD = 0.85  # 제목 유사도 임계값
@@ -149,6 +150,10 @@ class CandidateWriter:
         if kind == "session_handoff":
             metadata["handoff_type"] = spec.handoff_type
             metadata["session_id"] = spec.session_id
+            # Plan/Process는 다음 세션이 이어받는 운영 메모리다 — 어느 노드의
+            # 어느 에이전트가 남긴 것인지가 인계 판단에 들어간다.
+            metadata["host"] = resolve_host()
+            metadata["agent"] = resolve_agent()
         if slug:
             metadata["thread"] = slug
             metadata["thread_last_added"] = len(spec.source_refs)
