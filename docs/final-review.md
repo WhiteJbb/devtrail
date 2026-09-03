@@ -1,10 +1,21 @@
 # final.md 검토 — 비전 대비 현재 구현 실측
 
-> 작성: 2026-09-02. `docs/final.md`(제품 방향 문서)가 요구한 "현재 repository
-> 분석 → 비전 대비 갭 → 단계별 구현 순서"에 대한 답이다. `dev` 브랜치 코드,
-> 실제 Vault(`C:/Users/beaco/git/personal-vault`), 로컬 설치 상태를 직접 읽고
-> 실행해 검증했다. **코드는 수정하지 않았다.** 실측 명령과 출력을 그대로
-> 남겨 나중에 같은 검증을 재현할 수 있게 했다.
+> 작성: 2026-09-02 (노트북). **개정: 2026-09-03 (데스크톱)** — §4·§5·§7·§9가
+> 머신 1대(노트북) 기준이었고, 데스크톱 재측정에서 절반이 뒤집혔다. 개정 내용은
+> 각 절의 `[개정 2026-09-03]` 블록에 있다.
+>
+> `docs/final.md`(제품 방향 문서)가 요구한 "현재 repository 분석 → 비전 대비 갭
+> → 단계별 구현 순서"에 대한 답이다. `dev` 브랜치 코드, 실제 Vault, 로컬 설치
+> 상태를 직접 읽고 실행해 검증했다. 실측 명령과 출력을 그대로 남겨 나중에 같은
+> 검증을 재현할 수 있게 했다.
+>
+> **측정 환경 두 곳**
+>
+> | | 노트북 (원본) | 데스크톱 (개정) |
+> |---|---|---|
+> | repo | `C:/Users/beaco/git/work-agent` | `C:/Users/User/git/work-agent` |
+> | Vault | `C:/Users/beaco/git/personal-vault` | `D:\personal-vault` |
+> | 측정일 | 2026-09-02 | 2026-09-03 |
 
 ## 0. 핵심 결론
 
@@ -12,15 +23,21 @@
    있다.** 새 메모리 시스템을 만들 필요가 없다.
 2. 자리 자체가 없는 엔티티는 **Problem / Troubleshooting 하나**다.
    Task는 존재하지만 형태(개인 todo)가 비전(프로젝트 1급 엔티티)과 다르다.
-3. **가장 중요한 발견: 그 루프가 이 머신에서 켜져 있지 않다.** devtrail
-   미설치, MCP 미등록, 훅 미활성, Vault에 handoff 0건, Vault git 2개월 정지.
-   `write_work_plan` / `write_session_process` / `record_agent_improvement`의
-   산출물이 Vault에 **한 건도 없다**.
-4. final.md가 요구하는 DB·HTTP API·Web UI는 `docs/ai-team-pm-design.md` §6이
-   2026-08-25에 **명시적으로 배제 확정**한 목록과 정면 충돌한다. 결정 번복인지
-   문서 간 정보 격차인지 사람이 판정해야 한다(§9).
-5. 따라서 다음 작업의 1순위는 "무엇을 더 만들까"가 아니라 **"이미 만든 것을
-   실제로 켜는 것"**이다. 그 전에 스키마를 늘리면 지금 상황의 반복이 된다.
+3. ~~**가장 중요한 발견: 그 루프가 이 머신에서 켜져 있지 않다.**~~
+   → **[개정 2026-09-03]** 이 결론은 노트북 한정이었다. 데스크톱에서는 설치·MCP·
+   훅·briefing이 **전부 정상 작동한다**(§4-4). 루프가 꺼진 게 아니라, 훅 활성
+   파일이 gitignore돼 노트북에만 없었다. 다만 7/9 이후 세션 기록이 0건인 것은
+   두 머신 공통 사실이고, promote는 **한 번도 실행된 적이 없다**(§4-6).
+4. ~~final.md의 DB·HTTP API·Web UI 요구가 8/25 배제 목록과 충돌한다.~~
+   → **[개정 2026-09-03]** 충돌이 아니다. Dashboard·DB·API는 별도 repo
+   `ai-team-control-room`(Next.js + drizzle) 소관으로 확정됐다. Devtrail은
+   "끝난 세션의 기록"만 소유한다. §8의 (a)안이 채택됐다.
+5. 다음 작업의 1순위는 "무엇을 더 만들까"가 아니라 **"기록이 실제로 쌓이게
+   하는 것"**이다. 그 전에 스키마를 늘리면 지금 상황의 반복이 된다.
+6. **[개정 2026-09-03 · 신규]** 미검토 후보는 14일 뒤 자동 삭제된다. 7월에 쌓인
+   knowledge/blog_idea/career_bullet 후보는 이미 소실됐고, decision 15건은
+   promote 없이 `_Archive`로 갔다. §4-3이 "적체"로 읽은 숫자는 적체가 아니라
+   **사라지기 직전의 스냅샷**이었다(§4-6).
 
 ---
 
@@ -33,6 +50,17 @@
 | Vault 실태 | `find` / `ls`로 폴더·노트 수 집계, `git log`로 마지막 활동일 |
 | 동작 확인 | `devtrail project-briefing .` 실제 실행 |
 | 설치 상태 | `Get-Command devtrail`, `claude mcp list`, `pip list` |
+
+**[개정 2026-09-03] 추가 측정** (데스크톱)
+
+| 대상 | 방법 |
+|------|------|
+| 테스트 | `.venv/Scripts/python.exe -m pytest -q` 실제 실행 |
+| 훅 활성 | `.claude/settings.json` 존재·내용, `.claude/.vault-mcp/current_session.json` 마커, `.gitignore` 대조 |
+| 스케줄 | `Get-ScheduledTask` · `Get-ScheduledTaskInfo` · `logs/sync-vault-local.log` |
+| TTL 정리 근거 | `app/services/retention.py` 코드 + `50_Outputs/Digest/*.md`의 `## 후보 정리 (TTL 초과)` 로그 |
+| 머지 안전성 | `git diff main..dev --stat`, `git ls-files -s scripts/mac/*.sh`(exec bit), `git diff main..dev -- app/config.py` |
+| Mac 배포 경로 | `scripts/mac/run-nightly-safe.sh` · `update-devtrail.sh` · `launchd/*.plist.template` 읽기 |
 
 ---
 
@@ -104,11 +132,14 @@ PR #52(read scope 확장)와 PR #54(raw 몫 보장)가 이 3등급 체계를 완
 
 ---
 
-## 4. 전제 C — 그런데 그 루프가 켜져 있지 않다
+## 4. 전제 C — 루프는 켜져 있다. 기록이 안 쌓였을 뿐이다
 
-final.md는 "이 구조가 돌고 있다"를 암묵 전제한다. 실측은 반대다.
+> **§4-1 ~ §4-3은 노트북(2026-09-02) 실측이다. 데스크톱 재측정에서 대부분
+> 뒤집혔다 — §4-4부터 읽어야 현재 상태가 나온다.** 원본을 지우지 않고 남긴
+> 이유: "같은 repo인데 머신에 따라 진단이 정반대"라는 것이 이 문서의 가장
+> 중요한 발견이고, 원본이 없으면 그 대비가 사라진다.
 
-### 4-1. 설치·등록 상태
+### 4-1. 설치·등록 상태 (노트북)
 
 ```text
 $ claude mcp list
@@ -134,7 +165,7 @@ stop-process-check 훅이 **전부 비활성**이다. 기록 누락을 막는 �
 
 `.claude/vault.json`이 없다 = 이 repo가 어느 Vault 프로젝트인지 매핑이 없다.
 
-### 4-2. 그 결과 briefing이 빈 값을 반환한다
+### 4-2. 그 결과 briefing이 빈 값을 반환한다 (노트북)
 
 ```text
 $ devtrail project-briefing .
@@ -155,7 +186,7 @@ Devtrail 자신의 repo에서 Devtrail의 핵심 tool이 아무것도 돌려주�
 4. → `60_Candidates/SessionHandoffs/` 폴더가 없어 handoff 폴더명 매칭도 실패
 5. → `matched=False`, 후보 목록도 비어 있음
 
-### 4-3. Vault 실태
+### 4-3. Vault 실태 (노트북 클론)
 
 ```text
 60_Candidates/
@@ -185,6 +216,89 @@ $ git -C personal-vault log --oneline -3
 > 그 2개월치 작업 맥락은 git 커밋과 `docs/`에만 있고, 그것이 정확히
 > Devtrail이 대체하려던 저장소다.
 
+이 문단의 사실 관계는 유효하다. 하지만 **원인 진단은 틀렸다** — 아래를 보라.
+
+### 4-4. [개정 2026-09-03] 데스크톱에서는 전부 켜져 있다
+
+| 항목 | 노트북 (09-02) | 데스크톱 (09-03) |
+|---|---|---|
+| `devtrail` PATH | ❌ 없음 | ✅ `.venv/Scripts/devtrail` 0.1.0 editable |
+| pip `mcp`·`pytest` | ❌ 없음 | ✅ mcp 1.28.1 · pytest 9.1.1 |
+| `pytest` | ❌ 36 collection errors | ✅ **512 passed in 7.26s** |
+| `.claude/settings.json` | ❌ 없음 → 훅 전부 비활성 | ✅ 존재(mtime 2026-07-09) · 훅 4종 활성 |
+| `.claude/vault.json` | ❌ 없음 | ✅ `{"project": "Devtrail"}` |
+| MCP 등록 | ❌ 없음 | ✅ `devtrail-vault` 7 tool 연결 |
+| `project-briefing` | ❌ 빈 값 | ✅ Context·OpenLoops·Handoff 실제 출력 |
+| `30_Projects/` | `WorkAgent/`(구 이름) | ✅ `Devtrail/` (Context.md·Design·Plans 있음) |
+| `40_AgentMemory/06_Lessons.md` | ❌ 없음 | ✅ 존재 (단, 빈 템플릿) |
+| Vault git 마지막 활동 | 2026-07-03 (2개월 정지) | ✅ **2026-09-02 nightly distill** |
+| vault sync 스케줄 | 미확인 | ✅ `devtrail-vault-sync` 10분 간격, LastResult 0 |
+
+**Vault git "2개월 정지"는 노트북 클론이 2개월 stale했던 것이다.** 실제 Vault는
+Mac nightly가 매일 돌고 있었다 — Digest 64건, WeeklyReview 11건, 마지막 09-02.
+데스크톱의 10분 간격 sync 로그가 09-03 11:41에 09-02 digest를 pull해온 기록이
+남아 있다.
+
+### 4-5. [개정 2026-09-03] 진짜 원인 — 훅 활성 파일이 gitignore다
+
+```text
+.gitignore:17   .claude/*
+.gitignore:18-20   !global.md  !github.example.json  !settings.example.json
+```
+
+`.claude/settings.json`(훅 활성화)과 `.claude/vault.json`(프로젝트 매핑)은
+**git에 없다.** 머신마다 손으로 복사해야 하는 파일이다. 클론만 하면 훅 0개,
+briefing 빈 값이 된다.
+
+그리고 8월 커밋은 8/25 · 8/27 · 9/2 사흘에 몰려 있고, 9/2 커밋이 바로 이 문서다
+— **8월 작업은 노트북에서 이뤄졌고, 노트북에는 애초에 훅이 설치된 적이 없다.**
+
+따라서 §5의 "설치 마찰" 가설이 맞았지만, 성격이 다르다. 사용자가 3단계를
+게을리한 게 아니라 **설계가 머신마다 수동 2파일 복사를 요구하고, 빠뜨려도
+아무 경고가 없다.** 다음 머신(rpi4·macmini)에서도 같은 일이 난다.
+
+### 4-6. [개정 2026-09-03] 미검토 후보는 14일 뒤 삭제된다
+
+데스크톱에서 본 `60_Candidates/` 실태:
+
+```text
+60_Candidates/
+  _Archive/Decisions      15      ← promote 없이 보관된 결정
+  _Archive/MemoryPatches   1
+  SessionHandoffs/Devtrail 7      ← 전부 2026-07-08 / 07-09
+  Knowledge · Decisions · BlogIdeas · CareerBullets · MemoryPatches
+                                  ← 폴더 자체가 사라짐
+
+30_Projects/Devtrail/Decisions/    0건   ← DecisionLog가 비어 있다
+40_AgentMemory/06_Lessons.md       빈 템플릿
+$ devtrail list-candidates → 후보 17개 (17개 stale), 전부 _Archive
+```
+
+`app/services/retention.py`의 TTL 정리가 nightly마다 돈다:
+
+- `status=candidate` + 재생성 가능 kind(knowledge/blog_idea/career_bullet) → **삭제**
+- `status=candidate` + 사람 판단 kind(decision/memory_patch) → `_Archive/` 이동
+
+8/23~8/27 digest에 그 로그가 남아 있다(`## 후보 정리 (TTL 초과)`). 즉 §4-3이
+"CareerBullets 23건 검토 대기 적체"로 읽은 것은 **적체가 아니라 삭제 직전의
+스냅샷**이었다.
+
+더 중요한 사실: `30_Projects/Devtrail/Decisions/`가 0건이다. **"AI가 후보 생성
+→ 사람이 promote" 루프에서 promote 쪽이 한 번도 작동한 적이 없다.**
+
+인과 사슬은 이렇다:
+
+```text
+세션 기록 0건 (7/9 이후)
+   → distill 입력 0
+   → 후보 0개 생성        ← digest에 "총 후보 0개 생성 | distill 0 / career 0"
+   → TTL이 지울 것도 없음
+```
+
+**TTL을 껐다고 데이터가 쌓이지는 않는다.** nightly는 매일 도는데 먹일 재료가
+없다. TTL 해제는 "첫 배치가 다시 사라지지 않게 하는 보험"이고, 1순위는 입력을
+만드는 것이다.
+
 ---
 
 ## 5. 재프레이밍
@@ -201,7 +315,7 @@ final.md가 던진 질문:
 없앤다"다. **전자를 먼저 하면 안 쓰이는 시스템 위에 안 쓰일 UI를 얹는 것**이
 된다. handoff가 0건인 상태에서 Sessions 페이지를 만들면 빈 화면이 나온다.
 
-원인 가설(검증은 사용자만 가능):
+원인 가설(원본, 2026-09-02):
 
 - **설치 마찰**: `pip install -e .` → PATH 등록 → `claude mcp add` 3단계가
   머신마다 반복되고, 이 머신에서는 끝까지 가지 않았다.
@@ -211,8 +325,20 @@ final.md가 던진 질문:
   첫 세션부터 "쓸모없다"는 신호를 받는다. 초기 시드가 없으면 루프가 시작되지
   않는다.
 
-이 세 가설은 각각 다른 처방을 낳는다 — 설치 자동화 / 승격 부담 축소 /
-초기 시드 주입. **어느 것이 진짜인지 모른 채 기능을 추가하면 안 된다.**
+### [개정 2026-09-03] 가설 판정
+
+| 가설 | 판정 |
+|---|---|
+| 설치 마찰 | **부분 확정, 성격이 다름.** 데스크톱은 3단계가 다 끝나 있었다. 빠진 것은 gitignore된 `.claude/settings.json`·`vault.json` 2파일이고, 빠뜨려도 경고가 없다. 사용자 태만이 아니라 **부트스트랩 설계 결함**이다(§4-5) |
+| 검토 병목 | **확정, 원본보다 심각.** 적체가 아니라 `30_Projects/Devtrail/Decisions/` 0건 — promote가 한 번도 실행된 적이 없다. 그리고 미검토 후보는 14일 뒤 삭제된다(§4-6) |
+| 가치 미체감 | **판정 불가.** 데스크톱 briefing은 빈 값이 아니라 Context·OpenLoops·Handoff를 실제로 출력한다. 이 머신에서는 이 가설의 전제가 성립하지 않는다 |
+
+사용자 진술(2026-09-03): **"지금 실 사용을 안 하고 있어서 사람이 병목이야."**
+
+그러면 처방의 무게가 옮겨간다. 설치 자동화(부트스트랩)와 **승격 부담 축소**가
+1순위이고, 초기 시드 주입은 불필요하다. 그리고 "사람이 병목"이라는 진단이
+맞다면 **후보를 더 많이 만드는 기능은 방향이 반대다** — PR #51이 critic 게이트를
+우회해 blog_idea를 늘리는 변경인데, 이 관점에서는 되돌릴 후보다.
 
 ---
 
@@ -229,7 +355,8 @@ final.md가 던진 질문:
 4. **비전과 충돌·중복**:
    (a) `dashboard.py` TUI와 §7 Dashboard는 목적이 다르다(명령 런처 vs 상태 뷰).
    둘 다 유지하면 "Dashboard"라는 이름이 두 개가 된다.
-   (b) DB·API·UI 요구가 `ai-team-pm-design.md` §6 배제 목록과 충돌(§9).
+   (b) ~~DB·API·UI 요구가 `ai-team-pm-design.md` §6 배제 목록과 충돌(§9).~~
+   → **[개정 2026-09-03]** 충돌 아님 — `ai-team-control-room` 소관(§8·§9-①).
    (c) §7의 Agents/Workers 페이지가 §5의 orchestration 경계를 깬다(§8).
 5. **없는 핵심 기능**: Problem 엔티티 / 프로젝트 1급 Task / 읽기 전용 조회 tool
    (`get_recent_sessions`·`get_decisions`·`get_known_problems`) / 노드·에이전트
@@ -237,9 +364,12 @@ final.md가 던진 질문:
 6. **데이터 모델 확장**: frontmatter에 `host` · `agent` · `component` ·
    `cause_class`. **지금 안 넣으면 과거 기록에 소급이 안 된다** — 가장 싸고
    가장 되돌리기 어려운 항목이라 NOW에 둔다.
-7. **API 구조**: 변경이 아니라 신규(§2). 대부분은 MCP tool 추가로 해결되고,
-   HTTP는 §9 결정 사항.
-8. **UI 구조**: §9 결정 전까지 착수 보류 권고.
+7. **API 구조**: 변경이 아니라 신규(§2). Devtrail 쪽은 MCP tool 추가로 해결된다.
+   **[개정 2026-09-03]** HTTP API는 Devtrail이 아니라 `ai-team-control-room`이
+   갖는다 — Devtrail에는 추가하지 않는다.
+8. **UI 구조**: ~~§9 결정 전까지 착수 보류 권고.~~ → **[개정 2026-09-03]**
+   `ai-team-control-room`에서 개발한다(결정됨). Devtrail의 `dashboard.py` TUI는
+   명령 런처로 그대로 둔다 — 이름 충돌만 정리하면 된다(§6-4a).
 9. **Agent integration 인터페이스**: 조회 tool 3종 추가 시 에이전트 왕복이
    3~4회 → 1회. 현재는 `search_vault` + `read_note` 조합으로 매번 재구성해야
    한다.
@@ -251,25 +381,49 @@ final.md가 던진 질문:
 
 ### NOW — 루프를 켠다 (코드 변경 거의 없음, 1~2세션)
 
-| # | 항목 | 완료 판정 |
+> **[개정 2026-09-03]** N1~N4는 데스크톱에서 **이미 전부 끝나 있다**(§4-4).
+> 원본 계획을 아래에 남기되, 실제로 남은 것은 개정 표다.
+
+| # | 원본 항목 | 데스크톱 상태 |
 |---|------|-----------|
-| N1 | `.venv` 재설치(`pip install -e ".[dev]"`) → PATH 등록 → `claude mcp add devtrail-vault -- devtrail mcp-serve` | `claude mcp list`에 devtrail-vault 표시 · `python -m pytest` 통과 |
-| N2 | `devtrail init-vault` 재실행 → `SessionHandoffs/` · `MemoryPatches/` · `06_Lessons.md` 생성 | 폴더·파일 존재 |
-| N3 | `.claude/vault.json` + `30_Projects/<P>/Context.md` 작성 | `devtrail project-briefing .`이 Context·Decisions를 **실제로 출력** |
-| N4 | `cp .claude/settings.example.json .claude/settings.json` | Edit 시도 시 plan-check 훅 발동 |
-| N5 | `problem` candidate kind 추가(+ `component`·`cause_class` frontmatter) | 신규 테스트 |
-| N6 | Plan/Process/Decision frontmatter에 `host`·`agent` 필드 | 신규 테스트 |
+| N1 | `.venv` 재설치 → PATH → `claude mcp add` | ✅ 완료 |
+| N2 | `devtrail init-vault` → `SessionHandoffs/`·`06_Lessons.md` | ✅ 완료 |
+| N3 | `.claude/vault.json` + `Context.md` | ✅ 완료 |
+| N4 | `cp settings.example.json settings.json` | ✅ 완료 |
+| N5 | `problem` candidate kind 추가 | 미착수 |
+| N6 | Plan/Process frontmatter에 `host`·`agent` | 미착수 |
 
-**N1~N4가 끝나기 전에 N5 이후를 하지 않는다.** 아무도 안 쓰는 시스템에 스키마를
-늘리는 것이 지금 상황을 만든 패턴이다.
+#### [개정 2026-09-03] 실제 NOW
 
-**N2는 사람 결정이 필요하다.** `init-vault`는 `VAULT_DIRS`에 따라
-`30_Projects/Devtrail/`을 새로 만드는데, 기존 `30_Projects/WorkAgent/`가 남아
-둘이 공존하게 된다. 폴더 이름 변경·이동은 에이전트가 임의로 하지 않는다(§9-③).
+| # | 항목 | 완료 판정 | 상태 |
+|---|------|-----------|------|
+| M1 | 이 문서의 환경 오측 정정 | 머신별 실측이 분리돼 있다 | ✅ 이 커밋 |
+| M2 | 후보 TTL 임시 해제(14 → 3650) | `test_default_ttl_keeps_old_candidate_alive` 통과 | ✅ |
+| M3 | `dev` → `main` 일반 머지 | Mac이 `main`을 추적하므로 M1·M2 반영의 선행 조건 | ✅ |
+| M4 | `devtrail activity install` | `activity status`에 pwsh·bash 설치됨 | 대기 |
+| M5 | 부트스트랩 커맨드(`devtrail doctor`) | 새 머신에서 1 커맨드로 `settings.json`·`vault.json`·MCP 등록 점검 | 대기 (§9-③) |
+
+**M3이 왜 선행 조건인가**: Mac nightly는 `scripts/mac/update-devtrail.sh`의
+`git pull --ff-only`로 코드를 갱신하는데, 이는 **현재 upstream만 따라가고 브랜치를
+바꾸지 않는다.** `main` HEAD는 `f1d403e`(8/25)이고 `dev`는 14커밋 앞이었다.
+launchd plist는 스크립트 **경로**를 가리키고 `pyproject.toml`이 안 바뀌면 editable
+install이 소스를 자동 반영하므로, **스케줄 재등록·pip 재설치는 불필요하다.**
 
 N5의 `component` / `cause_class` frontmatter가 있어야 final.md §10의 집계형
 질문("최근 이 프로젝트에서 가장 많이 발생한 문제는?")이 나중에 열린다.
-자유 텍스트만 남기면 그 질문은 영원히 LLM 전수 스캔이 된다.
+자유 텍스트만 남기면 그 질문은 영원히 LLM 전수 스캔이 된다. 다만 **M4까지
+끝나고 기록이 실제로 쌓이기 시작한 뒤에 손댄다** — 아무도 안 쓰는 시스템에
+스키마를 늘리는 것이 지금 상황을 만든 패턴이다.
+
+#### Mac 배포 시 확인해야 할 함정 (검증 불가 — 데스크톱에서 볼 수 없음)
+
+1. **dirty면 조용히 스킵**: `update-devtrail.sh`는 `git status --porcelain`에
+   출력이 있으면 `"Local changes detected — skip auto update"` 후 **exit 0**.
+   Telegram 알림이 없어서 몇 주째 옛 코드로 도는 것을 모를 수 있다.
+2. **`--ff-only`**: Mac에 로컬 커밋이 하나라도 있으면 pull 실패 → 알림 → nightly
+   중단(exit 1). 이건 알림이 온다.
+3. Mac에서 확인할 것: `git rev-parse --abbrev-ref HEAD` · `git status --porcelain`
+   · `tail -5 logs/update-devtrail.log` (`logs/`는 gitignore라 동기화되지 않는다)
 
 ### NEXT — 실사용 2주 뒤 판단 (측정 없이 착수 금지)
 
@@ -286,6 +440,10 @@ N5의 `component` / `cause_class` frontmatter가 있어야 final.md §10의 집�
 
 **측정 기준: 2주 뒤 Vault에 handoff가 몇 건 쌓였는가.** 0건이면 NEXT를 하지
 말고 §5의 세 가설 중 무엇이 진짜인지부터 판정한다.
+
+> **[개정 2026-09-03]** 지표를 셋으로 늘린다 — **세션 기록 / 후보 생성 /
+> promote 건수**. handoff만 보면 §9-1-④(승격 부담)와 세션 기록 습관 문제가
+> 구별되지 않는다. 후보 생성 > 0 이고 promote = 0 이면 병목은 승격이다.
 
 ### LATER — AI 개발팀 구축 이후
 
@@ -320,11 +478,24 @@ N5의 `component` / `cause_class` frontmatter가 있어야 final.md §10의 집�
 **(a)를 권한다.** `ai-team-pm-design.md` §7의 OSS 정체성("devtrail에
 orchestration 코드 금지")과도 일치한다.
 
+> **[개정 2026-09-03 · 결정됨] (a) 채택.** Dashboard는 별도 repo
+> `ai-team-control-room`에서 개발한다. 확인해보니 이미 Next.js + drizzle/db +
+> worker 구조가 있다. 따라서 final.md가 요구한 **DB·HTTP API·Web UI는 전부
+> control-room 소관**이고, Devtrail은 "끝난 세션의 기록"만 소유한다.
+>
+> 남은 질문 하나 — **control-room이 Devtrail 기록을 어떻게 읽는가**:
+> ① Vault 마크다운 직접 읽기 / ② `devtrail` CLI의 JSON 출력 / ③ MCP.
+> control-room 개발을 시작할 때 결정한다. ①은 결합이 가장 느슨하지만 파싱을
+> 중복 구현하게 되고, ③은 `pm-repo`와 같은 dogfooding 경로를 공유한다.
+
 ---
 
 ## 9. 사람이 결정해야 할 것
 
-### ① 8/25 결정과의 충돌
+> **[개정 2026-09-03]** ①·②는 해소됐고 ③은 소멸했다. 실제로 남은 결정은
+> 아래 개정 블록의 ③·④·⑤다.
+
+### ① 8/25 결정과의 충돌 — **해소됨**
 
 `docs/ai-team-pm-design.md` §6은 2026-08-25에 이렇게 확정했다:
 
@@ -340,26 +511,70 @@ final.md는 이 배제 목록의 절반을 다시 요구한다. 셋 중 무엇�
 - **(c) 시간축 차이** — final.md는 LATER 비전이고 8/25 결정이 NOW로 유효하다
   → §7 계획이 그대로 맞다.
 
-### ② Dashboard 소유권
+> **[개정 2026-09-03] 셋 중 어느 것도 아니었다.** 정답은 **"다른 repo 소관"**이다.
+> Dashboard·DB·API는 `ai-team-control-room`에서 개발한다(§8 개정). 8/25 배제
+> 목록은 *Devtrail에* 넣지 않겠다는 결정이었고, final.md는 *시스템 전체에*
+> 필요하다고 말한 것이다. 두 문서는 충돌하지 않았고 주체가 달랐다.
+
+### ② Dashboard 소유권 — **해소됨**
 
 §8의 (a) 별도 앱 / (b) Devtrail 확장 중 어느 쪽인가.
 
-### ③ `30_Projects/WorkAgent` → `Devtrail`
+> **[개정 2026-09-03] (a) 확정** — `ai-team-control-room`.
 
-폴더 이름을 옮길지, 둘 다 둘지. 파일 이동·삭제는 사용자 승인 없이 하지 않는다.
+### ③ ~~`30_Projects/WorkAgent` → `Devtrail`~~ — **소멸**
+
+> **[개정 2026-09-03]** 실제 Vault에는 `30_Projects/Devtrail/`만 있다
+> (Context.md·Design/·Plans/ 포함). `WorkAgent/`는 노트북의 2개월 stale 클론에만
+> 있던 흔적이다. 결정할 것이 없다.
+
+---
+
+## 9-1. [개정 2026-09-03] 실제로 남은 결정
+
+### ③ `_Archive`의 decision 15건
+
+`30_Projects/Devtrail/Decisions/`가 0건이고, Plan 훅 구현 방식·candidate 파일명
+규칙·wikilink 강등 같은 실제 설계 결정 15건이 `_Archive/Decisions/`에 있다.
+promote / 선별 / 방치 중 무엇인가. **파일 이동·삭제는 사용자 승인 없이 하지
+않는다.**
+
+### ④ 승격 부담을 구조로 줄일 것인가
+
+사용자 진단이 "사람이 병목"이므로 TTL 해제만으로는 부족하다. 지렛대는 둘:
+
+- **자동 승격 범위 확대** — 전례가 있다. `nightly_distill_agent`의
+  `_auto_apply_low_risk_patches()`가 `requires_user_review=False` 패치를 자동
+  반영한다. 같은 논리를 `decision`에 확장할 수 있다(사람이 이미 내린 결정을
+  기록만 옮기는 것이라 새 판단이 아니다). `knowledge`만 검토 게이트에 남긴다.
+  **단 이것은 "AI는 공식 영역에 직접 쓰지 않는다"는 Context.md 원칙을 부분적으로
+  깨는 것이라 사용자 결정이 필요하다.**
+- **검토를 모바일 1탭으로** — Telegram 봇이 이미 있다. 후보 1건씩 승인/기각
+  버튼. 원칙을 안 깨지만 봇 작업량이 있다.
+
+### ⑤ 노트북을 계속 쓸 것인가
+
+8월 작업이 노트북에서 났고 앞으로도 그렇다면, 데스크톱에서 뭘 켜도 기록은 또
+0건이 된다. (a) 노트북에도 설치 / (b) devtrail 작업은 데스크톱 전용 /
+(c) `devtrail doctor` 부트스트랩 커맨드로 구조적 해결(§7 M5).
+
+(c)를 권한다 — 작은 코드이고, rpi4·macmini에서도 같은 사고가 예정돼 있다.
 
 ---
 
 ## 10. 이 문서의 한계
 
-- **머신 1대 기준이다.** macmini·rpi4의 설치·Vault 상태는 확인하지 않았다.
-  다만 Vault가 공용 git repo(`WhiteJbb/personal-vault`)이고 마지막 sync가
-  2026-07-03이라, 다른 노드에서 활발히 기록 중일 가능성은 낮다고 본다.
-- **테스트를 실행하지 못했다.** `.venv`에 pytest·mcp가 없고 시스템 python은
-  3.10(프로젝트 요구 3.11+)이라 43개 테스트 파일의 통과 여부는 **미확인**이다.
-  코드 건강 상태에 대한 판단은 이 문서에 없다.
-- **§5의 원인 가설 3개는 검증되지 않았다.** 왜 루프를 안 썼는지는 사용자만
-  안다. 처방이 가설마다 다르므로, NOW N1~N4를 켜본 뒤 실제 행동으로 판별하는
-  것을 전제로 한다.
+- ~~**머신 1대 기준이다.**~~ → **[개정]** 2대(노트북·데스크톱)가 됐다. 그리고
+  그 한 대 차이가 §4 전체를 뒤집었다. **`macmini`·`rpi4`는 여전히 미확인**이고,
+  특히 Mac은 nightly·weekly를 실제로 돌리는 노드인데 **브랜치·dirty 상태를
+  데스크톱에서 볼 수 없다**(§7의 함정 3개). 이 문서로 Mac 상태를 추정하면 안 된다.
+- ~~**테스트를 실행하지 못했다.**~~ → **[개정]** 데스크톱에서 `dev` 기준
+  **512 passed in 7.26s**(개정 후 513). 코드 건강 상태는 양호하다.
+- **§5의 원인 가설**은 개정에서 2개가 판정되고 1개는 전제 자체가 무효가 됐다
+  (§5 개정 표). 남은 미확인은 "실사용을 재개하면 실제로 기록이 쌓이는가"이고,
+  이건 2주 뒤 세 숫자로 판별한다 — **세션 기록 건수 / 후보 생성 건수 /
+  promote 건수**. promote가 0이면 §9-1-④의 자동화가 진짜 병목이라는 증거고,
+  후보 생성이 0이면 세션 기록 습관이 문제다. 지금은 둘이 구별되지 않는다.
+- **이 개정판도 데스크톱 1대 기준이다.** 같은 함정이 재발할 수 있다.
 - 이 문서의 설계 판단도 `pm-repo-design.md` §0의 교훈을 따른다 —
   **"이것만 고치면 됨"은 실제로 돌려보기 전까지 가설이다.**
