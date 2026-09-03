@@ -86,14 +86,22 @@ def get_project_briefing(project_or_repo: str) -> dict:
 
 @mcp.tool()
 def search_vault(query: str, limit: int = 10) -> list[dict]:
-    """read_scope 안의 노트를 검색하고 status=stable/candidate를 함께 반환한다."""
+    """read_scope 안의 노트를 검색한다.
+
+    status=stable(승격된 정본) / candidate(검토 대기 후보) / raw(세션·산출물 원문)이
+    함께 반환되며 이 순서로 정렬된다. raw는 근거 조회용이지 확정 지식이 아니다.
+    """
     hits = vault_tools.search_vault(query, limit=limit, settings=get_settings())
     return [dataclasses.asdict(h) for h in hits]
 
 
 @mcp.tool()
 def read_note(rel_path: str) -> str:
-    """scope 안의 노트 전문을 읽는다. scope 밖 경로는 오류를 반환한다."""
+    """scope 안의 노트 전문을 읽는다. scope 밖 경로는 오류를 반환한다.
+
+    읽기 허용: 20_Knowledge/, 30_Projects/, 40_AgentMemory/, 60_Candidates/,
+    10_Worklog/, 50_Outputs/, 70_Tasks/.
+    """
     return vault_tools.read_note(rel_path, settings=get_settings())
 
 

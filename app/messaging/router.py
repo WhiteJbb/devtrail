@@ -26,6 +26,7 @@ _HELP = (
     "URL 붙여넣기  — 저장하면서 요약까지 해드려요\n"
     "음성·사진 전송  — 자동으로 캡처해요\n"
     "/answer <설명>  — 오늘의 복습 질문에 답하기 (인자 없이 치면 질문 확인)\n"
+    "/gap <답변>  — 기록에서 빠진 맥락 질문에 답하기 (인자 없이 치면 질문 확인)\n"
     "/todo  — 오늘 할 일 추천\n"
     "/search <검색어>  — Vault 전체 검색\n"
     "/briefing  — 지금 포커스·Open Loops 요약\n"
@@ -296,6 +297,37 @@ class CommandRouter:
                 else "\n\n미답 질문을 모두 정리했어요 🎉"
             )
             return f"✍️ 답변을 기록해뒀어요\n└ {question.source_rel_path}{tail}"
+
+        # ── Context Gap Recovery — 맥락 회수 질문 답변 ────────────────
+        # `/context`는 이미 ContextPack 조회가 쓰고 있어 `/gap`을 쓴다.
+        if cmd == "gap":
+            from pathlib import Path
+            from app.config import get_settings
+            from app.services.context_question import mark_context_answered, pick_context_question
+
+            settings = get_settings()
+            if not settings.obsidian_vault_root:
+                return "Vault 경로가 아직 설정되지 않았어요. 서버 .env의 OBSIDIAN_VAULT_PATH를 확인해주세요."
+            vault = Path(settings.obsidian_vault_root)
+            question = pick_context_question(vault)
+            if question is None:
+                return "지금 답할 맥락 질문이 없어요. 밤에 오늘 기록을 보고 질문을 만들어둘게요."
+            head = f"[{question.project}] " if question.project else ""
+            label = f"[{question.qtype}] " if question.qtype else ""
+            if not arg:
+                return (
+                    f"현재 맥락 질문:\n{head}{label}{question.question}\n\n"
+                    "/gap <답변> 으로 보내주시면 세션 노트 Context Recovery에 기록해둘게요."
+                )
+            if not mark_context_answered(vault, question.source_rel_path, question.question, arg):
+                return "질문이 기록된 노트를 찾지 못했어요. /gap 으로 현재 질문을 다시 확인해주세요."
+            next_question = pick_context_question(vault)
+            tail = (
+                f"\n\n다음 질문:\n{next_question.question}"
+                if next_question
+                else "\n\n미답 맥락 질문을 모두 정리했어요 🎉"
+            )
+            return f"🧩 맥락을 기록해뒀어요\n└ {question.source_rel_path}{tail}"
 
         # ── Session ───────────────────────────────────────────────────
         if cmd == "session":

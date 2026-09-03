@@ -111,17 +111,102 @@ def test_search_vault_stable_sorted_before_candidate(tmp_path):
 def test_search_vault_scope_note_not_crowded_out_by_out_of_scope_notes(tmp_path):
     """스코프 밖 노트가 많아도 스코프 안 결과가 top-N에서 밀려나면 안 된다(P3.3).
 
-    사후 필터링(전역 top-N을 먼저 뽑고 걸러내기)이면 00_Inbox/10_Worklog처럼
-    노트가 많은 폴더가 default limit(10)을 다 채워, 실제로 스코프 안에 있는
-    유일한 결과가 아예 반환되지 않을 수 있다.
+    사후 필터링(전역 top-N을 먼저 뽑고 걸러내기)이면 00_Inbox처럼 노트가 많은
+    폴더가 default limit(10)을 다 채워, 실제로 스코프 안에 있는 유일한 결과가
+    아예 반환되지 않을 수 있다.
     """
     for i in range(45):
-        _write(tmp_path, f"10_Worklog/Sessions/session-{i:02d}.md", body="프로젝트희귀검색어 반복 등장")
+        _write(tmp_path, f"00_Inbox/Memos/memo-{i:02d}.md", body="프로젝트희귀검색어 반복 등장")
     _write(tmp_path, "20_Knowledge/rag.md", body="프로젝트희귀검색어 관련 지식")
 
     settings = _settings(tmp_path)
     hits = vault_tools.search_vault("프로젝트희귀검색어", settings=settings)  # 기본 limit=10
     assert any(h.path == "20_Knowledge/rag.md" for h in hits)
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    ["10_Worklog/Sessions/2026-08-20.md", "50_Outputs/Digest/2026-W34.md", "70_Tasks/Active.md"],
+)
+def test_read_note_allows_raw_scope(tmp_path, rel_path):
+    """PM이 과거 세션·산출물·태스크를 근거로 조회할 수 있어야 한다."""
+    _write(tmp_path, rel_path, body="원문 기록 본문")
+    content = vault_tools.read_note(rel_path, settings=_settings(tmp_path))
+    assert "원문 기록 본문" in content
+
+
+def test_search_vault_labels_raw_status(tmp_path):
+    _write(tmp_path, "10_Worklog/Sessions/s1.md", body="검색어 포함")
+    hits = vault_tools.search_vault("검색어", settings=_settings(tmp_path))
+    assert hits and hits[0].status == "raw"
+
+
+def test_search_vault_raw_sorted_after_stable_and_candidate(tmp_path):
+    _write(tmp_path, "10_Worklog/Sessions/s1.md", body="공통검색어 원문")
+    _write(tmp_path, "60_Candidates/Knowledge/cand.md", body="공통검색어 후보")
+    _write(tmp_path, "20_Knowledge/stable.md", body="공통검색어 안정")
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert [h.status for h in hits] == ["stable", "candidate", "raw"]
+
+
+def test_search_vault_stable_not_crowded_out_by_raw_notes(tmp_path):
+    """raw는 노트 수가 압도적이라, limit만큼만 뽑으면 stable이 재정렬 전에 잘린다."""
+    for i in range(45):
+        _write(tmp_path, f"10_Worklog/Sessions/session-{i:02d}.md", body="공통검색어 " * 20)
+    _write(tmp_path, "20_Knowledge/rag.md", body="공통검색어 관련 지식")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert hits[0].path == "20_Knowledge/rag.md"
+
+
+def test_search_vault_reserves_slots_for_raw(tmp_path):
+    """정본·후보가 limit을 다 채워도 세션 원문이 한 건도 안 나오면
+    "지난주에 뭐 했지" 질문이 정확히 실패한다."""
+    for i in range(5):
+        _write(tmp_path, f"20_Knowledge/k{i}.md", body="공통검색어 지식")
+        _write(tmp_path, f"60_Candidates/Knowledge/c{i}.md", body="공통검색어 후보")
+    for i in range(3):
+        _write(tmp_path, f"10_Worklog/Sessions/s{i}.md", body="공통검색어 세션")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+
+    assert len(hits) == 10
+    assert [h.status for h in hits[-3:]] == ["raw"] * 3  # 순서는 stable→candidate→raw 유지
+    assert sum(1 for h in hits if h.status == "stable") == 5
+
+
+def test_search_vault_raw_quota_does_not_shrink_small_result_sets(tmp_path):
+    _write(tmp_path, "20_Knowledge/k.md", body="공통검색어 지식")
+    _write(tmp_path, "10_Worklog/Sessions/s.md", body="공통검색어 세션")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert [h.status for h in hits] == ["stable", "raw"]
+
+
+def test_search_vault_raw_quota_never_dominates_small_limit(tmp_path):
+    """limit이 작으면 raw 몫도 같이 줄어든다 — 정본이 raw에 밀리면 안 된다."""
+    for i in range(5):
+        _write(tmp_path, f"20_Knowledge/k{i}.md", body="공통검색어 지식")
+    for i in range(5):
+        _write(tmp_path, f"10_Worklog/Sessions/s{i}.md", body="공통검색어 세션")
+
+    hits = vault_tools.search_vault("공통검색어", limit=2, settings=_settings(tmp_path))
+    assert [h.status for h in hits] == ["stable", "stable"]
+
+
+def test_search_vault_without_raw_hits_fills_limit(tmp_path):
+    for i in range(12):
+        _write(tmp_path, f"20_Knowledge/k{i}.md", body="공통검색어 지식")
+
+    hits = vault_tools.search_vault("공통검색어", settings=_settings(tmp_path))
+    assert len(hits) == 10
+    assert all(h.status == "stable" for h in hits)
+
+
+def test_read_note_still_rejects_inbox(tmp_path):
+    _write(tmp_path, "00_Inbox/Memos/secret.md")
+    with pytest.raises(vault_tools.VaultScopeError):
+        vault_tools.read_note("00_Inbox/Memos/secret.md", settings=_settings(tmp_path))
 
 
 # ── record_note ──────────────────────────────────────────────────────────────
@@ -249,6 +334,40 @@ def test_write_session_process_rerecord_revives_needs_distill(tmp_path):
     post = frontmatter.loads(note_path.read_text(encoding="utf-8"))
     assert post.metadata["needs_distill"] is True
     assert post.metadata["distill_kinds"] == ["knowledge", "blog_idea"]
+
+
+def test_write_session_process_rerecord_preserves_context_sections(tmp_path):
+    """재기록이 본문을 교체해도 Context Questions/Recovery 섹션은 보존돼야 한다.
+
+    Recovery에는 사람이 Telegram으로 직접 답한 맥락이 들어 있다 — 재기록으로
+    지워지면 복구 불가능한 데이터 손실이다.
+    """
+    settings = _settings(tmp_path)
+    first = vault_tools.write_session_process(
+        project="Devtrail", what_changed="1차", files_touched="x", project_decisions={},
+        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
+        next_session="", learning_recovery={}, session_id="sess-ctx", settings=settings,
+    )
+    # nightly 질문 생성 + 사람 답변이 쌓인 상태를 재현
+    note_path = tmp_path / first.worklog_rel_path
+    post = frontmatter.loads(note_path.read_text(encoding="utf-8"))
+    post.content += (
+        "\n\n## Context Questions\n\n- [x] [WHY] pi-metrics를 재시작한 이유는?\n"
+        "\n## Context Recovery\n\n- **[WHY] pi-metrics를 재시작한 이유는?** (2026-08-25) — 포트 충돌 해소\n"
+    )
+    note_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    vault_tools.write_session_process(
+        project="Devtrail", what_changed="2차 — 커밋 추가", files_touched="x",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="sess-ctx", settings=settings,
+    )
+    content = frontmatter.loads(note_path.read_text(encoding="utf-8")).content
+    assert "2차 — 커밋 추가" in content
+    assert "## Context Questions" in content
+    assert "## Context Recovery" in content
+    assert "포트 충돌 해소" in content
 
 
 def test_write_session_process_memory_patch_updated_for_same_session(tmp_path):

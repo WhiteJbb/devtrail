@@ -17,7 +17,14 @@ from app.services.candidate_writer import SESSION_HANDOFF_DIR
 DEFAULT_KEEP_PER_PROJECT = 3
 DEFAULT_WORKLOG_RETENTION_DAYS = 30
 DEFAULT_HANDOFF_RETENTION_DAYS = 30
-DEFAULT_CANDIDATE_TTL_DAYS = 14
+# 2026-09-03: 후보 TTL을 사실상 해제한다(임시).
+# 7/9 이후 세션 기록이 0건이라 distill 입력이 없고, 그 사이 14일 TTL이 7월의
+# knowledge/blog_idea/career_bullet 후보를 전부 삭제했다(8/23~8/27 digest에 로그).
+# 실사용을 재개하는 동안은 후보가 사라지지 않아야 판단할 데이터가 모인다.
+# 되돌릴 조건: 후보 생성·promote 건수가 실제로 쌓여 검토 흐름이 돌기 시작하면
+# 14로 복귀한다(무한 누적은 2026-07 대청소 44개를 만든 상태 그 자체다).
+# 메커니즘은 그대로다 — 처분 정책 테스트는 candidate_ttl_days를 명시로 넘긴다.
+DEFAULT_CANDIDATE_TTL_DAYS = 3650
 
 CANDIDATE_ARCHIVE_DIR = "60_Candidates/_Archive"
 

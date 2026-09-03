@@ -163,6 +163,45 @@ def test_weekly_digest_does_not_include_review_question_block(tmp_path):
     assert "오늘의 학습 회수" not in result.digest_text
 
 
+def test_daily_digest_includes_context_question_block(tmp_path):
+    """Phase 2 — 맥락 회수 질문도 daily digest(=Telegram 전송본)에 붙는다."""
+    session_path = tmp_path / "10_Worklog" / "Sessions" / "2026-06-23-devtrail-session.md"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text(
+        "---\nproject: Devtrail\ncreated_at: 2026-06-23T09:00:00\n---\n\n"
+        "## Context Questions\n\n- [ ] [WHY] 훅을 왜 sh 디스패처로 바꿨어?\n",
+        encoding="utf-8",
+    )
+
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+    result = agent.run()
+
+    assert "맥락 회수 질문" in result.digest_text
+    assert "훅을 왜 sh 디스패처로 바꿨어?" in result.digest_text
+
+
+def test_run_survives_context_question_failure(tmp_path):
+    """질문 생성이 터져도 nightly 본업(정제·digest)은 정상 완료된다."""
+    _seed_session(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("context question 생성 실패")
+
+    import app.services.context_question as cq
+    original = cq.generate_context_questions
+    cq.generate_context_questions = _boom
+    try:
+        llm = _MultiCallLLM([_distill_response(), _career_response()])
+        agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+        result = agent.run()
+    finally:
+        cq.generate_context_questions = original
+
+    assert len(result.distill.written) == 2
+    assert result.digest_path is not None
+
+
 def test_run_no_llm_call_when_no_notes(tmp_path):
     """오늘 노트가 없으면 LLM을 호출하지 않는다."""
     llm = _MultiCallLLM([_distill_response(), _career_response()])
@@ -189,11 +228,17 @@ def test_run_no_telegram_when_not_configured(tmp_path):
 
 
 def test_run_expires_old_candidates(tmp_path):
+    """nightly가 TTL 정리를 호출하고 digest에 보고하는지 — 배선 검증.
+
+    created_at이 2010년인 이유: nightly는 cleanup_candidates에 ttl을 넘기지 않고
+    기본값을 쓴다. 그 기본값은 2026-09-03에 사실상 해제됐으므로(retention.py 주석)
+    어떤 TTL에서도 만료되는 날짜여야 배선 자체를 계속 검증할 수 있다.
+    """
     import frontmatter as fm
     old = tmp_path / "60_Candidates" / "Knowledge" / "stale.md"
     old.parent.mkdir(parents=True, exist_ok=True)
     meta = {"type": "candidate", "candidate_type": "knowledge", "title": "stale",
-            "status": "candidate", "created_at": "2026-05-01"}
+            "status": "candidate", "created_at": "2010-01-01"}
     old.write_text(fm.dumps(fm.Post("본문", **meta)), encoding="utf-8")
 
     _seed_session(tmp_path)
@@ -248,3 +293,34 @@ def test_run_leaves_review_required_patches_alone(tmp_path):
 
     assert result.auto_applied_patches == []
     assert fm.loads(patch.read_text(encoding="utf-8")).metadata["status"] == "candidate"
+
+
+def test_digest_includes_thread_block_only_when_updated_today(tmp_path):
+    from app.services.candidate_writer import CandidateSpec, CandidateWriter
+
+    thread_spec = CandidateSpec(
+        kind="blog_idea",
+        title="홈랩 구축기",
+        body="## 핵심 메시지\n\n서버 이야기\n",
+        thread="homelab-build-2026",
+        source_refs=["10_Worklog/Sessions/day1.md"],
+    )
+    CandidateWriter(tmp_path, now=datetime(2026, 6, 22)).write(thread_spec)
+    _seed_session(tmp_path)
+
+    def _run():
+        llm = _MultiCallLLM([_distill_response(), _career_response()])
+        return NightlyDistillAgent(
+            settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23)
+        ).run()
+
+    assert "글감 thread 현황" not in _run().digest_text
+
+    CandidateWriter(tmp_path, now=datetime(2026, 6, 23)).write(
+        CandidateSpec(**{**thread_spec.__dict__, "summary": "2일차", "source_refs": ["10_Worklog/Sessions/day2.md"]})
+    )
+    text = _run().digest_text
+
+    assert "글감 thread 현황" in text
+    assert "홈랩 구축기" in text
+    assert "누적 소스 2개" in text

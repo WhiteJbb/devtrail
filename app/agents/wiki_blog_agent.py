@@ -18,14 +18,17 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.llm.factory import get_task_llm_provider
 from app.memory.context_pack_builder import ContextPackBuilder
-from app.models.context_pack import ContextPack
 from app.prompts import render_prompt
 from app.services.json_utils import complete_json
 from app.services.wiki_service import WikiService
 
 
 _DRAFTS_REL = "50_Outputs/Blog/Drafts"
+_IDEAS_REL = "60_Candidates/BlogIdeas"
+_SESSIONS_REL = "10_Worklog/Sessions/"
 _MAX_SLUG_CHARS = 60
+_SOURCE_NOTE_CHARS = 4000  # source_ref 노트당 본문 상한
+_DATE_IN_NAME_RE = re.compile(r"(\d{4})-?(\d{2})-?(\d{2})")
 
 
 @dataclass(frozen=True)
@@ -72,10 +75,134 @@ class WikiBlogAgent:
     def write_blog(self, topic: str, project: str = "") -> WikiBlogDraft:
         """topic으로 Context Pack을 만들고 블로그 초안을 생성한다."""
         pack = self.builder.build(topic)
-        return self._generate_and_save(topic, project, pack)
-
-    def _generate_and_save(self, topic: str, project: str, pack: ContextPack) -> WikiBlogDraft:
         prompt = render_prompt("write_wiki_blog", CONTEXT_PACK=pack.render())
+        return self._generate_and_save(topic, project, prompt, pack.source_refs)
+
+    # ── BlogIdea 후보 기반 초안 ───────────────────────────────────────
+
+    def resolve_idea(self, selector: str) -> str:
+        """`--idea` 값을 BlogIdea 후보 rel_path로 해석한다.
+
+        vault 상대 경로면 그대로, 아니면 60_Candidates/BlogIdeas/ 파일명 부분 일치로 찾는다.
+        여러 개가 걸리면 임의 선택 대신 목록을 담은 ValueError를 던진다.
+        """
+        sel = selector.strip().replace("\\", "/")
+        if not sel:
+            raise ValueError("idea 값이 비어 있습니다.")
+        if (self.vault_dir / sel).is_file():
+            return sel
+
+        ideas_dir = self.vault_dir / _IDEAS_REL
+        needle = sel.lower()
+        matches = sorted(p.name for p in ideas_dir.glob("*.md") if needle in p.name.lower()) if ideas_dir.exists() else []
+        if not matches:
+            raise ValueError(f"BlogIdea 후보를 찾지 못했습니다: {selector} (list-candidates로 확인하세요)")
+        if len(matches) > 1:
+            listed = "\n".join(f"  - {_IDEAS_REL}/{name}" for name in matches)
+            raise ValueError(f"'{selector}'에 해당하는 후보가 {len(matches)}개입니다. 하나를 지정하세요:\n{listed}")
+        return f"{_IDEAS_REL}/{matches[0]}"
+
+    def write_blog_from_idea(self, idea_rel_path: str, project: str = "") -> tuple[WikiBlogDraft, list[str]]:
+        """BlogIdea 후보를 정본으로 삼아 초안을 생성한다. (초안, 경고 목록)을 반환한다."""
+        path = self.vault_dir / idea_rel_path
+        if not path.is_file():
+            raise ValueError(f"BlogIdea 후보를 찾지 못했습니다: {idea_rel_path}")
+
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        meta = dict(post.metadata)
+        title = str(meta.get("title") or path.stem).strip()
+        refs = [str(r).replace("\\", "/") for r in (meta.get("source_refs") or [])]
+
+        sections = self._h2_sections(post.content)
+        thesis = self._pick_section(sections, "핵심 메시지", "thesis") or str(meta.get("summary") or "").strip()
+        audience = self._pick_section(sections, "독자", "audience")
+        outline = self._pick_section(sections, "목차", "outline")
+        if not thesis:
+            # 정해진 헤딩이 없는 후보(사람이 손으로 쓴 것 등)는 본문 전체를 메시지로 넘긴다
+            thesis = post.content.strip()
+
+        sources, warnings = self._load_source_notes(refs)
+        prompt = render_prompt(
+            "write_wiki_blog_from_idea",
+            IDEA_TITLE=title,
+            THESIS=thesis,
+            AUDIENCE=audience,
+            OUTLINE=outline,
+            SOURCES=sources or "(원본 노트를 찾지 못했습니다)",
+        )
+        source_refs = list(dict.fromkeys(refs + [idea_rel_path]))
+        draft = self._generate_and_save(
+            title, project or str(meta.get("project") or ""), prompt, source_refs
+        )
+        return draft, warnings
+
+    def _load_source_notes(self, refs: list[str]) -> tuple[str, list[str]]:
+        """source_refs 노트를 검색 없이 직접 읽어 Sources 블록과 경고 목록을 만든다.
+
+        세션 노트는 날짜 오름차순으로 앞에 배치해 시간 흐름을 보존하고, 나머지는 refs 순서대로 뒤에 둔다.
+        """
+        warnings: list[str] = []
+        sessions: list[tuple[str, str]] = []
+        others: list[str] = []
+
+        for ref in dict.fromkeys(refs):
+            note_path = self.vault_dir / ref
+            if not note_path.is_file():
+                warnings.append(f"source_ref를 찾지 못해 건너뜁니다: {ref}")
+                continue
+            note = frontmatter.loads(note_path.read_text(encoding="utf-8"))
+            body = note.content.strip()
+            if len(body) > _SOURCE_NOTE_CHARS:
+                body = body[:_SOURCE_NOTE_CHARS].rstrip() + "\n...(이하 생략)"
+            date = self._note_date(dict(note.metadata), note_path)
+            header = f"### {ref}" + (f" — {date}" if date else "")
+            block = f"{header}\n\n{body}"
+            if ref.startswith(_SESSIONS_REL):
+                sessions.append((date, block))
+            else:
+                others.append(block)
+
+        sessions.sort(key=lambda item: item[0])
+        return "\n\n".join([block for _, block in sessions] + others), warnings
+
+    @staticmethod
+    def _note_date(metadata: dict[str, Any], path: Path) -> str:
+        for key in ("created_at", "date"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value[:10]
+        m = _DATE_IN_NAME_RE.search(path.stem)
+        return "-".join(m.groups()) if m else ""
+
+    @staticmethod
+    def _h2_sections(body: str) -> dict[str, str]:
+        """본문을 H2 헤딩 단위로 쪼개 {헤딩: 내용} 으로 반환한다."""
+        sections: dict[str, str] = {}
+        heading = ""
+        lines: list[str] = []
+        for line in body.splitlines():
+            if line.startswith("## "):
+                if heading:
+                    sections[heading] = "\n".join(lines).strip()
+                heading = line[3:].strip()
+                lines = []
+            elif heading:
+                lines.append(line)
+        if heading:
+            sections[heading] = "\n".join(lines).strip()
+        return sections
+
+    @staticmethod
+    def _pick_section(sections: dict[str, str], *keywords: str) -> str:
+        for heading, content in sections.items():
+            lowered = heading.lower()
+            if any(kw.lower() in lowered for kw in keywords):
+                return content
+        return ""
+
+    def _generate_and_save(
+        self, topic: str, project: str, prompt: str, source_refs: list[str]
+    ) -> WikiBlogDraft:
         data = complete_json(self._llm(), prompt)
 
         title = str(data.get("title") or topic).strip()
@@ -98,7 +225,7 @@ class WikiBlogAgent:
             "project": project,
             "status": "draft",
             "tags": tags,
-            "source_refs": pack.source_refs,
+            "source_refs": source_refs,
             "created_at": today,
         }
         full_body = f"# {title}\n\n{body}" if body and not body.startswith("# ") else body
@@ -111,7 +238,7 @@ class WikiBlogAgent:
             title=title,
             slug=slug,
             tags=tags,
-            source_refs=pack.source_refs,
+            source_refs=source_refs,
             rel_path=rel_path,
             path=path,
             body=full_body,

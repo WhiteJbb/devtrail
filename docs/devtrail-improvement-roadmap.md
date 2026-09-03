@@ -313,15 +313,20 @@ pass를 한 단계만 추가한다. `Missing Context` 섹션은 Phase 2의 질�
 
 ## 3. 실행 순서 요약
 
-| 순서 | 항목 | 규모 | 브랜치 |
+| 순서 | 항목 | 규모 | 상태 (2026-08-25) |
 |------|------|------|--------|
-| 1 | PR 1 — weekly distill aggregation 분리 | 소 (몇십 줄) | `fix/weekly-distill-aggregation` |
-| 2 | PR 2 — `blog write --idea` | 중 | `feat/blog-write-from-idea` |
-| 3 | PR 3 — BlogContextBuilder | 중 | PR 2 결과 보고 착수 판단 |
-| 4 | Phase 2 — Context Gap Recovery | 중 | `feat/context-gap-recovery` |
-| 5 | Phase 3 — Blog Thread (1~2단계) | 중 | `feat/blog-thread` |
+| 1 | PR 1 — weekly distill aggregation 분리 | 소 | ✅ dev 머지 (52d8822) |
+| 2 | PR 2 — `blog write --idea` | 중 | ✅ PR #48 머지 |
+| 3 | PR 3 — BlogContextBuilder | 중 | ⏸ 보류 — 실데이터+flash급 모델로 초안 재평가 후 판단 (테스트는 flash-lite라 불공정 조건) |
+| 4 | Phase 2 — Context Gap Recovery | 중 | ✅ PR #49 머지 (Telegram 명령은 `/gap` — `/context`는 ContextPack 조회가 선점) |
+| 5 | Phase 3 — Blog Thread (1~2단계) | 중 | ✅ PR #50 머지 + 후속 PR #51 (thread 연속 후보 critic 우회) |
 | 6 | Phase 4 — Activity Collector | 대 | 별도 설계 후 |
 | — | Track B | 대 | 별도 설계 문서부터 |
+
+e2e 검증(2026-08-25, testvault + 실 Gemini): 전 기능 통과. 발견 이슈 2건 —
+critic의 thread 연속 후보 탈락(PR #51로 수정), 재기록 시 Context Recovery 소실
+(PR #49에 보존 로직 포함). 남은 개선 후보: `write_wiki_blog_from_idea.md` 문체
+가이드 보강(사용자 톤 확정 후), Gemini flash 503 시 fallback 키 확보.
 
 각 단계 완료 시점에 홈랩 벤치마크("기록 안 한 홈랩 작업을 얼마나 복원하는가")로
 체감을 확인하고 다음 단계 착수를 판단한다.

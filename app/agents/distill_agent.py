@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMError, LLMProvider
 from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
+from app.services.blog_thread import format_thread_context
 from app.services.candidate_writer import CandidateSpec, CandidateWriteResult, CandidateWriter
 from app.services.json_utils import JSONParseError, complete_json
 from app.services.wiki_service import WikiNote, WikiService
@@ -25,6 +26,11 @@ _CANDIDATE_PREFIX = "60_Candidates/"
 _MAX_NOTE_CHARS = 3000
 _MAX_RELATED = 12
 _CHARS_PER_TOKEN = 3  # 한국어 혼용 기준 보수적 추정
+_RANGE_MODE_NOTE = (
+    "## 종합 모드 안내\n"
+    "아래 노트에는 이미 개별 증류된 세션이 포함되어 있다. 개별 세션의 단일 사실을 "
+    "다시 후보로 만들지 말고, 여러 세션을 관통하는 패턴·종합만 후보로 만들어라.\n\n"
+)
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,8 @@ class DistillAgent:
             DATE=self._date(),
             CONTEXT=context,
             RELATED_KNOWLEDGE=related_section,
+            THREADS=format_thread_context(self.vault_dir),
+            MODE_NOTE=_RANGE_MODE_NOTE if days > 0 else "",
         )
         try:
             data = complete_json(self._llm(), prompt)
@@ -89,12 +97,28 @@ class DistillAgent:
             raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
         specs, scope_dropped = self._filter_by_note_kinds(specs, notes)
-        specs, dropped = self._critic_filter(specs, context=context, related_section=related_section)
+        # 기존 thread의 연속인 blog_idea는 critic을 거치지 않는다 — critic은 이런 후보를
+        # "기존 아이디어와 중복"으로 탈락시키는데, 중복이 아니라 병합 대상이다.
+        # 탈락하면 새 세션 ref가 thread에 누적될 기회를 잃는다.
+        from app.services.blog_thread import list_threads
+        from app.services.candidate_writer import thread_slug
+
+        existing_threads = {t.slug for t in list_threads(self.vault_dir)}
+        thread_specs = [
+            s for s in specs
+            if s.kind == "blog_idea" and thread_slug(s.thread) in existing_threads
+        ]
+        rest = [s for s in specs if s not in thread_specs]
+        rest, dropped = self._critic_filter(rest, context=context, related_section=related_section)
+        specs = thread_specs + rest
         dropped = scope_dropped + dropped
         written = self.writer.write_many(specs)
         self._inject_related_links(written, related)
-        from app.services.wiki_service import mark_distilled
-        mark_distilled(self.vault_dir, notes)
+        if days <= 0:
+            # range(weekly) 모드는 종합 전용 pass다 — daily가 이미 마킹한 노트를
+            # 다시 읽어야 하므로 여기서 마킹하면 안 된다. 생명주기 마킹은 daily 단독 책임.
+            from app.services.wiki_service import mark_distilled
+            mark_distilled(self.vault_dir, notes)
         return DistillResult(written=written, source_refs=[n.path for n in notes], dropped=dropped)
 
     def _llm(self) -> LLMProvider:
@@ -192,12 +216,15 @@ class DistillAgent:
     def _raw_notes(self, today_only: bool, days: int = 0) -> list[WikiNote]:
         from datetime import timedelta
         today = self._date()
+        # range(days>0) 모드는 daily가 이미 마킹한 노트까지 포함해 종합해야 하므로
+        # needs_distill 필터를 걸지 않는다 — today_only/days==0(daily, suggest-*)는 기존대로.
+        apply_distill_filter = days <= 0
         notes = [
             note
             for note in self.wiki_service.scan_notes()
             if note.path.startswith(_RAW_PREFIXES)
             and not note.path.startswith("10_Worklog/GitSummaries/index")
-            and note.metadata.get("needs_distill") is not False
+            and (not apply_distill_filter or note.metadata.get("needs_distill") is not False)
         ]
         if today_only:
             notes = [note for note in notes if self._note_date(note) == today]
@@ -402,6 +429,7 @@ class DistillAgent:
             project=str(item.get("project") or ""),
             tags=[str(t) for t in tags],
             source_refs=[str(ref) for ref in source_refs],
+            thread=str(item.get("thread") or "").strip() if kind == "blog_idea" else "",
         )
 
     def _date(self) -> str:

@@ -21,6 +21,7 @@ from app.agents import CareerBulletAgent, CaptureAgent, CuratorAgent, DistillAge
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.memory import ContextPackBuilder
+from app.services.retention import DEFAULT_CANDIDATE_TTL_DAYS
 from app.services.wiki_service import WikiService
 
 app = typer.Typer(
@@ -35,6 +36,13 @@ blog_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(blog_app, name="blog")
+
+activity_app = typer.Typer(
+    add_completion=False,
+    help="셸 활동 수집 훅 설치·제거·상태",
+    no_args_is_help=True,
+)
+app.add_typer(activity_app, name="activity")
 
 
 def _fail(message: str) -> None:
@@ -647,19 +655,36 @@ def apply_memory_patch(
 
 @blog_app.command("write")
 def write_blog(
-    topic: str = typer.Argument(..., help="블로그 주제"),
+    topic: str = typer.Argument("", help="블로그 주제 (--idea 지정 시 생략 가능)"),
     project: str = typer.Option("", "--project", "-p", help="관련 프로젝트명"),
+    idea: str = typer.Option(
+        "", "--idea", help="BlogIdea 후보 파일명(부분 일치) 또는 vault 상대 경로"
+    ),
 ) -> None:
-    """Context Pack을 기반으로 블로그 초안을 생성해 50_Outputs/Blog/Drafts/에 저장한다."""
+    """Context Pack 또는 BlogIdea 후보를 기반으로 초안을 생성해 50_Outputs/Blog/Drafts/에 저장한다."""
     settings = get_settings()
     if not settings.obsidian_vault_root:
         _fail("OBSIDIAN_VAULT_PATH가 설정되지 않았습니다. .env에서 Obsidian Vault 경로를 지정하세요.")
+    if not topic and not idea:
+        _fail("블로그 주제를 입력하거나 --idea로 BlogIdea 후보를 지정하세요.")
     try:
         agent = WikiBlogAgent(settings=settings)
     except RuntimeError as e:
         _fail(str(e))
 
-    draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=project))
+    if idea:
+        try:
+            idea_rel = agent.resolve_idea(idea)
+        except ValueError as e:
+            _fail(str(e))
+        typer.echo(f"  idea: {idea_rel}")
+        draft, warnings = _handle_llm_errors(
+            lambda: agent.write_blog_from_idea(idea_rel, project=project)
+        )
+        for warning in warnings:
+            typer.secho(f"  ⚠ {warning}", fg=typer.colors.YELLOW)
+    else:
+        draft = _handle_llm_errors(lambda: agent.write_blog(topic=topic, project=project))
     typer.secho(f"\n블로그 초안 생성 완료: {draft.title}", fg=typer.colors.GREEN, bold=True)
     typer.echo(f"  파일: {draft.path}")
     typer.echo(f"  vault path: {draft.rel_path}")
@@ -1342,7 +1367,7 @@ def vault_cleanup(
     keep: int = typer.Option(3, "--keep", help="프로젝트당 보존할 최신 세션(Plan+Process 짝) 수"),
     worklog_days: int = typer.Option(30, "--worklog-days", help="distill된 worklog 세션 보존 기간(일)"),
     handoff_days: int = typer.Option(30, "--handoff-days", help="최신 N개를 넘는 SessionHandoffs 보존 기간(일)"),
-    candidate_ttl: int = typer.Option(14, "--candidate-ttl", help="검토 안 된 후보 보존 기간(일) — 재생성 가능 kind는 삭제, decision/memory_patch는 _Archive/ 이동"),
+    candidate_ttl: int = typer.Option(DEFAULT_CANDIDATE_TTL_DAYS, "--candidate-ttl", help="검토 안 된 후보 보존 기간(일) — 재생성 가능 kind는 삭제, decision/memory_patch는 _Archive/ 이동"),
 ) -> None:
     """오래된 worklog 세션·SessionHandoffs·검토 안 된 후보를 정리한다.
 
@@ -1428,6 +1453,81 @@ def project_briefing(
         typer.echo(f"(briefing 조회 실패: {e})")
         return
     typer.echo(briefing.text)
+
+
+@activity_app.command("install")
+def activity_install(
+    shell: str = typer.Option("all", "--shell", "-s", help="pwsh | bash | all"),
+    profile: Path = typer.Option(None, "--profile", help="프로필 경로 직접 지정 (WSL·원격 노드용)"),
+) -> None:
+    """셸 프로필에 활동 수집 훅 블록을 넣는다. 재실행하면 최신 블록으로 갈아끼운다."""
+    from app.services import activity_hook
+
+    targets = _activity_targets(shell)
+    if profile and len(targets) > 1:
+        _fail("--profile은 셸 하나를 지정할 때만 쓸 수 있습니다 (--shell pwsh 또는 bash).")
+
+    for name in targets:
+        try:
+            path = activity_hook.install(name, profile)
+        except activity_hook.ActivityHookError as e:
+            typer.secho(f"  {name}: 건너뜀 — {e}", fg=typer.colors.YELLOW)
+            continue
+        typer.secho(f"  {name}: 설치 완료 — {path}", fg=typer.colors.GREEN)
+
+    typer.echo("\n새 셸을 열면 명령이 ~/.devtrail/activity/<날짜>.jsonl에 쌓입니다.")
+
+
+@activity_app.command("uninstall")
+def activity_uninstall(
+    shell: str = typer.Option("all", "--shell", "-s", help="pwsh | bash | all"),
+    profile: Path = typer.Option(None, "--profile", help="프로필 경로 직접 지정"),
+) -> None:
+    """프로필에서 훅 블록만 제거한다. 이미 쌓인 JSONL은 지우지 않는다."""
+    from app.services import activity_hook
+
+    targets = _activity_targets(shell)
+    if profile and len(targets) > 1:
+        _fail("--profile은 셸 하나를 지정할 때만 쓸 수 있습니다 (--shell pwsh 또는 bash).")
+
+    for name in targets:
+        try:
+            removed = activity_hook.uninstall(name, profile)
+        except activity_hook.ActivityHookError as e:
+            typer.secho(f"  {name}: 건너뜀 — {e}", fg=typer.colors.YELLOW)
+            continue
+        if removed:
+            typer.secho(f"  {name}: 제거 완료", fg=typer.colors.GREEN)
+        else:
+            typer.echo(f"  {name}: 설치된 훅이 없습니다")
+
+
+@activity_app.command("status")
+def activity_status() -> None:
+    """훅 설치 여부와 오늘 수집된 이벤트 수를 보여준다."""
+    from app.services import activity_hook
+
+    result = activity_hook.status()
+    typer.secho("\n활동 수집 상태", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"  저장 경로: {result.activity_dir}")
+    for shell in result.shells:
+        mark = "설치됨" if shell.installed else "미설치"
+        detail = shell.error or str(shell.profile)
+        typer.echo(f"  {shell.shell}: {mark} — {detail}")
+
+    typer.echo(f"  오늘 이벤트: {result.today_events}건")
+    if result.last_event:
+        typer.echo(f"  마지막: {result.last_event.get('ts', '?')}  {result.last_event.get('cmd', '')}")
+
+
+def _activity_targets(shell: str) -> list[str]:
+    from app.services import activity_hook
+
+    if shell == "all":
+        return list(activity_hook.SHELLS)
+    if shell not in activity_hook.SHELLS:
+        _fail(f"지원하지 않는 셸입니다: {shell} (가능: {', '.join(activity_hook.SHELLS)}, all)")
+    return [shell]
 
 
 if __name__ == "__main__":
