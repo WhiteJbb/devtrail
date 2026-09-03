@@ -228,11 +228,17 @@ def test_run_no_telegram_when_not_configured(tmp_path):
 
 
 def test_run_expires_old_candidates(tmp_path):
+    """nightly가 TTL 정리를 호출하고 digest에 보고하는지 — 배선 검증.
+
+    created_at이 2010년인 이유: nightly는 cleanup_candidates에 ttl을 넘기지 않고
+    기본값을 쓴다. 그 기본값은 2026-09-03에 사실상 해제됐으므로(retention.py 주석)
+    어떤 TTL에서도 만료되는 날짜여야 배선 자체를 계속 검증할 수 있다.
+    """
     import frontmatter as fm
     old = tmp_path / "60_Candidates" / "Knowledge" / "stale.md"
     old.parent.mkdir(parents=True, exist_ok=True)
     meta = {"type": "candidate", "candidate_type": "knowledge", "title": "stale",
-            "status": "candidate", "created_at": "2026-05-01"}
+            "status": "candidate", "created_at": "2010-01-01"}
     old.write_text(fm.dumps(fm.Post("본문", **meta)), encoding="utf-8")
 
     _seed_session(tmp_path)

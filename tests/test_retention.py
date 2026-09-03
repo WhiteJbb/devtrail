@@ -204,14 +204,14 @@ def _write_candidate(vault: Path, kind_dir: str, name: str, kind: str, created_a
 
 def test_expired_regenerable_candidate_is_deleted(tmp_path):
     _write_candidate(tmp_path, "Knowledge", "old.md", "knowledge", "2026-06-01")
-    result = cleanup_vault(tmp_path, now=_NOW)
+    result = cleanup_vault(tmp_path, now=_NOW, candidate_ttl_days=14)
     assert result.deleted_candidates == ["60_Candidates/Knowledge/old.md"]
     assert not (tmp_path / "60_Candidates/Knowledge/old.md").exists()
 
 
 def test_expired_decision_candidate_is_archived(tmp_path):
     _write_candidate(tmp_path, "Decisions", "old-decision.md", "decision", "2026-06-01")
-    result = cleanup_vault(tmp_path, now=_NOW)
+    result = cleanup_vault(tmp_path, now=_NOW, candidate_ttl_days=14)
     assert result.archived_candidates == ["60_Candidates/Decisions/old-decision.md"]
     assert (tmp_path / "60_Candidates/_Archive/Decisions/old-decision.md").exists()
     assert not (tmp_path / "60_Candidates/Decisions/old-decision.md").exists()
@@ -219,8 +219,23 @@ def test_expired_decision_candidate_is_archived(tmp_path):
 
 def test_expired_memory_patch_is_archived(tmp_path):
     _write_candidate(tmp_path, "MemoryPatches", "patch.md", "memory_patch", "2026-06-01")
-    result = cleanup_vault(tmp_path, now=_NOW)
+    result = cleanup_vault(tmp_path, now=_NOW, candidate_ttl_days=14)
     assert result.archived_candidates == ["60_Candidates/MemoryPatches/patch.md"]
+
+
+def test_default_ttl_keeps_old_candidate_alive(tmp_path):
+    """기본 TTL은 임시 해제 상태다 — 두 달 지난 후보도 살아남아야 한다.
+
+    2026-09-03 결정(retention.DEFAULT_CANDIDATE_TTL_DAYS 주석 참조). 실사용
+    재개 판정 후 14로 되돌리면 이 테스트가 먼저 실패해 정책 변경을 알린다.
+    """
+    _write_candidate(tmp_path, "Knowledge", "july.md", "knowledge", "2026-07-01")
+    _write_candidate(tmp_path, "Decisions", "july-d.md", "decision", "2026-07-01")
+    result = cleanup_vault(tmp_path, now=datetime(2026, 9, 3))
+    assert result.deleted_candidates == []
+    assert result.archived_candidates == []
+    assert (tmp_path / "60_Candidates/Knowledge/july.md").exists()
+    assert (tmp_path / "60_Candidates/Decisions/july-d.md").exists()
 
 
 def test_recent_candidate_survives(tmp_path):
@@ -241,7 +256,7 @@ def test_updated_at_keeps_candidate_alive(tmp_path):
 def test_promoted_candidate_deleted_regardless_of_kind(tmp_path):
     """promote된 원본은 공식 영역에 사본이 있으므로 decision이라도 삭제한다."""
     _write_candidate(tmp_path, "Decisions", "done.md", "decision", "2026-06-01", status="promoted")
-    result = cleanup_vault(tmp_path, now=_NOW)
+    result = cleanup_vault(tmp_path, now=_NOW, candidate_ttl_days=14)
     assert result.deleted_candidates == ["60_Candidates/Decisions/done.md"]
     assert result.archived_candidates == []
 
@@ -257,7 +272,7 @@ def test_session_handoffs_not_touched_by_candidate_ttl(tmp_path):
 def test_candidate_dry_run_reports_without_action(tmp_path):
     _write_candidate(tmp_path, "Knowledge", "old.md", "knowledge", "2026-06-01")
     _write_candidate(tmp_path, "Decisions", "old-d.md", "decision", "2026-06-01")
-    result = cleanup_vault(tmp_path, now=_NOW, dry_run=True)
+    result = cleanup_vault(tmp_path, now=_NOW, dry_run=True, candidate_ttl_days=14)
     assert len(result.deleted_candidates) == 1
     assert len(result.archived_candidates) == 1
     assert (tmp_path / "60_Candidates/Knowledge/old.md").exists()

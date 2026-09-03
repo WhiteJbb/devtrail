@@ -21,6 +21,7 @@ from app.agents import CareerBulletAgent, CaptureAgent, CuratorAgent, DistillAge
 from app.config import get_settings
 from app.llm.base import LLMError, LLMNotConfiguredError
 from app.memory import ContextPackBuilder
+from app.services.retention import DEFAULT_CANDIDATE_TTL_DAYS
 from app.services.wiki_service import WikiService
 
 app = typer.Typer(
@@ -1366,7 +1367,7 @@ def vault_cleanup(
     keep: int = typer.Option(3, "--keep", help="프로젝트당 보존할 최신 세션(Plan+Process 짝) 수"),
     worklog_days: int = typer.Option(30, "--worklog-days", help="distill된 worklog 세션 보존 기간(일)"),
     handoff_days: int = typer.Option(30, "--handoff-days", help="최신 N개를 넘는 SessionHandoffs 보존 기간(일)"),
-    candidate_ttl: int = typer.Option(14, "--candidate-ttl", help="검토 안 된 후보 보존 기간(일) — 재생성 가능 kind는 삭제, decision/memory_patch는 _Archive/ 이동"),
+    candidate_ttl: int = typer.Option(DEFAULT_CANDIDATE_TTL_DAYS, "--candidate-ttl", help="검토 안 된 후보 보존 기간(일) — 재생성 가능 kind는 삭제, decision/memory_patch는 _Archive/ 이동"),
 ) -> None:
     """오래된 worklog 세션·SessionHandoffs·검토 안 된 후보를 정리한다.
 
