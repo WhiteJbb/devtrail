@@ -411,6 +411,7 @@ def capture_session(
     summary_file: str = typer.Option("", "--summary-file", help="AI가 작성한 세션 요약 파일 경로"),
     source: str = typer.Option("agent_session", "--source", help="소스 식별자"),
     title: str = typer.Option("", "--title", help="세션 노트 제목 수동 지정"),
+    agent: str = typer.Option("", "--agent", help="기록 주체 (미지정 시 환경에서 감지)"),
 ) -> None:
     """작업 세션을 구조화된 노트로 10_Worklog/Sessions에 저장한다.
 
@@ -426,6 +427,7 @@ def capture_session(
             summary_file=summary_file or None,
             source=source,
             title=title or None,
+            agent=agent,
         )
     except (ValueError, RuntimeError) as e:
         _fail(str(e))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from datetime import datetime
 
 import frontmatter
@@ -284,3 +285,31 @@ def test_blog_idea_without_thread_keeps_existing_behavior(tmp_path):
     post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
     assert "thread" not in post.metadata
     assert "## Updates" not in post.content
+
+
+# ── host / agent 식별자 ───────────────────────────────────────────────────────
+
+def test_session_handoff_carries_host_and_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEVTRAIL_AGENT", "claude-code")
+    spec = CandidateSpec(
+        kind="session_handoff",
+        title="Process — Devtrail — 2026-07-05 — abc123",
+        body="body",
+        project="Devtrail",
+        handoff_type="process",
+        session_id="abc123",
+    )
+    result = _writer(tmp_path).write(spec)
+    post = frontmatter.loads((tmp_path / result.rel_path).read_text(encoding="utf-8"))
+    assert post.metadata["host"] == socket.gethostname().strip()
+    assert post.metadata["agent"] == "claude-code"
+
+
+def test_other_kinds_have_no_host_agent(tmp_path, monkeypatch):
+    """확장 범위는 세션 인계 기록뿐이다 — 다른 후보 종류의 frontmatter는 그대로 둔다."""
+    monkeypatch.setenv("DEVTRAIL_AGENT", "claude-code")
+    spec = CandidateSpec(kind="knowledge", title="어떤 지식", body="body", project="Devtrail")
+    result = _writer(tmp_path).write(spec)
+    post = frontmatter.loads((tmp_path / result.rel_path).read_text(encoding="utf-8"))
+    assert "host" not in post.metadata
+    assert "agent" not in post.metadata
