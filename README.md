@@ -297,6 +297,19 @@ MCP(stdio) 서버입니다. MCP가 연결돼 있으면 세션 시작/종료 기�
 claude mcp add devtrail-vault -- devtrail mcp-serve
 ```
 
+`devtrail`이 PATH에 없으면(venv에만 설치한 경우) 연결이 `CONNECTION_CLOSED`로
+조용히 실패합니다. 실행 파일의 절대 경로로 등록하세요:
+
+```bash
+# Windows
+claude mcp add devtrail-vault -- "<repo>\.venv\Scripts\devtrail.exe" mcp-serve
+# macOS / Linux
+claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
+```
+
+등록 후 `claude mcp list`로 `✔ Connected`를 확인합니다. 등록 여부 자체는
+`devtrail doctor`가 점검합니다.
+
 | Tool | 역할 |
 |------|------|
 | `get_project_briefing` | 세션 시작 시 프로젝트 컨텍스트 · 최근 handoff · decision · Open Loops 반환 |
@@ -350,9 +363,13 @@ python으로 훅 구현(`scripts/hooks/*.py`)을 실행합니다 — Windows는 
 
 ## AI Agent 연동 (MCP 미지원 도구 — Cursor 등, 또는 fallback)
 
-### 1단계 — CLAUDE.md / AGENTS.md 설정
+### 1단계 — AGENTS.md 설정
 
-프로젝트 루트에 추가:
+에이전트 규칙은 **`AGENTS.md` 한 곳**에 둡니다 — Claude Code·Codex·Cursor가
+공통으로 읽는 파일입니다. `CLAUDE.md`는 `AGENTS.md`를 가리키기만 하고 규칙을
+중복해 적지 않습니다(중복되면 한쪽만 고쳐져 조용히 어긋납니다).
+
+프로젝트 루트 `AGENTS.md`에 추가:
 
 ```markdown
 ## Vault 경로
@@ -360,7 +377,7 @@ OBSIDIAN_VAULT_PATH: D:/personal-vault
 
 ## 작업 시작 전 필독 파일
 - {VAULT}/30_Projects/<프로젝트명>/Context.md — 프로젝트 배경·목표·제약
-- {VAULT}/40_AgentMemory/00_Profile.md ~ 05_OpenLoops.md — 전역 메모리·미해결 이슈
+- {VAULT}/40_AgentMemory/00_Profile.md ~ 06_Lessons.md — 전역 메모리·미해결 이슈
 
 ## Vault 수정 규칙
 - 20_Knowledge/, 30_Projects/, 40_AgentMemory/ 는 직접 수정하지 않는다.
@@ -382,7 +399,7 @@ devtrail search "RAG 검색"               # 관련 노트 확인
 capture-session 실행해줘
 ```
 
-CLAUDE.md/AGENTS.md의 규칙에 따라 요약을 작성하고 실행:
+AGENTS.md의 규칙에 따라 요약을 작성하고 실행:
 
 ```bash
 devtrail capture-session --project <name> --from-repo --from-agent --summary-file ./session-summary.md
