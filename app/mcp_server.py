@@ -67,6 +67,22 @@ def _write_session_marker(
         pass  # 훅 연동은 best-effort — 마커 기록 실패로 tool 자체를 막지 않는다
 
 
+def _touch_session_marker() -> None:
+    """tool이 실제로 호출됐을 때 마커를 만든다 — "이 세션에 MCP가 살아 있다"의 증거.
+
+    서버 기동만으로 쓰면 안 되는 이유: `claude mcp list`(devtrail doctor가 내부에서
+    부른다)의 헬스체크는 서버를 띄웠다 **즉시 닫는다**. 그 탐침이 남긴
+    plan_written=false 마커를 plan-check 훅이 "이번 세션에 MCP가 연결됐다"로 읽으면,
+    MCP tool이 없는 세션이 12시간 동안 코드 수정을 차단당한다 — write_work_plan을
+    호출할 수단이 없으므로 빠져나갈 방법이 없는 교착이다(2026-09-07 실제 발생).
+
+    탐침은 tool을 호출하지 않으므로, 호출 시점으로 미루면 라이브 세션만 마커를 남긴다.
+    인자 없는 _write_session_marker는 session_id가 다른 이전 마커를 False로 초기화하고
+    같은 세션의 값은 보존한다 — 그래서 매 tool 호출마다 불러도 안전하다.
+    """
+    _write_session_marker()
+
+
 def _candidate_result_dict(result) -> dict | None:
     if result is None:
         return None
@@ -80,6 +96,7 @@ def get_project_briefing(project_or_repo: str) -> dict:
     matched=False면 컨텍스트가 주입되지 않은 것이며 candidates에 후보 프로젝트명이
     담긴다 — 사용자에게 확인 후 .claude/vault.json에 저장하도록 안내해야 한다.
     """
+    _touch_session_marker()
     result = vault_tools.get_project_briefing(project_or_repo, settings=get_settings())
     return dataclasses.asdict(result)
 
@@ -91,6 +108,7 @@ def search_vault(query: str, limit: int = 10) -> list[dict]:
     status=stable(승격된 정본) / candidate(검토 대기 후보) / raw(세션·산출물 원문)이
     함께 반환되며 이 순서로 정렬된다. raw는 근거 조회용이지 확정 지식이 아니다.
     """
+    _touch_session_marker()
     hits = vault_tools.search_vault(query, limit=limit, settings=get_settings())
     return [dataclasses.asdict(h) for h in hits]
 
@@ -102,6 +120,7 @@ def read_note(rel_path: str) -> str:
     읽기 허용: 20_Knowledge/, 30_Projects/, 40_AgentMemory/, 60_Candidates/,
     10_Worklog/, 50_Outputs/, 70_Tasks/.
     """
+    _touch_session_marker()
     return vault_tools.read_note(rel_path, settings=get_settings())
 
 
@@ -111,6 +130,7 @@ def record_note(kind: str, title: str, body: str, project: str = "") -> dict:
 
     kind는 knowledge/decision/blog_idea/career_bullet만 허용한다.
     """
+    _touch_session_marker()
     result = vault_tools.record_note(kind, title, body, project=project, settings=get_settings())
     return _candidate_result_dict(result)
 
@@ -118,6 +138,7 @@ def record_note(kind: str, title: str, body: str, project: str = "") -> dict:
 @mcp.tool()
 def record_agent_improvement(project: str, issue: str, improvement: str, evidence: str = "") -> dict:
     """반복 실수, 개선할 작업 방식, 프로젝트별 주의사항을 MemoryPatch 후보로 기록한다."""
+    _touch_session_marker()
     result = vault_tools.record_agent_improvement(project, issue, improvement, evidence, settings=get_settings())
     return _candidate_result_dict(result)
 
@@ -130,6 +151,7 @@ def write_work_plan(project: str, goal: str, context_read: str, scope: str, appr
     작성한다 — 기록은 사람이 다시 읽는 문서다. 같은 세션에서 재호출하면 기존
     Plan이 갱신된다(새 파일이 생기지 않음).
     """
+    _touch_session_marker()
     result = vault_tools.write_work_plan(
         project, goal, context_read, scope, approach, risks, session_id=_SESSION_ID, settings=get_settings()
     )
@@ -162,6 +184,7 @@ def write_session_process(
     agent_execution_notes 중 next_checks/better_approach만 Lessons 패치 후보로
     증류되므로, 이 두 필드는 다른 세션에도 통하는 일반화된 교훈으로 쓴다.
     """
+    _touch_session_marker()
     result = vault_tools.write_session_process(
         project=project,
         what_changed=what_changed,
@@ -186,10 +209,10 @@ def write_session_process(
 
 
 def main() -> None:
-    # 모듈 import 시점이 아니라 서버가 실제로 시작될 때만 마커를 (재)생성한다 —
-    # import만으로 마커가 생기면(REPL, 향후 eager import 등) 라이브 세션의 진짜
-    # 마커를 덮어쓸 수 있다.
-    _write_session_marker(process_written=False, plan_written=False)
+    # 마커는 여기서 쓰지 않는다. 기동만으로 쓰면 `claude mcp list`의 헬스체크(서버를
+    # 띄웠다 즉시 닫는다)까지 라이브 세션으로 기록돼, MCP tool이 없는 세션이 plan-check
+    # 훅에 갇힌다 — 자세한 이유는 _touch_session_marker() 참고. 마커는 첫 tool 호출이
+    # 만든다.
     mcp.run(transport="stdio")
 
 

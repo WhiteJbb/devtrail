@@ -60,13 +60,43 @@ def test_write_work_plan_auto_injects_session_id(vault_env, monkeypatch):
 
 
 def test_import_does_not_create_marker_file(vault_env, monkeypatch):
-    """모듈 import만으로는 마커가 생기면 안 된다(P4.1) — main()이 실제로 서버를 시작할 때만 쓴다.
+    """모듈 import만으로는 마커가 생기면 안 된다(P4.1).
 
     import 시점에 마커를 쓰면 REPL이나 향후 eager import 시 라이브 세션의 진짜
     마커를 덮어쓸 수 있다.
     """
     mod = _reload_mcp_server(vault_env, monkeypatch)
     assert not mod._session_marker_path().exists()
+
+
+def test_server_start_does_not_create_marker_file(vault_env, monkeypatch):
+    """서버 기동만으로 마커가 생기면 안 된다 — `claude mcp list` 헬스체크 때문이다.
+
+    헬스체크는 서버를 띄웠다 즉시 닫는데, 그 탐침이 마커를 남기면 plan-check 훅이
+    "이번 세션에 MCP가 연결됐다"로 읽는다. MCP tool이 없는 세션은 write_work_plan을
+    호출할 수단이 없으므로 12시간 동안 코드 수정이 막힌다(2026-09-07 실제 발생).
+    """
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    monkeypatch.setattr(mod.mcp, "run", lambda **kwargs: None)
+
+    mod.main()
+
+    assert not mod._session_marker_path().exists()
+
+
+def test_first_tool_call_creates_marker_file(vault_env, monkeypatch):
+    """탐침과 라이브 세션을 가르는 신호는 'tool을 실제로 호출했는가'다."""
+    import json
+
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    assert not mod._session_marker_path().exists()
+
+    mod.mcp._tool_manager.get_tool("search_vault").fn(query="아무거나")
+
+    marker = json.loads(mod._session_marker_path().read_text(encoding="utf-8"))
+    assert marker["session_id"] == mod._SESSION_ID
+    assert marker["plan_written"] is False
+    assert marker["process_written"] is False
 
 
 def test_write_session_process_updates_marker_file(vault_env, monkeypatch):
