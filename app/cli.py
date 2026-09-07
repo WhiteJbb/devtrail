@@ -157,10 +157,11 @@ def doctor(
     elif report.healthy:
         typer.secho("\n치명적 문제 없음.", fg=typer.colors.GREEN)
 
-    # 파일 존재는 확인해도 Claude Code가 그 설정을 실제로 로드했는지는 프로세스 밖에서
-    # 알 수 없다. doctor를 과신하지 않게 한계를 밝힌다.
+    # 무엇을 확인했고 무엇은 확인하지 못했는지 구분해 밝힌다 — doctor를 과신하면
+    # "진단은 통과했는데 기록이 안 쌓이는" 상태를 놓친다.
     typer.secho(
-        "\n참고: 훅 설정 파일의 존재만 확인합니다. 실제 발동 여부는 새 세션에서 briefing이 "
+        "\n참고: MCP는 연결 결과까지, 콘솔 스크립트는 실제 실행까지 확인합니다. "
+        "훅은 설정 파일의 존재만 확인하므로 실제 발동 여부는 새 세션에서 briefing이 "
         "주입되는지로 확인하세요.",
         fg=typer.colors.BRIGHT_BLACK,
     )

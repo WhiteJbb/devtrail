@@ -132,7 +132,14 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 |----|------|------|
 | `session-start-briefing` | SessionStart | 프로젝트 briefing 자동 주입 |
 | `plan-check` | PreToolUse (Edit/Write) | Plan 미기록 상태의 구현 차단 |
+
 | `stop-process-check` | Stop · PreCompact | 세션 기록 누락 경고 |
+
+세 훅은 `.claude/.vault-mcp/current_session.json` 마커를 공유한다. 마커는 **첫 MCP
+tool 호출**이 만든다 — 서버 기동만으로 쓰면 `claude mcp list`의 헬스체크(서버를
+띄웠다 즉시 닫는다)까지 라이브 세션으로 기록돼, MCP tool이 없는 세션이
+`write_work_plan`을 호출할 수단 없이 plan-check에 갇힌다. 마커가 없으면 훅은
+강제하지 않는다(MCP 미연결 fallback 세션).
 
 ### capture-session fallback (MCP 미연결 시)
 
