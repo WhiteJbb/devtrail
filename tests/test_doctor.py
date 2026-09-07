@@ -200,14 +200,36 @@ def test_mcp_registration_without_claude_cli_is_unknown(monkeypatch):
     assert doctor.check_mcp_registration().severity == doctor.UNKNOWN
 
 
-def test_mcp_registration_found(monkeypatch):
+def _mcp_list(stdout: str, monkeypatch, returncode: int = 0):
     class _Proc:
-        returncode = 0
-        stdout = "devtrail-vault: devtrail mcp-serve\n"
+        pass
 
+    _Proc.returncode = returncode
+    _Proc.stdout = stdout
     monkeypatch.setattr(doctor.shutil, "which", lambda name: "/usr/bin/claude")
     monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Proc())
+
+
+def test_mcp_registration_connected_is_ok(monkeypatch):
+    _mcp_list("devtrail-vault: /repo/.venv/bin/devtrail mcp-serve - ✔ Connected\n", monkeypatch)
     assert doctor.check_mcp_registration().severity == doctor.OK
+
+
+def test_mcp_registration_failed_to_connect_is_fail(monkeypatch):
+    """등록만 보고 OK로 넘기던 사각지대 — 붙지 못하면 세션에 tool이 안 뜬다."""
+    _mcp_list(
+        "devtrail-vault: /repo/.venv/bin/devtrail mcp-serve - ✘ Failed to connect — CONNECTION_CLOSED\n",
+        monkeypatch,
+    )
+    result = doctor.check_mcp_registration()
+    assert result.severity == doctor.FAIL
+    assert "연결 실패" in result.detail
+
+
+def test_mcp_registration_without_status_marker_is_unknown(monkeypatch):
+    """출력 형식이 바뀌어 상태를 못 읽으면 '고장'으로 단정하지 않는다."""
+    _mcp_list("devtrail-vault: devtrail mcp-serve\n", monkeypatch)
+    assert doctor.check_mcp_registration().severity == doctor.UNKNOWN
 
 
 def test_mcp_registration_missing_is_fail_with_add_command(monkeypatch):
@@ -229,6 +251,61 @@ def test_mcp_registration_subprocess_error_is_unknown(monkeypatch):
     monkeypatch.setattr(doctor.shutil, "which", lambda name: "/usr/bin/claude")
     monkeypatch.setattr(doctor.subprocess, "run", _boom)
     assert doctor.check_mcp_registration().severity == doctor.UNKNOWN
+
+
+# ── 콘솔 스크립트 ────────────────────────────────────────────────────────────
+
+
+def _make_console_script(repo: Path) -> Path:
+    scripts = repo / ".venv" / "Scripts"
+    scripts.mkdir(parents=True, exist_ok=True)
+    script = scripts / "devtrail.exe"
+    script.write_text("", encoding="utf-8")
+    return script
+
+
+def test_console_script_missing_is_warn(tmp_path):
+    """실행 파일이 아예 없으면 설치 전 상태일 수 있다 — 단정하지 않고 WARN."""
+    repo = _make_repo(tmp_path)
+    assert doctor.check_console_script(repo).severity == doctor.WARN
+
+
+def test_console_script_runs_is_ok(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _make_console_script(repo)
+
+    class _Proc:
+        returncode = 0
+        stdout = "Usage: devtrail ..."
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Proc())
+    assert doctor.check_console_script(repo).severity == doctor.OK
+
+
+def test_console_script_nonzero_exit_is_fail(tmp_path, monkeypatch):
+    """rename 후 셔뱅이 옛 경로를 가리키면 Windows 런처가 무음으로 exit 1한다."""
+    repo = _make_repo(tmp_path)
+    _make_console_script(repo)
+
+    class _Proc:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Proc())
+    result = doctor.check_console_script(repo)
+    assert result.severity == doctor.FAIL
+    assert result.hint == doctor._CONSOLE_SCRIPT_HINT
+
+
+def test_console_script_oserror_is_fail(tmp_path, monkeypatch):
+    repo = _make_repo(tmp_path)
+    _make_console_script(repo)
+
+    def _boom(*a, **k):
+        raise OSError("bad shebang")
+
+    monkeypatch.setattr(doctor.subprocess, "run", _boom)
+    assert doctor.check_console_script(repo).severity == doctor.FAIL
 
 
 # ── diagnose ────────────────────────────────────────────────────────────────

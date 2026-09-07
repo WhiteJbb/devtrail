@@ -338,7 +338,14 @@ devtrail doctor --fix    # 고칠 수 있는 것만 수리 (기존 파일은 덮
 되는 종류의 실패입니다. `doctor`는 그 조용한 실패를 찾습니다.
 
 점검 항목: vault 경로(`.env`) · `mcp` 패키지 · 훅 설정 파일 · 훅 실행 전제(python) ·
-프로젝트 매핑(값이 Vault에 실재하는지까지) · vault 구조 · MCP 등록.
+콘솔 스크립트 실행 · 프로젝트 매핑(값이 Vault에 실재하는지까지) · vault 구조 ·
+MCP 등록·연결.
+
+**MCP는 등록 여부가 아니라 연결 결과를 봅니다.** 등록돼 있어도 실행 파일이 기동하지
+못하면 세션에 tool이 뜨지 않아 증상은 미등록과 같기 때문입니다. 같은 이유로 repo
+`.venv`의 `devtrail` 콘솔 스크립트가 실제로 실행되는지도 확인합니다 — repo를 rename
+하거나 옮기면 셔뱅이 옛 경로를 가리켜 **오류 메시지 없이 exit 1** 하는데, 이때
+`capture-session`도 MCP도 조용히 죽습니다.
 
 `--fix`가 하는 것은 `settings.json` 복사, `vault.json` 생성(Vault 프로젝트 후보가
 하나일 때 — 여러 개면 `--project <이름>`), `init-vault` 재실행뿐입니다. `.env` 편집과

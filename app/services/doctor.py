@@ -27,6 +27,16 @@ UNKNOWN: Severity = "unknown"
 MCP_SERVER_NAME = "devtrail-vault"
 MCP_ADD_COMMAND = f"claude mcp add {MCP_SERVER_NAME} -- devtrail mcp-serve"
 
+# `claude mcp list`가 서버 줄 끝에 붙이는 연결 결과 표식. 이모지는 클라이언트 버전에
+# 따라 바뀔 수 있어 영문 문구도 함께 본다 — 둘 다 못 찾으면 UNKNOWN으로 떨어뜨린다.
+_MCP_CONNECTED_MARKERS = ("✔", "Connected")
+_MCP_FAILED_MARKERS = ("✘", "✗", "Failed to connect")
+
+# 등록은 됐는데 기동이 죽는 원인 1순위. 2026-09-07에 실제로 겪은 사고다: repo를
+# work-agent -> devtrail로 rename한 뒤 .venv의 콘솔 스크립트 셔뱅이 옛 경로를
+# 가리켜 devtrail.exe가 stdout/stderr 없이 exit 1했다.
+_CONSOLE_SCRIPT_HINT = "repo .venv에서 `pip install -e . --no-deps --force-reinstall`로 콘솔 스크립트를 재생성하세요"
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -237,11 +247,27 @@ def check_mcp_package() -> CheckResult:
     return CheckResult("mcp 패키지", OK, "import 가능")
 
 
-def check_mcp_registration(timeout: float = 10.0) -> CheckResult:
-    """`claude mcp list`에 devtrail-vault가 있는지.
+def _mcp_server_line(stdout: str) -> str:
+    """`claude mcp list` 출력에서 devtrail-vault 줄만 뽑는다. 없으면 빈 문자열."""
+    for line in stdout.splitlines():
+        if line.strip().startswith(f"{MCP_SERVER_NAME}:"):
+            return line.strip()
+    return ""
 
-    fail-open: claude CLI가 없거나 출력 형식이 바뀌면 UNKNOWN으로 떨어뜨린다. 외부
-    도구의 출력 파싱을 근거로 사용자에게 "고장났다"고 말하지 않는다.
+
+def check_mcp_registration(timeout: float = 30.0) -> CheckResult:
+    """`claude mcp list`에서 devtrail-vault의 **연결 결과**까지 본다.
+
+    등록 여부만 보면 부족하다: 2026-09-07에 등록은 돼 있는데 실행 파일이 죽어
+    `✘ Failed to connect`인 상태를 doctor가 OK로 보고했다. 등록은 연결의 필요조건일
+    뿐이므로 `claude mcp list`가 이미 수행하는 헬스체크 결과를 그대로 읽는다.
+
+    fail-open: claude CLI가 없거나 출력 형식이 바뀌어 상태를 못 읽으면 UNKNOWN이다.
+    외부 도구의 출력 파싱을 근거로 사용자에게 "고장났다"고 말하지 않는다. 다만
+    "등록 자체가 없다"는 파싱 없이도 확실하므로 FAIL을 유지한다.
+
+    timeout이 넉넉한 이유: 이 명령은 등록된 모든 서버에 실제로 붙어 보므로 서버 수에
+    비례해 느리다. 짧게 잡으면 정상 환경이 UNKNOWN으로 떨어진다.
     """
     exe = shutil.which("claude")
     if not exe:
@@ -254,14 +280,74 @@ def check_mcp_registration(timeout: float = 10.0) -> CheckResult:
         return CheckResult("MCP 등록", UNKNOWN, f"claude mcp list 실행 실패: {e}")
     if proc.returncode != 0:
         return CheckResult("MCP 등록", UNKNOWN, f"claude mcp list가 exit {proc.returncode}로 끝났습니다")
-    if MCP_SERVER_NAME in (proc.stdout or ""):
-        return CheckResult("MCP 등록", OK, f"{MCP_SERVER_NAME} 등록됨")
+
+    stdout = proc.stdout or ""
+    line = _mcp_server_line(stdout)
+    if not line:
+        # 줄 형식이 바뀌었을 수 있으니 이름 자체가 없을 때만 미등록으로 단정한다.
+        if MCP_SERVER_NAME in stdout:
+            return CheckResult("MCP 등록", UNKNOWN, f"{MCP_SERVER_NAME} 줄을 해석하지 못했습니다")
+        return CheckResult(
+            "MCP 등록",
+            FAIL,
+            f"{MCP_SERVER_NAME}가 등록돼 있지 않습니다",
+            hint=MCP_ADD_COMMAND,
+        )
+
+    if any(m in line for m in _MCP_FAILED_MARKERS):
+        # 등록됐는데 못 붙는다 = 세션에 tool이 안 뜬다. 미등록과 증상이 같으므로 FAIL.
+        return CheckResult(
+            "MCP 등록",
+            FAIL,
+            f"{MCP_SERVER_NAME} 등록됨 — 그러나 연결 실패: {line}",
+            hint=(
+                "실행 파일이 기동하는지 먼저 확인하세요. PATH에 devtrail이 없으면 "
+                "venv 절대 경로로 재등록합니다: "
+                f"claude mcp remove {MCP_SERVER_NAME} && "
+                f"claude mcp add {MCP_SERVER_NAME} -- <repo>/.venv/bin/devtrail mcp-serve"
+            ),
+        )
+    if any(m in line for m in _MCP_CONNECTED_MARKERS):
+        return CheckResult("MCP 등록", OK, f"{MCP_SERVER_NAME} 연결됨")
     return CheckResult(
         "MCP 등록",
-        FAIL,
-        f"{MCP_SERVER_NAME}가 등록돼 있지 않습니다",
-        hint=MCP_ADD_COMMAND,
+        UNKNOWN,
+        f"{MCP_SERVER_NAME} 등록됨 — 연결 상태를 읽지 못했습니다: {line}",
+        hint="claude mcp list를 직접 실행해 연결 여부를 확인하세요",
     )
+
+
+def check_console_script(repo_dir: Path) -> CheckResult:
+    """repo .venv의 `devtrail` 콘솔 스크립트가 실제로 실행되는지.
+
+    MCP 등록 점검과 겹쳐 보이지만 겹치지 않는다: 등록 전이거나 claude CLI가 없는
+    머신에서도 이 고장은 일어나고, 그때 증상은 "capture-session이 안 된다"로만
+    나타난다. Windows 콘솔 스크립트는 셔뱅이 가리키는 python이 없으면 **오류 메시지
+    없이** exit 1하므로, 사람이 원인을 찾기 가장 어려운 실패다.
+    """
+    candidates = [repo_dir / ".venv" / "bin" / "devtrail", repo_dir / ".venv" / "Scripts" / "devtrail.exe"]
+    script = next((p for p in candidates if p.exists()), None)
+    if script is None:
+        return CheckResult(
+            "콘솔 스크립트",
+            WARN,
+            "repo .venv에 devtrail 실행 파일이 없습니다",
+            hint='repo .venv에서 pip install -e ".[dev]"',
+        )
+    try:
+        proc = subprocess.run(
+            [str(script), "--help"], capture_output=True, timeout=30, text=True, encoding="utf-8", errors="replace"
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return CheckResult("콘솔 스크립트", FAIL, f"{script} 실행 실패: {e}", hint=_CONSOLE_SCRIPT_HINT)
+    if proc.returncode != 0:
+        return CheckResult(
+            "콘솔 스크립트",
+            FAIL,
+            f"{script}가 exit {proc.returncode}로 끝났습니다 — 셔뱅이 가리키는 python이 없을 수 있습니다",
+            hint=_CONSOLE_SCRIPT_HINT,
+        )
+    return CheckResult("콘솔 스크립트", OK, str(script))
 
 
 def check_hook_runtime(repo_dir: Path) -> CheckResult:
@@ -299,6 +385,7 @@ def diagnose(repo_dir: Path, vault_root: str, *, check_mcp: bool = True) -> Doct
         ("mcp 패키지", check_mcp_package),
         ("Claude Code 훅", lambda: check_hook_settings(repo_dir)),
         ("훅 실행 전제", lambda: check_hook_runtime(repo_dir)),
+        ("콘솔 스크립트", lambda: check_console_script(repo_dir)),
         ("프로젝트 매핑", lambda: check_project_mapping(repo_dir, vault_dir)),
         ("vault 구조", lambda: check_vault_structure(vault_dir)),
     ]
