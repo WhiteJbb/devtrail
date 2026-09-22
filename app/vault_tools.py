@@ -775,6 +775,100 @@ def _normalize_bullet_items(value) -> list[str]:
     return out
 
 
+# Process 본문의 섹션 헤딩. 순서가 곧 렌더링 순서이고, 증분 갱신 시 기존 본문을
+# 쪼개는 경계이기도 하다. 사용자가 넘긴 본문 안에도 `## 1. ...` 같은 헤딩이 들어올 수
+# 있으므로(실제 기록에 존재한다) 분해는 이 목록과 **정확히 일치하는 줄**만 경계로 본다.
+_PROCESS_SECTIONS = (
+    "What Changed",
+    "Files Touched",
+    "Project Decisions",
+    "Implementation Trace",
+    "Agent Execution Notes",
+    "Docs Update Candidates",
+    "Next Session",
+    "Learning Recovery",
+)
+
+
+def _render_process_sections(
+    what_changed: str,
+    files_touched: str,
+    decisions: dict,
+    implementation_trace: str,
+    notes: dict,
+    docs_update_candidates: str,
+    next_session: str,
+    recovery: dict,
+) -> dict[str, str]:
+    """각 필드를 섹션 블록 문자열로 만든다(헤딩 제외한 본문만)."""
+    questions = _normalize_bullet_items(recovery.get("questions"))
+    related = _normalize_bullet_items(recovery.get("related_candidates"))
+    ai_led = _normalize_bullet_items(recovery.get("ai_led"))
+    unclear = _normalize_bullet_items(recovery.get("unclear_concepts"))
+
+    recovery_lines = [f"### {HEADING_AI_LED}"]
+    recovery_lines += [f"- {a}" for a in ai_led] if ai_led else ["- "]
+    recovery_lines += ["", f"### {HEADING_UNCLEAR}"]
+    recovery_lines += [f"- {u}" for u in unclear] if unclear else ["- "]
+    recovery_lines += ["", f"### {HEADING_QUESTIONS}"]
+    recovery_lines += [f"{i + 1}. {q}" for i, q in enumerate(questions)] if questions else ["1. "]
+    recovery_lines += ["", f"### {HEADING_RELATED}"]
+    recovery_lines += [f"- {r}" for r in related] if related else ["- "]
+
+    return {
+        "What Changed": what_changed.strip() or "- ",
+        "Files Touched": files_touched.strip() or "- ",
+        "Project Decisions": "\n".join([
+            f"- 결정: {decisions.get('decision', '')}",
+            f"- 이유: {decisions.get('reason', '')}",
+            f"- 고려한 대안: {decisions.get('alternatives', '')}",
+            f"- 최종 판단자: {decisions.get('final_judge', 'unresolved')}",
+        ]),
+        "Implementation Trace": implementation_trace.strip() or "- ",
+        "Agent Execution Notes": "\n".join([
+            f"- 막힌 점: {notes.get('blocked', '')}",
+            f"- 에이전트가 한 실수: {notes.get('mistakes', '')}",
+            f"- 다음부터 먼저 확인할 점: {notes.get('next_checks', '')}",
+            f"- 더 나은 작업 방식: {notes.get('better_approach', '')}",
+            f"- evidence: {notes.get('evidence', '')}",
+            f"- scope: {notes.get('scope', 'project')}",
+            f"- confidence: {notes.get('confidence', 'unspecified')}",
+            f"- requires_user_review: {notes.get('requires_user_review', True)}",
+        ]),
+        "Docs Update Candidates": docs_update_candidates.strip() or "- ",
+        "Next Session": next_session.strip() or "- ",
+        "Learning Recovery": "\n".join(recovery_lines),
+    }
+
+
+def _assemble_process_body(sections: dict[str, str]) -> str:
+    lines = ["# Process", ""]
+    for name in _PROCESS_SECTIONS:
+        lines += [f"## {name}", sections.get(name, "- ").rstrip(), ""]
+    return "\n".join(lines).strip() + "\n"
+
+
+def _split_process_body(body: str) -> dict[str, str]:
+    """기존 Process 본문을 섹션 블록으로 되돌린다.
+
+    알려진 헤딩과 정확히 일치하는 줄만 경계로 삼는다 — 본문에 포함된 사용자 헤딩
+    (`## 1. docs/final-review.md ...` 같은)을 섹션 경계로 오인하지 않기 위해서다.
+    하나도 못 찾으면 빈 dict를 반환해 호출부가 전체 교체로 폴백하게 한다.
+    """
+    boundaries = {f"## {name}": name for name in _PROCESS_SECTIONS}
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in body.splitlines():
+        name = boundaries.get(line.strip())
+        if name is not None:
+            current = name
+            sections[current] = []
+            continue
+        if current is not None:
+            sections[current].append(line)
+    return {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
 def _render_process_body(
     what_changed: str,
     files_touched: str,
@@ -785,70 +879,110 @@ def _render_process_body(
     next_session: str,
     recovery: dict,
 ) -> str:
-    questions = _normalize_bullet_items(recovery.get("questions"))
-    related = _normalize_bullet_items(recovery.get("related_candidates"))
-    ai_led = _normalize_bullet_items(recovery.get("ai_led"))
-    unclear = _normalize_bullet_items(recovery.get("unclear_concepts"))
+    return _assemble_process_body(_render_process_sections(
+        what_changed=what_changed,
+        files_touched=files_touched,
+        decisions=decisions,
+        implementation_trace=implementation_trace,
+        notes=notes,
+        docs_update_candidates=docs_update_candidates,
+        next_session=next_session,
+        recovery=recovery,
+    ))
 
-    lines = [
-        "# Process",
-        "",
-        "## What Changed",
-        what_changed.strip() or "- ",
-        "",
-        "## Files Touched",
-        files_touched.strip() or "- ",
-        "",
-        "## Project Decisions",
-        f"- 결정: {decisions.get('decision', '')}",
-        f"- 이유: {decisions.get('reason', '')}",
-        f"- 고려한 대안: {decisions.get('alternatives', '')}",
-        f"- 최종 판단자: {decisions.get('final_judge', 'unresolved')}",
-        "",
-        "## Implementation Trace",
-        implementation_trace.strip() or "- ",
-        "",
-        "## Agent Execution Notes",
-        f"- 막힌 점: {notes.get('blocked', '')}",
-        f"- 에이전트가 한 실수: {notes.get('mistakes', '')}",
-        f"- 다음부터 먼저 확인할 점: {notes.get('next_checks', '')}",
-        f"- 더 나은 작업 방식: {notes.get('better_approach', '')}",
-        f"- evidence: {notes.get('evidence', '')}",
-        f"- scope: {notes.get('scope', 'project')}",
-        f"- confidence: {notes.get('confidence', 'unspecified')}",
-        f"- requires_user_review: {notes.get('requires_user_review', True)}",
-        "",
-        "## Docs Update Candidates",
-        docs_update_candidates.strip() or "- ",
-        "",
-        "## Next Session",
-        next_session.strip() or "- ",
-        "",
-        "## Learning Recovery",
-        f"### {HEADING_AI_LED}",
-    ]
-    lines += [f"- {a}" for a in ai_led] if ai_led else ["- "]
-    lines += ["", f"### {HEADING_UNCLEAR}"]
-    lines += [f"- {u}" for u in unclear] if unclear else ["- "]
-    lines += ["", f"### {HEADING_QUESTIONS}"]
-    lines += [f"{i + 1}. {q}" for i, q in enumerate(questions)] if questions else ["1. "]
-    lines += ["", f"### {HEADING_RELATED}"]
-    lines += [f"- {r}" for r in related] if related else ["- "]
-    lines.append("")
-    return "\n".join(lines).strip() + "\n"
+
+# 호출자가 쓰는 필드 이름 → Process 섹션 헤딩. append_to가 이 이름을 받는다.
+_FIELD_TO_SECTION = {
+    "what_changed": "What Changed",
+    "files_touched": "Files Touched",
+    "project_decisions": "Project Decisions",
+    "implementation_trace": "Implementation Trace",
+    "agent_execution_notes": "Agent Execution Notes",
+    "docs_update_candidates": "Docs Update Candidates",
+    "next_session": "Next Session",
+    "learning_recovery": "Learning Recovery",
+}
+
+
+def _merge_process_body(
+    *,
+    vault_dir: Path,
+    existing: dict | None,
+    append_to: list[str],
+    what_changed: str | None,
+    files_touched: str | None,
+    decisions: dict | None,
+    implementation_trace: str | None,
+    notes: dict | None,
+    docs_update_candidates: str | None,
+    next_session: str | None,
+    recovery: dict | None,
+) -> str:
+    """넘어온 필드만 반영한 Process 본문을 만든다.
+
+    생략(None)한 필드는 기존 Process의 섹션을 그대로 보존한다. 기존 기록이 없거나
+    분해에 실패하면 전체 교체로 폴백한다 — 최악의 경우가 현행 동작과 같아진다.
+    """
+    provided = {
+        "what_changed": what_changed,
+        "files_touched": files_touched,
+        "project_decisions": decisions,
+        "implementation_trace": implementation_trace,
+        "agent_execution_notes": notes,
+        "docs_update_candidates": docs_update_candidates,
+        "next_session": next_session,
+        "learning_recovery": recovery,
+    }
+
+    old_sections: dict[str, str] = {}
+    if existing:
+        try:
+            raw = (vault_dir / existing["rel_path"]).read_text(encoding="utf-8")
+            old_sections = _split_process_body(frontmatter.loads(raw).content)
+        except Exception:
+            old_sections = {}
+
+    if not old_sections and all(v is None for v in provided.values()):
+        raise ValueError(
+            "기록할 내용이 없습니다 — 첫 호출에는 최소한 what_changed가 필요합니다."
+        )
+
+    new_sections = _render_process_sections(
+        what_changed=what_changed or "",
+        files_touched=files_touched or "",
+        decisions=decisions or {},
+        implementation_trace=implementation_trace or "",
+        notes=notes or {},
+        docs_update_candidates=docs_update_candidates or "",
+        next_session=next_session or "",
+        recovery=recovery or {},
+    )
+
+    merged = dict(old_sections)
+    for field, value in provided.items():
+        section = _FIELD_TO_SECTION[field]
+        if value is None:
+            merged.setdefault(section, new_sections[section])
+            continue
+        if field in append_to and old_sections.get(section):
+            merged[section] = f"{old_sections[section]}\n\n{new_sections[section]}"
+        else:
+            merged[section] = new_sections[section]
+    return _assemble_process_body(merged)
 
 
 def write_session_process(
     project: str,
-    what_changed: str,
-    files_touched: str,
-    project_decisions: dict,
-    implementation_trace: str,
-    agent_execution_notes: dict,
-    docs_update_candidates: str,
-    next_session: str,
-    learning_recovery: dict,
-    session_id: str,
+    what_changed: str | None = None,
+    files_touched: str | None = None,
+    project_decisions: dict | None = None,
+    implementation_trace: str | None = None,
+    agent_execution_notes: dict | None = None,
+    docs_update_candidates: str | None = None,
+    next_session: str | None = None,
+    learning_recovery: dict | None = None,
+    session_id: str = "",
+    append_to: list[str] | None = None,
     settings: Settings | None = None,
 ) -> SessionProcessResult:
     """컴팩팅 전/세션 종료 시 Process를 기록하고 10_Worklog/Sessions/에 이중 기록한다.
@@ -856,6 +990,10 @@ def write_session_process(
     project_decisions/agent_execution_notes에 실질 내용이 있으면 Decisions/MemoryPatches
     candidate로 분리 생성한다. 서버 재시작 등으로 이 session_id의 Plan이 없으면 같은
     프로젝트의 최근 미짝 Plan에 재귀속한다.
+
+    **증분 갱신**: 이미 이 세션의 Process가 있으면, 넘긴 필드만 갱신하고 생략한
+    필드는 기존 내용을 그대로 둔다. 커밋이 하나 더 생겼다고 전체를 다시 쓰지 않기
+    위한 것이다. `append_to`에 필드 이름을 주면 교체 대신 기존 내용 뒤에 이어붙인다.
     """
     vault_dir = _vault_dir(settings)
     project = _canonicalize_project(vault_dir, project)
@@ -868,15 +1006,23 @@ def write_session_process(
     notes = agent_execution_notes or {}
     recovery = learning_recovery or {}
 
-    body = _render_process_body(
+    # 같은 세션이 Process를 다시 쓰면(기록 후 작업이 이어진 경우) 갱신한다 —
+    # 안 그러면 낡은 중간 스냅샷과 최신 기록이 나란히 남아 다음 세션 briefing이
+    # 이미 끝난 Next Session 항목을 지시한다.
+    existing_process = _find_session_handoff(vault_dir, project, session_id, "process")
+
+    body = _merge_process_body(
+        vault_dir=vault_dir,
+        existing=existing_process,
+        append_to=append_to or [],
         what_changed=what_changed,
         files_touched=files_touched,
-        decisions=decisions,
+        decisions=project_decisions,
         implementation_trace=implementation_trace,
-        notes=notes,
+        notes=agent_execution_notes,
         docs_update_candidates=docs_update_candidates,
         next_session=next_session,
-        recovery=recovery,
+        recovery=learning_recovery,
     )
 
     date = datetime.now().strftime("%Y-%m-%d")
@@ -889,10 +1035,6 @@ def write_session_process(
         handoff_type="process",
         session_id=session_id,
     )
-    # 같은 세션이 Process를 다시 쓰면(기록 후 작업이 이어진 경우) 갱신한다 —
-    # 안 그러면 낡은 중간 스냅샷과 최신 기록이 나란히 남아 다음 세션 briefing이
-    # 이미 끝난 Next Session 항목을 지시한다.
-    existing_process = _find_session_handoff(vault_dir, project, session_id, "process")
     if existing_process:
         process_result = _rewrite_handoff(vault_dir, existing_process["rel_path"], process_spec)
         worklog_rel_path = _update_worklog_note(vault_dir, session_id, body)

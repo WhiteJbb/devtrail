@@ -1055,3 +1055,132 @@ def test_record_agent_improvement_truncates_long_title(tmp_path):
     # 전문은 본문에 남는다
     content = (tmp_path / result.rel_path).read_text(encoding="utf-8")
     assert long_issue.strip() in content
+
+
+# ── Process 증분 갱신 ─────────────────────────────────────────────────────────
+
+def _first_process(tmp_path: Path, settings, session_id="sess-inc"):
+    return vault_tools.write_session_process(
+        project="Devtrail",
+        what_changed="1. 최초 기록",
+        files_touched="app/a.py",
+        project_decisions={"decision": "A안 채택", "reason": "근거", "final_judge": "사용자"},
+        implementation_trace="1. 조사\n2. 구현",
+        agent_execution_notes={"next_checks": "먼저 확인할 것", "evidence": "테스트 통과"},
+        docs_update_candidates="README 갱신",
+        next_session="1. PR 올리기",
+        learning_recovery={"questions": ["질문1"]},
+        session_id=session_id,
+        settings=settings,
+    )
+
+
+def _process_body(tmp_path: Path, result) -> str:
+    raw = (tmp_path / result.process.rel_path).read_text(encoding="utf-8")
+    return frontmatter.loads(raw).content
+
+
+def test_process_incremental_keeps_omitted_sections(tmp_path):
+    """생략한 필드는 기존 내용이 그대로 남는다 — 전체를 다시 쓰지 않아도 된다."""
+    settings = _settings(tmp_path)
+    _first_process(tmp_path, settings)
+
+    result = vault_tools.write_session_process(
+        project="Devtrail",
+        next_session="1. 머지 완료, 다음은 배포",
+        session_id="sess-inc",
+        settings=settings,
+    )
+
+    body = _process_body(tmp_path, result)
+    assert "1. 머지 완료, 다음은 배포" in body
+    # 생략한 섹션들이 보존됐는지
+    assert "1. 최초 기록" in body
+    assert "app/a.py" in body
+    assert "A안 채택" in body
+    assert "1. 조사" in body
+    assert "먼저 확인할 것" in body
+    assert "질문1" in body
+    # 교체한 섹션의 옛 내용은 사라진다
+    assert "1. PR 올리기" not in body
+
+
+def test_process_incremental_append_mode(tmp_path):
+    settings = _settings(tmp_path)
+    _first_process(tmp_path, settings)
+
+    result = vault_tools.write_session_process(
+        project="Devtrail",
+        what_changed="2. 이어서 한 일",
+        session_id="sess-inc",
+        append_to=["what_changed"],
+        settings=settings,
+    )
+
+    body = _process_body(tmp_path, result)
+    assert "1. 최초 기록" in body
+    assert "2. 이어서 한 일" in body
+    assert body.index("1. 최초 기록") < body.index("2. 이어서 한 일")
+
+
+def test_process_incremental_does_not_duplicate_decision_candidate(tmp_path):
+    """결정을 생략한 증분 호출은 Decision 후보를 새로 만들지 않는다."""
+    settings = _settings(tmp_path)
+    _first_process(tmp_path, settings)
+
+    result = vault_tools.write_session_process(
+        project="Devtrail",
+        what_changed="2. 추가 작업",
+        session_id="sess-inc",
+        append_to=["what_changed"],
+        settings=settings,
+    )
+
+    assert result.decision is None
+    decisions = list((tmp_path / "60_Candidates" / "Decisions").glob("*.md"))
+    assert len(decisions) == 1
+
+
+def test_process_split_ignores_user_headings_in_body(tmp_path):
+    """본문에 들어간 `## 1. ...` 사용자 헤딩을 섹션 경계로 오인하지 않는다.
+
+    실제 2026-09-03 세션 기록의 What Changed가 `## 1. docs/...` 형태였다.
+    """
+    settings = _settings(tmp_path)
+    vault_tools.write_session_process(
+        project="Devtrail",
+        what_changed="## 1. 문서 정정\n\n- 상세 내용\n\n## 2. 코드 수정\n\n- 상세",
+        files_touched="app/a.py",
+        project_decisions={},
+        implementation_trace="흐름",
+        agent_execution_notes={},
+        docs_update_candidates="",
+        next_session="다음",
+        learning_recovery={},
+        session_id="sess-head",
+        settings=settings,
+    )
+
+    result = vault_tools.write_session_process(
+        project="Devtrail",
+        next_session="교체된 다음 할 일",
+        session_id="sess-head",
+        settings=settings,
+    )
+
+    body = _process_body(tmp_path, result)
+    # 사용자 헤딩 2개가 What Changed 안에 온전히 남아야 한다
+    assert "## 1. 문서 정정" in body
+    assert "## 2. 코드 수정" in body
+    assert "app/a.py" in body
+    assert "교체된 다음 할 일" in body
+
+
+def test_process_first_call_requires_content(tmp_path):
+    settings = _settings(tmp_path)
+    with pytest.raises(ValueError):
+        vault_tools.write_session_process(
+            project="Devtrail",
+            session_id="sess-empty",
+            settings=settings,
+        )
