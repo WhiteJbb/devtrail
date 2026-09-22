@@ -232,6 +232,9 @@ def mark_context_answered(
 
     post.content = body + "\n"
     post.metadata["needs_distill"] = True
+    # career bullet 쪽 마커도 함께 푼다 — 답변으로 본문이 늘었는데 한쪽만
+    # 되살리면 이력서 소재는 갱신된 내용을 영영 못 본다.
+    post.metadata["career_distilled"] = False
     try:
         path.write_text(frontmatter.dumps(post), encoding="utf-8")
     except Exception:
