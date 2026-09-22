@@ -26,6 +26,11 @@ _KNOWLEDGE_PREFIXES = ("20_Knowledge/", "30_Projects/")
 _MAX_NOTE_CHARS = 3000
 _MAX_NOTES = 20
 
+# 이 에이전트 전용 처리 완료 마커. `needs_distill`(DistillAgent 소유)과 키를 나눠
+# 쓰는 이유는 nightly에서 둘이 같은 노트를 보기 때문이다 — 키를 공유하면 먼저
+# 도는 쪽이 노트를 소진해 나머지가 항상 빈손이 된다(49d7afd 회귀).
+_CAREER_MARK = "career_distilled"
+
 
 @dataclass(frozen=True)
 class CareerBulletResult:
@@ -67,10 +72,25 @@ class CareerBulletAgent:
         data = complete_json(self._llm(), prompt)
         specs = self._parse_specs(data, source_refs=[n.path for n in notes])
         written = self.writer.write_many(specs)
-        # needs_distill 마킹은 DistillAgent 단독 책임이다. 여기서도 마킹하면
-        # nightly에서 먼저 실행되는 쪽이 노트를 소진해 나머지가 항상 빈손이 된다.
-        # 중복 방지는 7일 recency cutoff + CandidateWriter dedup이 담당한다.
+        # LLM이 답을 준 뒤에만 마킹한다 — 호출이 실패하면 예외가 위로 나가고
+        # 노트는 미처리로 남아 다음 실행에서 재시도된다.
+        # 후보가 0개여도 마킹한다: "뽑을 것이 없다"도 판정이며, 마킹하지 않으면
+        # 같은 노트로 매일 LLM을 다시 부른다.
+        self._mark_career_distilled(notes)
         return CareerBulletResult(written=written, source_refs=[n.path for n in notes])
+
+    def _mark_career_distilled(self, notes: list[WikiNote]) -> None:
+        """처리한 노트에 완료 마커를 찍는다. 한 건 실패가 나머지를 막지 않는다."""
+        import frontmatter
+
+        for note in notes:
+            path = self.vault_dir / note.path
+            try:
+                post = frontmatter.load(str(path))
+                post[_CAREER_MARK] = True
+                path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            except Exception:
+                pass
 
     def _llm(self) -> LLMProvider:
         return self.llm or get_task_llm_provider("writer", self.settings)
@@ -86,10 +106,15 @@ class CareerBulletAgent:
         # needs_distill 필터를 걸지 않는다 — nightly에서 DistillAgent가 먼저 실행되며
         # 같은 노트를 needs_distill=False로 마킹하므로, 필터를 걸면 career bullet이
         # 볼 노트가 항상 없다 (49d7afd 이후 회귀).
+        #
+        # 대신 전용 마커로 거른다. recency cutoff는 중복 방지가 아니라 창의 상한선일
+        # 뿐이라, 마커가 없으면 같은 노트가 창 안에 머무는 동안 매일 재투입된다
+        # (실측: 세션 2건이 8일간 후보 28개로 증폭).
         notes = [
             n for n in all_notes
             if n.path.startswith(_SOURCE_PREFIXES)
             and self._note_date(n) >= cutoff
+            and n.metadata.get(_CAREER_MARK) is not True
         ]
         if project:
             notes = [n for n in notes if str(n.metadata.get("project") or "").lower() == project.lower()

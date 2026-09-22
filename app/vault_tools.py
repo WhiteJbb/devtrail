@@ -312,6 +312,7 @@ def _update_worklog_note(vault_dir: Path, session_id: str, body: str) -> str | N
         # 재기록으로 본문이 바뀌었으니 distill 대상으로 되살린다 — 이미 distill이 지나간
         # 노트(needs_distill=False)에 새 내용이 들어와도 다시 증류되도록.
         post.metadata["needs_distill"] = True
+        post.metadata["career_distilled"] = False
         post.metadata.setdefault("distill_kinds", ["knowledge", "blog_idea"])
         # 본문 교체 시 Context Questions/Recovery는 이 함수 밖(질문 파이프라인·사람 답변)에서
         # 쌓인 기록이므로 떼어뒀다가 다시 붙인다 — 안 그러면 재기록이 답변을 지운다.
