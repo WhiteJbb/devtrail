@@ -162,14 +162,15 @@ def write_work_plan(project: str, goal: str, context_read: str, scope: str, appr
 @mcp.tool()
 def write_session_process(
     project: str,
-    what_changed: str,
-    files_touched: str,
-    project_decisions: dict,
-    implementation_trace: str,
-    agent_execution_notes: dict,
-    docs_update_candidates: str,
-    next_session: str,
-    learning_recovery: dict,
+    what_changed: str | None = None,
+    files_touched: str | None = None,
+    project_decisions: dict | None = None,
+    implementation_trace: str | None = None,
+    agent_execution_notes: dict | None = None,
+    docs_update_candidates: str | None = None,
+    next_session: str | None = None,
+    learning_recovery: dict | None = None,
+    append_to: list[str] | None = None,
 ) -> dict:
     """컴팩팅 전 또는 세션 종료 시 Process를 기록한다. session_id는 서버가 자동 주입한다.
 
@@ -179,10 +180,21 @@ def write_session_process(
     learning_recovery: {ai_led, unclear_concepts, questions, related_candidates}
 
     여러 항목이 있는 필드는 한 문단으로 잇지 말고 markdown 불릿/번호 리스트로
-    작성한다. 기록 후 작업이 더 이어졌다면(커밋 발생) 세션을 끝내기 전에 이 tool을
-    다시 호출한다 — 같은 세션 기록(Process/워크로그)이 새 파일 없이 갱신된다.
-    agent_execution_notes 중 next_checks/better_approach만 Lessons 패치 후보로
-    증류되므로, 이 두 필드는 다른 세션에도 통하는 일반화된 교훈으로 쓴다.
+    작성한다. agent_execution_notes 중 next_checks/better_approach만 Lessons 패치
+    후보로 증류되므로, 이 두 필드는 다른 세션에도 통하는 일반화된 교훈으로 쓴다.
+
+    **첫 호출**은 전체를 넘긴다(최소한 what_changed는 필요).
+
+    **이어서 작업이 생겼을 때(커밋 발생 등)는 바뀐 필드만 넘긴다.** 생략한 필드는
+    기존 기록이 그대로 유지되므로 Process 전체를 다시 쓸 필요가 없다. 기존 내용 뒤에
+    이어붙이려면 `append_to`에 필드 이름을 준다:
+
+        write_session_process(
+            project="X",
+            what_changed="5. PR #58 머지 후 브랜치 정리",
+            next_session="1. ...",          # 교체
+            append_to=["what_changed"],      # 이어붙임
+        )
     """
     _touch_session_marker()
     result = vault_tools.write_session_process(
@@ -196,6 +208,7 @@ def write_session_process(
         next_session=next_session,
         learning_recovery=learning_recovery,
         session_id=_SESSION_ID,
+        append_to=append_to,
         settings=get_settings(),
     )
     _write_session_marker(process_written=True)
