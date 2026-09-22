@@ -151,9 +151,13 @@ def test_weekly_distill_saves_weekly_digest(tmp_path):
 
 
 def test_daily_distill_saves_daily_digest(tmp_path):
+    # _seed_session은 datetime.now() 기준으로 노트를 만든다. agent의 now를 고정
+    # 날짜로 주면 _today_sessions가 그 노트를 못 찾아, 내용이 빈 digest 경로를
+    # 검증하게 된다(빈 날은 저장을 건너뛰므로 이제 digest_rel_path가 비어버린다).
+    # weekly 쪽은 7일 창이라 어긋난 날짜도 걸려 들어와 그대로 통과했다.
     _seed_session(tmp_path)
     llm = _TwoCallLLM(_distill_response(), _career_response())
-    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime.now())
 
     result = agent.run(weekly=False)
 

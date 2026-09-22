@@ -84,7 +84,19 @@ class NightlyDistillAgent:
             archived=archived,
             auto_applied=auto_applied,
         )
-        digest_path, digest_rel = self._save_digest(digest_text, weekly=weekly)
+
+        # 실질 내용이 0인 날은 vault에 남기지 않는다. 기록이 없는 날에도 파일이
+        # 쌓이면 나중에 "그날 무엇을 했나"를 되묻는 사람이 빈 문서만 보게 되고,
+        # WeeklyReview가 빈 digest를 입력으로 받아 없던 활동을 서술한다.
+        # Telegram은 그대로 보낸다 — "오늘 기록 없음"은 사람이 알아야 한다.
+        has_content = self._has_content(
+            distill_result, career_result, weekly=weekly,
+            expired=expired, archived=archived, auto_applied=auto_applied,
+        )
+        if has_content:
+            digest_path, digest_rel = self._save_digest(digest_text, weekly=weekly)
+        else:
+            digest_path, digest_rel = None, ""
         sent = self._try_send_telegram(digest_text)
 
         return NightlyDistillResult(
@@ -143,6 +155,34 @@ class NightlyDistillAgent:
         return applied
 
     # ── Digest 빌더 ──────────────────────────────────────────────────────────
+
+    def _has_content(
+        self,
+        distill: DistillResult,
+        career: CareerBulletResult,
+        weekly: bool = False,
+        expired: list[str] | None = None,
+        archived: list[str] | None = None,
+        auto_applied: list[str] | None = None,
+    ) -> bool:
+        """이 digest에 그날 새로 생긴 사실이 하나라도 있는가.
+
+        기한 초과 태스크는 판정에서 뺀다 — 매일 같은 값이라 "오늘 있었던 일"이
+        아니고, 넣으면 초과 태스크 하나 때문에 빈 digest가 영구히 쌓인다.
+
+        판정은 AND(전부 0일 때만 비었다고 본다)로 좁게 잡는다. 하나라도 있으면
+        저장한다 — 실제 기록을 잃는 쪽이 빈 파일이 남는 쪽보다 나쁘다.
+        """
+        sessions = self._week_sessions() if weekly else self._today_sessions()
+        return bool(
+            sessions
+            or distill.written
+            or career.written
+            or self._done_tasks(weekly=weekly)
+            or expired
+            or archived
+            or auto_applied
+        )
 
     def _build_digest(
         self,
@@ -391,6 +431,9 @@ class NightlyDistillAgent:
             "date": date,
             "status": "generated",
             "tags": ["digest", kind],
+            # 저장된 digest는 실질 내용이 있다는 뜻이다(빈 날은 저장 자체를 건너뛴다).
+            # WeeklyReview가 입력을 고를 때 본문을 파싱하지 않고 이 키로 판단한다.
+            "has_content": True,
         }
         post = frontmatter.Post(digest_text.strip() + "\n", **metadata)
         path.write_text(frontmatter.dumps(post), encoding="utf-8")
