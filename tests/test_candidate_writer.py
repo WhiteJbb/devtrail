@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import socket
+import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import frontmatter
 
@@ -71,6 +74,51 @@ def test_knowledge_dedup_still_active(tmp_path):
     r1 = writer.write(spec1)
     r2 = writer.write(spec2)
     assert r1.rel_path == r2.rel_path  # dedup 유지: 동일 후보 재사용
+
+
+def test_same_title_in_different_projects_keeps_both_candidates(tmp_path):
+    writer = _writer(tmp_path)
+    a = writer.write(CandidateSpec(kind="knowledge", title="공통 제목", body="프로젝트 A의 사실", project="A"))
+    b = writer.write(CandidateSpec(kind="knowledge", title="공통 제목", body="프로젝트 B의 사실", project="B"))
+
+    assert a.rel_path != b.rel_path
+    post_a = frontmatter.loads(a.path.read_text(encoding="utf-8"))
+    post_b = frontmatter.loads(b.path.read_text(encoding="utf-8"))
+    assert post_a.metadata["project"] == "A"
+    assert post_b.metadata["project"] == "B"
+    assert "프로젝트 A의 사실" in post_a.content
+    assert "프로젝트 B의 사실" in post_b.content
+
+
+def test_similar_title_does_not_replace_a_different_candidate(tmp_path):
+    writer = _writer(tmp_path)
+    first = writer.write(CandidateSpec(kind="knowledge", title="RAG 파이프라인 구조", body="사실 A", project="A"))
+    second = writer.write(CandidateSpec(kind="knowledge", title="RAG 파이프라인 구성", body="사실 B", project="A"))
+
+    assert first.rel_path != second.rel_path
+    assert "사실 A" in first.path.read_text(encoding="utf-8")
+    assert "사실 B" in second.path.read_text(encoding="utf-8")
+
+
+def test_meaningful_title_punctuation_is_not_removed_for_dedup(tmp_path):
+    writer = _writer(tmp_path)
+    first = writer.write(CandidateSpec(kind="knowledge", title="C guide", body="C facts", project="A"))
+    second = writer.write(CandidateSpec(kind="knowledge", title="C++ guide", body="C++ facts", project="A"))
+
+    assert first.rel_path != second.rel_path
+    assert "C facts" in first.path.read_text(encoding="utf-8")
+    assert "C++ facts" in second.path.read_text(encoding="utf-8")
+    assert not (tmp_path / ".devtrail-candidate-write.lock").exists()
+
+
+def test_exact_upsert_respects_project_boundary(tmp_path):
+    writer = _writer(tmp_path)
+    a = writer.write(CandidateSpec(kind="memory_patch", title="같은 교훈", body="A", project="A"))
+    b = writer.upsert_exact(CandidateSpec(kind="memory_patch", title="같은 교훈", body="B", project="B"))
+
+    assert a.rel_path != b.rel_path
+    assert "A" in a.path.read_text(encoding="utf-8")
+    assert "B" in b.path.read_text(encoding="utf-8")
 
 
 def test_memory_patch_includes_evidence_confidence_review_fields(tmp_path):
@@ -274,6 +322,42 @@ def test_different_thread_slug_creates_separate_candidate(tmp_path):
     )
 
     assert len(list((tmp_path / "60_Candidates/BlogIdeas").glob("*.md"))) == 2
+
+
+def test_thread_merge_respects_project_boundary(tmp_path):
+    first = _writer(tmp_path, now=datetime(2026, 8, 24)).write(_thread_spec(project="A"))
+    second = _writer(tmp_path, now=datetime(2026, 8, 25)).write(_thread_spec(project="B"))
+
+    assert first.rel_path != second.rel_path
+    assert len(list((tmp_path / "60_Candidates/BlogIdeas").glob("*.md"))) == 2
+
+
+def test_parallel_process_writes_allocate_distinct_candidate_files(tmp_path):
+    code = (
+        "from pathlib import Path; "
+        "from app.services.candidate_writer import CandidateSpec, CandidateWriter; "
+        "import sys; "
+        "CandidateWriter(Path(sys.argv[1])).write(CandidateSpec("
+        "kind='knowledge', title='shared title', body=sys.argv[2], project=sys.argv[2]))"
+    )
+    repo_root = Path(__file__).resolve().parents[1]
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", code, str(tmp_path), project],
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for project in ("Project A", "Project B")
+    ]
+    outputs = [process.communicate(timeout=30) for process in processes]
+
+    assert [process.returncode for process in processes] == [0, 0], outputs
+    candidates = list((tmp_path / "60_Candidates/Knowledge").glob("*.md"))
+    assert len(candidates) == 2
+    posts = [frontmatter.loads(path.read_text(encoding="utf-8")) for path in candidates]
+    assert {post.metadata["project"] for post in posts} == {"Project A", "Project B"}
 
 
 def test_blog_idea_without_thread_keeps_existing_behavior(tmp_path):

@@ -97,6 +97,24 @@ def test_first_tool_call_creates_marker_file(vault_env, monkeypatch):
     assert marker["session_id"] == mod._SESSION_ID
     assert marker["plan_written"] is False
     assert marker["process_written"] is False
+    assert marker["pid"]
+    assert marker["repo_root"] == str(vault_env.resolve())
+
+
+def test_mcp_processes_keep_separate_markers(vault_env, monkeypatch):
+    import json
+
+    first = _reload_mcp_server(vault_env, monkeypatch)
+    first._write_session_marker(plan_written=True)
+    first_path = first._session_marker_path()
+
+    second = _reload_mcp_server(vault_env, monkeypatch)
+    second._write_session_marker(plan_written=False)
+    second_path = second._session_marker_path()
+
+    assert first_path != second_path
+    assert json.loads(first_path.read_text(encoding="utf-8"))["plan_written"] is True
+    assert json.loads(second_path.read_text(encoding="utf-8"))["plan_written"] is False
 
 
 def test_write_session_process_updates_marker_file(vault_env, monkeypatch):

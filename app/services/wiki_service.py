@@ -228,7 +228,13 @@ class WikiService:
         results = [r for r in self._search_notes(notes, query, limit=limit + 1) if r.note.path != rel_path]
         return results[:limit]
 
-    def search(self, query: str, limit: int = 10, prefixes: tuple[str, ...] | None = None) -> list[WikiSearchResult]:
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        prefixes: tuple[str, ...] | None = None,
+        exclude_prefixes: tuple[str, ...] = (),
+    ) -> list[WikiSearchResult]:
         """Simple keyword search over parsed vault notes.
 
         prefixes가 주어지면 점수화·절단 전에 해당 경로 접두사로만 필터링한다 —
@@ -238,6 +244,8 @@ class WikiService:
         notes = self.scan_notes()
         if prefixes:
             notes = [n for n in notes if n.path.startswith(prefixes)]
+        if exclude_prefixes:
+            notes = [n for n in notes if not n.path.startswith(exclude_prefixes)]
         return self._search_notes(notes, query, limit=limit)
 
     def _search_notes(self, notes: list[WikiNote], query: str, limit: int = 10) -> list[WikiSearchResult]:

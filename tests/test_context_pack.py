@@ -196,3 +196,75 @@ def test_agent_memory_loader_includes_lessons(tmp_path):
 
     assert "40_AgentMemory/06_Lessons.md" in memory.source_refs
     assert "테스트는 .venv로 실행한다" in memory.render()
+
+
+def test_agent_memory_loader_keeps_latest_tail_when_file_is_long(tmp_path):
+    _write_agent_memory(tmp_path, "06_Lessons.md", "Lessons", "- 오래된 교훈\n" * 600 + "- LATEST_LESSON_3200_MARKER")
+
+    memory = AgentMemoryLoader(tmp_path).load()
+
+    assert "LATEST_LESSON_3200_MARKER" in memory.render()
+    assert len(memory.blocks[0].body) <= 2020
+
+
+def test_agent_memory_loader_keeps_current_focus_head_when_file_is_long(tmp_path):
+    _write_agent_memory(
+        tmp_path,
+        "01_CurrentFocus.md",
+        "Current Focus",
+        "IMPORTANT_CURRENT_FOCUS\n" + "x" * 3200,
+    )
+
+    memory = AgentMemoryLoader(tmp_path).load()
+
+    focus = next(block for block in memory.blocks if block.rel_path.endswith("01_CurrentFocus.md"))
+    assert "IMPORTANT_CURRENT_FOCUS" in focus.body
+    assert len(focus.body) <= 2020
+
+
+def test_project_scoped_memory_patch_only_loads_for_matching_project(tmp_path):
+    lessons = (
+        '<!-- devtrail-memory-patch: {"scope":"project","project":"Alpha"} -->\nalpha-only\n\n'
+        '<!-- devtrail-memory-patch: {"scope":"project","project":"Beta"} -->\nbeta-only\n\n'
+        '<!-- devtrail-memory-patch: {"scope":"global","project":""} -->\nglobal-lesson\n'
+    )
+    _write_agent_memory(tmp_path, "06_Lessons.md", "Lessons", lessons)
+
+    alpha = AgentMemoryLoader(tmp_path).load(project="Alpha").render()
+    beta = AgentMemoryLoader(tmp_path).load(project="Beta").render()
+    global_memory = AgentMemoryLoader(tmp_path).load().render()
+
+    assert "alpha-only" in alpha and "beta-only" not in alpha
+    assert "beta-only" in beta and "alpha-only" not in beta
+    assert "global-lesson" in alpha and "global-lesson" in beta
+    assert "alpha-only" not in global_memory and "beta-only" not in global_memory
+
+
+@pytest.mark.parametrize("scope_json", ["[]", "null"])
+def test_project_memory_loader_tolerates_non_object_scope_marker(tmp_path, scope_json):
+    _write_agent_memory(
+        tmp_path,
+        "06_Lessons.md",
+        "Lessons",
+        f"<!-- devtrail-memory-patch: {scope_json} -->\nlegacy-patch",
+    )
+
+    memory = AgentMemoryLoader(tmp_path).load().render()
+
+    assert "legacy-patch" in memory
+
+
+def test_context_pack_excludes_scoped_agent_memory_from_related_notes(tmp_path):
+    _write_project_context(tmp_path, "Beta", "Beta context")
+    _write_agent_memory(
+        tmp_path,
+        "06_Lessons.md",
+        "Lessons",
+        '<!-- devtrail-memory-patch: {"scope":"project","project":"Alpha"} -->\n'
+        "SECRET_A_PROJECT_FACT",
+    )
+
+    pack = ContextPackBuilder(tmp_path).build("Beta SECRET_A_PROJECT_FACT")
+
+    assert "SECRET_A_PROJECT_FACT" not in pack.agent_memory_section
+    assert "SECRET_A_PROJECT_FACT" not in pack.relevant_notes_section

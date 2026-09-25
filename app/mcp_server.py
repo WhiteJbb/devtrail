@@ -13,7 +13,8 @@ session_id를 인자로만 받는 상태 없는 함수로 유지한다.
 from __future__ import annotations
 
 import dataclasses
-import json
+import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -22,49 +23,48 @@ from mcp.server.fastmcp import FastMCP
 
 from app import vault_tools
 from app.config import get_settings
+from app.services.session_markers import marker_path, read_marker, write_json_atomic
 
 _SESSION_ID = str(uuid4())
+_PROCESS_STARTED_AT = datetime.now().isoformat()
+_MARKER_LOCK = threading.RLock()
 
 mcp = FastMCP("devtrail-vault")
 
 
 def _session_marker_path() -> Path:
-    """Tier 1 SessionStart/Stop 훅이 참조할 마커 파일 경로.
-
-    이 저장소의 .claude/settings.json에는 아직 등록하지 않았다(사용자 결정) — 훅
-    스크립트만 scripts/hooks/에 준비해두고, 등록 여부는 사람이 판단한다.
-    """
-    return Path.cwd() / ".claude" / ".vault-mcp" / "current_session.json"
+    """이 MCP 서버 프로세스 전용 marker 경로를 반환한다."""
+    return marker_path(Path.cwd(), _SESSION_ID)
 
 
 def _write_session_marker(
     process_written: bool | None = None, plan_written: bool | None = None
 ) -> None:
-    """세션 마커를 갱신한다. None인 필드는 같은 세션의 기존 값을 보존한다.
+    """이 프로세스 전용 마커를 갱신한다. None인 필드는 기존 값을 보존한다.
 
     process_written은 Stop 훅(stop-process-check)이, plan_written은 PreToolUse
-    훅(plan-check)이 읽는다 — write_work_plan 없이 코드 수정을 시작하면 차단하기
-    위한 상태다.
+    훅(plan-check)이 같은 repo의 live MCP 프로세스가 하나일 때만 읽는다.
     """
-    marker = _session_marker_path()
-    data = {"session_id": _SESSION_ID, "process_written": False, "plan_written": False}
-    try:
-        existing = json.loads(marker.read_text(encoding="utf-8"))
-        if existing.get("session_id") == _SESSION_ID:
-            data["process_written"] = bool(existing.get("process_written"))
-            data["plan_written"] = bool(existing.get("plan_written"))
-    except (OSError, ValueError):
-        pass
-    if process_written is not None:
-        data["process_written"] = process_written
-    if plan_written is not None:
-        data["plan_written"] = plan_written
-    data["updated_at"] = datetime.now().isoformat()
-    try:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass  # 훅 연동은 best-effort — 마커 기록 실패로 tool 자체를 막지 않는다
+    with _MARKER_LOCK:
+        marker = _session_marker_path()
+        existing = read_marker(marker) or {}
+        data = {
+            "session_id": _SESSION_ID,
+            "repo_root": str(Path.cwd().resolve()),
+            "pid": os.getpid(),
+            "process_started_at": _PROCESS_STARTED_AT,
+            "process_written": bool(existing.get("process_written")),
+            "plan_written": bool(existing.get("plan_written")),
+        }
+        if process_written is not None:
+            data["process_written"] = process_written
+        if plan_written is not None:
+            data["plan_written"] = plan_written
+        data["updated_at"] = datetime.now().isoformat()
+        try:
+            write_json_atomic(marker, data)
+        except OSError:
+            pass  # 훅 연동은 best-effort — 마커 기록 실패로 tool 자체를 막지 않는다
 
 
 def _touch_session_marker() -> None:
@@ -77,8 +77,8 @@ def _touch_session_marker() -> None:
     호출할 수단이 없으므로 빠져나갈 방법이 없는 교착이다(2026-09-07 실제 발생).
 
     탐침은 tool을 호출하지 않으므로, 호출 시점으로 미루면 라이브 세션만 마커를 남긴다.
-    인자 없는 _write_session_marker는 session_id가 다른 이전 마커를 False로 초기화하고
-    같은 세션의 값은 보존한다 — 그래서 매 tool 호출마다 불러도 안전하다.
+    마커는 MCP 프로세스별 파일이다. 훅은 repo 안에 최근 갱신된 live MCP marker가
+    정확히 하나일 때만 읽으며, 동시에 복수 세션이면 잘못된 상태 강제를 피한다.
     """
     _write_session_marker()
 
