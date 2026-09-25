@@ -14,6 +14,7 @@ import frontmatter
 from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.prompts import render_prompt
+from app.services.candidate_writer import atomic_write_text
 from app.services.identity import resolve_agent, resolve_host
 from app.services.repo_snapshot import RepoSnapshot, capture_repo_snapshot
 from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
@@ -570,7 +571,7 @@ class CaptureAgent:
         path = self.vault_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         post = frontmatter.Post(body.strip() + "\n", **metadata)
-        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        atomic_write_text(path, frontmatter.dumps(post))
         return CaptureResult(path=path, rel_path=rel_path, created=True, kind=kind)
 
     def _log(self, action: str, label: str, rel_path: str) -> None:

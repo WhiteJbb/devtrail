@@ -37,14 +37,16 @@ def test_dedup_prevents_duplicate_title(tmp_path):
     assert len(files) == 1
 
 
-def test_dedup_similar_title_blocked(tmp_path):
+def test_dedup_similar_title_preserves_separate_candidates(tmp_path):
     writer = CandidateWriter(vault_dir=tmp_path, now=datetime(2026, 6, 23, 9, 0))
     spec1 = CandidateSpec(kind="knowledge", title="RAG 검색 전략 개요", body="내용", source_refs=[])
     spec2 = CandidateSpec(kind="knowledge", title="RAG 검색 전략 개요 정리", body="내용2", source_refs=[])
     r1 = writer.write(spec1)
     r2 = writer.write(spec2)
 
-    assert r1.rel_path == r2.rel_path
+    assert r1.rel_path != r2.rel_path
+    assert "내용" in r1.path.read_text(encoding="utf-8")
+    assert "내용2" in r2.path.read_text(encoding="utf-8")
 
 
 def test_dedup_different_title_allowed(tmp_path):

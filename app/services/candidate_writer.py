@@ -3,20 +3,93 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import os
+import tempfile
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import frontmatter
 
 from app.services.identity import resolve_agent, resolve_host
 from app.services.wiki_service import WikiService
 
-_DEDUP_THRESHOLD = 0.85  # 제목 유사도 임계값
 _DEDUP_LOOKBACK_DAYS = 14  # 최근 N일 이내 후보만 dedup 대상
 _FILENAME_MAX_LEN = 50  # 파일명 길이 상한 — title 원문은 frontmatter/본문에 그대로 남는다
+
+_PROCESS_WRITE_LOCK = threading.RLock()
+_WRITE_LOCK_STATE = threading.local()
+
+
+@contextmanager
+def candidate_write_lock(vault_dir: Path) -> Iterator[None]:
+    """같은 머신의 후보·메모리 쓰기를 프로세스 간 직렬화한다."""
+    with _PROCESS_WRITE_LOCK:
+        lock_key = os.path.normcase(str(Path(vault_dir).resolve()))
+        depths = getattr(_WRITE_LOCK_STATE, "depths", {})
+        depth = depths.get(lock_key, 0)
+        if depth:
+            depths[lock_key] = depth + 1
+            try:
+                yield
+            finally:
+                depths[lock_key] = depth
+            return
+
+        lock_id = hashlib.sha256(lock_key.encode("utf-8")).hexdigest()
+        lock_path = Path(tempfile.gettempdir()) / "devtrail-locks" / f"{lock_id}.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as lock_file:
+            if os.name == "nt":
+                import msvcrt
+
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.seek(0)
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                while True:
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        time.sleep(0.05)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+            depths[lock_key] = 1
+            _WRITE_LOCK_STATE.depths = depths
+            try:
+                yield
+            finally:
+                depths.pop(lock_key, None)
+                if os.name == "nt":
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    """같은 파일시스템 안에서 완성된 내용으로 교체한다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+    ) as temp_file:
+        temp_path = Path(temp_file.name)
+        temp_file.write(content)
+    try:
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 _CANDIDATE_DIRS = {
@@ -72,7 +145,7 @@ class CandidateWriter:
         self.now = now
 
     def find_duplicate(self, spec: CandidateSpec) -> str | None:
-        """같은 kind 폴더에서 유사 제목의 기존 후보를 찾아 rel_path를 반환한다. 없으면 None."""
+        """같은 프로젝트에서 제목이 정확히 같은 후보를 찾는다."""
         kind = self._normalize_kind(spec.kind)
         if kind not in _CANDIDATE_DIRS:
             return None
@@ -87,6 +160,7 @@ class CandidateWriter:
             try:
                 existing = frontmatter.loads(md_path.read_text(encoding="utf-8"))
                 existing_title = str(existing.metadata.get("title") or "").strip()
+                existing_project = str(existing.metadata.get("project") or "").strip()
                 created_str = str(existing.metadata.get("created_at") or "")
                 if created_str:
                     file_date = datetime.strptime(created_str[:10], "%Y-%m-%d")
@@ -95,16 +169,19 @@ class CandidateWriter:
             except Exception:
                 continue
 
-            if not existing_title:
+            if not existing_title or existing_project.casefold() != spec.project.strip().casefold():
                 continue
 
-            ratio = SequenceMatcher(None, norm_new, self._norm_title(existing_title)).ratio()
-            if ratio >= _DEDUP_THRESHOLD:
+            if norm_new == self._norm_title(existing_title):
                 return str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
 
         return None
 
     def write(self, spec: CandidateSpec, dedup: bool = True) -> CandidateWriteResult:
+        with candidate_write_lock(self.vault_dir):
+            return self._write_locked(spec, dedup)
+
+    def _write_locked(self, spec: CandidateSpec, dedup: bool = True) -> CandidateWriteResult:
         kind = self._normalize_kind(spec.kind)
         if kind not in _CANDIDATE_DIRS:
             raise ValueError(f"unsupported candidate kind: {spec.kind}")
@@ -162,12 +239,14 @@ class CandidateWriter:
             metadata["scope"] = spec.scope
             metadata["confidence"] = spec.confidence
             metadata["requires_user_review"] = spec.requires_user_review
+            if spec.session_id:
+                metadata["session_id"] = spec.session_id
             if spec.target_file:
                 metadata["target_file"] = spec.target_file
 
         body = self._render_body(spec)
         post = frontmatter.Post(body, **metadata)
-        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        atomic_write_text(path, frontmatter.dumps(post))
 
         result = CandidateWriteResult(spec=spec, path=path, rel_path=rel_path)
         self.wiki_service.append_vault_log("distill", spec.title, [rel_path])
@@ -182,24 +261,33 @@ class CandidateWriter:
         같은 세션이 write를 재호출하는 경로(예: Process 재기록 후 memory_patch 갱신)용.
         유사도 dedup은 날짜만 다른 이전 세션 후보를 잘못 잡을 수 있어 정확 일치만 본다.
         """
-        kind = self._normalize_kind(spec.kind)
-        if kind not in _CANDIDATE_DIRS:
-            raise ValueError(f"unsupported candidate kind: {spec.kind}")
-        cand_dir = self.vault_dir / _CANDIDATE_DIRS[kind]
-        if cand_dir.exists():
-            target_title = spec.title.strip()
-            for md_path in cand_dir.glob("*.md"):
-                try:
-                    existing = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-                except Exception:
-                    continue
-                if str(existing.metadata.get("title") or "").strip() != target_title:
-                    continue
-                rel = str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
-                updated = self._update_existing(rel, spec)
-                if updated is not None:
-                    return updated
-        return self.write(spec, dedup=False)
+        with candidate_write_lock(self.vault_dir):
+            kind = self._normalize_kind(spec.kind)
+            if kind not in _CANDIDATE_DIRS:
+                raise ValueError(f"unsupported candidate kind: {spec.kind}")
+            cand_dir = self.vault_dir / _CANDIDATE_DIRS[kind]
+            if cand_dir.exists():
+                target_title = spec.title.strip()
+                session_upsert = kind == "memory_patch" and bool(spec.session_id)
+                for md_path in cand_dir.glob("*.md"):
+                    try:
+                        existing = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    if str(existing.metadata.get("project") or "").strip().casefold() != spec.project.strip().casefold():
+                        continue
+                    if session_upsert:
+                        if str(existing.metadata.get("session_id") or "") != spec.session_id:
+                            continue
+                    elif str(existing.metadata.get("title") or "").strip() != target_title:
+                        continue
+                    if spec.session_id and str(existing.metadata.get("session_id") or "") != spec.session_id:
+                        continue
+                    rel = str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
+                    updated = self._update_existing(rel, spec)
+                    if updated is not None:
+                        return updated
+            return self._write_locked(spec, dedup=False)
 
     def _merge_thread(self, slug: str, spec: CandidateSpec) -> CandidateWriteResult | None:
         """같은 thread 슬러그의 기존 BlogIdea 후보에 소스와 Updates 한 줄을 누적한다.
@@ -219,6 +307,8 @@ class CandidateWriter:
                 continue
             if thread_slug(str(post.metadata.get("thread") or "")) != slug:
                 continue
+            if str(post.metadata.get("project") or "").strip().casefold() != spec.project.strip().casefold():
+                continue
             if str(post.metadata.get("status", "") or "").strip().lower() != "candidate":
                 continue
 
@@ -230,7 +320,7 @@ class CandidateWriter:
             # retention TTL이 updated_at을 보고 살아있는 thread를 만료시키지 않게 한다.
             post.metadata["updated_at"] = self._now().strftime("%Y-%m-%dT%H:%M:%S")
             post.content = self._append_thread_update(post.content, spec, merged_refs)
-            md_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            atomic_write_text(md_path, frontmatter.dumps(post))
 
             rel = str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
             self.wiki_service.append_vault_log("thread-append", spec.title, [rel])
@@ -265,6 +355,8 @@ class CandidateWriter:
             return None
         if str(existing.metadata.get("status", "") or "").strip().lower() != "candidate":
             return None
+        if str(existing.metadata.get("project") or "").strip().casefold() != spec.project.strip().casefold():
+            return None
 
         old_refs = [str(r) for r in (existing.metadata.get("source_refs") or [])]
         merged_refs = list(dict.fromkeys(old_refs + list(spec.source_refs)))
@@ -278,7 +370,7 @@ class CandidateWriter:
         if new_summary:
             existing.metadata["summary"] = new_summary
         existing.content = self._render_body(spec)
-        path.write_text(frontmatter.dumps(existing), encoding="utf-8")
+        atomic_write_text(path, frontmatter.dumps(existing))
 
         self.wiki_service.append_vault_log("distill-update", spec.title, [rel_path])
         return CandidateWriteResult(spec=spec, path=path, rel_path=rel_path)
@@ -354,10 +446,8 @@ class CandidateWriter:
 
     @staticmethod
     def _norm_title(title: str) -> str:
-        """dedup 비교용 정규화: 소문자, 특수문자 제거, 공백 정리."""
-        t = title.lower().strip()
-        t = re.sub(r"[^0-9a-z가-힣\s]", " ", t)
-        return re.sub(r"\s+", " ", t).strip()
+        """대소문자와 공백만 정리해 의미 있는 문장부호를 보존한다."""
+        return re.sub(r"\s+", " ", title).strip().casefold()
 
     def _slug(self, value: str) -> str:
         """파일시스템 금지 문자를 제거하고, 파일명 길이를 안전한 수준으로 자른다.

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import time
+from datetime import datetime as RealDateTime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -402,6 +406,98 @@ def test_write_session_process_memory_patch_updated_for_same_session(tmp_path):
     assert "테스트와 린트를 먼저 실행" in content
 
 
+def test_write_session_process_memory_patch_upsert_crosses_midnight(tmp_path, monkeypatch):
+    class FrozenDateTime(RealDateTime):
+        current = RealDateTime(2026, 8, 31, 23, 59)
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.replace(tzinfo=tz) if tz else cls.current
+
+    monkeypatch.setattr(vault_tools, "datetime", FrozenDateTime)
+    settings = _settings(tmp_path)
+    common = {
+        "project": "Devtrail", "what_changed": "x", "files_touched": "x",
+        "project_decisions": {}, "implementation_trace": "x",
+        "docs_update_candidates": "", "next_session": "", "learning_recovery": {},
+        "session_id": "midnight-session", "settings": settings,
+    }
+    first = vault_tools.write_session_process(
+        **common, agent_execution_notes={"next_checks": "before-midnight"}
+    )
+    FrozenDateTime.current = RealDateTime(2026, 9, 1, 0, 1)
+    second = vault_tools.write_session_process(
+        **common, agent_execution_notes={"next_checks": "after-midnight"}
+    )
+
+    assert first.memory_patch is not None and second.memory_patch is not None
+    assert first.memory_patch.rel_path == second.memory_patch.rel_path
+    patches = list((tmp_path / "60_Candidates/MemoryPatches").glob("*.md"))
+    assert len(patches) == 1
+    body = frontmatter.loads(patches[0].read_text(encoding="utf-8")).content
+    assert "after-midnight" in body
+    assert "before-midnight" not in body
+    assert "2026-09-01" in body
+
+
+def test_write_session_process_serializes_multiprocess_appends(tmp_path):
+    worker_count = 4
+    ready_dir = tmp_path / "ready"
+    ready_dir.mkdir()
+    gate = tmp_path / "start"
+    repo_root = Path(__file__).resolve().parents[1]
+    code = "\n".join([
+        "import sys, time",
+        "sys.stdout.reconfigure(encoding='utf-8')",
+        "from pathlib import Path",
+        "from types import SimpleNamespace",
+        "from app.vault_tools import write_session_process",
+        "vault = Path(sys.argv[1]); ready = Path(sys.argv[2]); gate = Path(sys.argv[3]); token = sys.argv[4]",
+        "ready.touch()",
+        "deadline = time.monotonic() + 30",
+        "while not gate.exists() and time.monotonic() < deadline: time.sleep(0.01)",
+        "settings = SimpleNamespace(obsidian_vault_root=str(vault), git_diff_max_chars=800)",
+        "result = write_session_process(project='Devtrail', what_changed=token, files_touched=token,",
+        "    project_decisions={}, implementation_trace='trace', agent_execution_notes={},",
+        "    docs_update_candidates='', next_session='', learning_recovery={},",
+        "    session_id='shared-process-session', append_to=['what_changed'], settings=settings)",
+        "print(f'RESULT|{result.process.rel_path}|{result.worklog_rel_path}')",
+    ])
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", code, str(tmp_path), str(ready_dir / f"{i}.ready"), str(gate), f"worker-{i}-unique"],
+            cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+        )
+        for i in range(worker_count)
+    ]
+    try:
+        deadline = time.monotonic() + 30
+        while len(list(ready_dir.glob("*.ready"))) < worker_count and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(list(ready_dir.glob("*.ready"))) == worker_count
+        gate.touch()
+        outputs = [process.communicate(timeout=40) for process in processes]
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
+    assert [process.returncode for process in processes] == [0] * worker_count, outputs
+    result_lines = [stdout.strip() for stdout, _ in outputs]
+    assert all(line.startswith("RESULT|") for line in result_lines), outputs
+    assert len({line.split("|")[1] for line in result_lines}) == 1
+    assert len({line.split("|")[2] for line in result_lines}) == 1
+    process_rel_path = result_lines[0].split("|")[1]
+    worklog_rel_path = result_lines[0].split("|")[2]
+    process_content = frontmatter.loads((tmp_path / process_rel_path).read_text(encoding="utf-8")).content
+    worklog_content = (tmp_path / worklog_rel_path).read_text(encoding="utf-8")
+    for index in range(worker_count):
+        token = f"worker-{index}-unique"
+        assert token in process_content
+        assert token in worklog_content
+
+
 def test_write_session_process_memory_patch_distills_lessons_only(tmp_path):
     """Lessons 패치에는 일반화 가능한 필드(next_checks/better_approach)만 들어간다.
 
@@ -555,69 +651,43 @@ def test_session_handoffs_same_title_not_deduped_across_plan_and_process(tmp_pat
     assert len(list(handoff_dir.glob("*.md"))) == 2
 
 
-def test_write_session_process_reattaches_orphan_plan_session_id(tmp_path):
+def test_write_session_process_does_not_reattach_another_sessions_plan(tmp_path):
     settings = _settings(tmp_path)
     vault_tools.write_work_plan(
         project="Devtrail", goal="g", context_read="c", scope="s", approach="a", risks="r",
         session_id="orphan-plan-1", settings=settings,
     )
-    # 서버가 재시작돼 다른 session_id로 Process를 쓰려는 상황을 시뮬레이션
+    # 별도 세션 B의 Process는 A의 최근 미짝 Plan을 가져오면 안 된다.
     result = vault_tools.write_session_process(
         project="Devtrail",
         what_changed="x", files_touched="x", project_decisions={}, implementation_trace="x",
         agent_execution_notes={}, docs_update_candidates="", next_session="",
         learning_recovery={}, session_id="new-server-session", settings=settings,
     )
-    assert result.session_id == "orphan-plan-1"
+    assert result.session_id == "new-server-session"
+    plan_path = next((tmp_path / "60_Candidates/SessionHandoffs/Devtrail").glob("Plan*.md"))
+    plan = frontmatter.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan.metadata["session_id"] == "orphan-plan-1"
+    process = frontmatter.loads(result.process.path.read_text(encoding="utf-8"))
+    assert process.metadata["session_id"] == "new-server-session"
 
 
-def test_write_session_process_does_not_reattach_plan_older_than_24h(tmp_path):
-    """24시간을 넘긴 미짝 Plan에는 재귀속하지 않아야 한다(P3.2).
-
-    재귀속은 "같은 세션 중 MCP 서버 재시작" 복구가 목적이므로, 상한이 없으면
-    몇 주 전 무관한 세션의 미짝 Plan에 오늘의 Process가 잘못 엮인다.
-    """
-    from datetime import datetime, timedelta
-
-    from app.services.candidate_writer import CandidateSpec, CandidateWriter
-
+def test_write_session_process_keeps_two_same_day_lesson_patches(tmp_path):
     settings = _settings(tmp_path)
-    stale_time = datetime.now() - timedelta(hours=25)
-    CandidateWriter(tmp_path, now=stale_time).write(
-        CandidateSpec(
-            kind="session_handoff", title="Plan 오래된 미짝", body="x",
-            project="Devtrail", handoff_type="plan", session_id="stale-orphan",
+    results = [
+        vault_tools.write_session_process(
+            project="Devtrail", what_changed="x", files_touched="x", project_decisions={},
+            implementation_trace="x", agent_execution_notes={"next_checks": lesson},
+            docs_update_candidates="", next_session="", learning_recovery={},
+            session_id=session, settings=settings,
         )
-    )
+        for session, lesson in (("lesson-session-a", "lesson-a-unique"), ("lesson-session-b", "lesson-b-unique"))
+    ]
 
-    result = vault_tools.write_session_process(
-        project="Devtrail", what_changed="x", files_touched="x", project_decisions={},
-        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
-        next_session="", learning_recovery={}, session_id="brand-new-session", settings=settings,
-    )
-    assert result.session_id == "brand-new-session"
-
-
-def test_write_session_process_reattaches_plan_within_24h(tmp_path):
-    from datetime import datetime, timedelta
-
-    from app.services.candidate_writer import CandidateSpec, CandidateWriter
-
-    settings = _settings(tmp_path)
-    recent_time = datetime.now() - timedelta(hours=1)
-    CandidateWriter(tmp_path, now=recent_time).write(
-        CandidateSpec(
-            kind="session_handoff", title="Plan 최근 미짝", body="x",
-            project="Devtrail", handoff_type="plan", session_id="recent-orphan",
-        )
-    )
-
-    result = vault_tools.write_session_process(
-        project="Devtrail", what_changed="x", files_touched="x", project_decisions={},
-        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
-        next_session="", learning_recovery={}, session_id="brand-new-session-2", settings=settings,
-    )
-    assert result.session_id == "recent-orphan"
+    assert results[0].memory_patch is not None and results[1].memory_patch is not None
+    assert results[0].memory_patch.rel_path != results[1].memory_patch.rel_path
+    assert "lesson-a-unique" in results[0].memory_patch.path.read_text(encoding="utf-8")
+    assert "lesson-b-unique" in results[1].memory_patch.path.read_text(encoding="utf-8")
 
 
 # ── list-candidates 기본 출력 제외 (CuratorAgent 연동) ───────────────────────
@@ -775,6 +845,61 @@ def test_get_project_briefing_includes_recent_plan_process(tmp_path):
     )
     briefing = vault_tools.get_project_briefing("Devtrail", settings=settings)
     assert "Recent Session Handoff" in briefing.text
+
+
+def test_briefing_recent_handoff_window_is_three_sessions_and_uses_updated_at(tmp_path):
+    _write(tmp_path, "30_Projects/Devtrail/Context.md", body="컨텍스트")
+    handoff_dir = tmp_path / "60_Candidates/SessionHandoffs/Devtrail"
+    handoff_dir.mkdir(parents=True)
+    entries = [
+        # 세션 0의 본래 생성 시각은 오래됐지만 갱신 시각은 가장 최근이다.
+        ("session-0", "2026-09-01T09:00:00", "2026-09-24T12:00:00"),
+        ("session-1", "2026-09-24T11:00:00", ""),
+        ("session-2", "2026-09-24T10:00:00", ""),
+        ("session-3", "2026-09-24T09:00:00", ""),
+    ]
+    for session_id, created_at, updated_at in entries:
+        for handoff_type in ("plan", "process"):
+            title = f"{handoff_type}-{session_id}"
+            body = (
+                "# Plan\n\n## Goal\n\ngoal\n"
+                if handoff_type == "plan"
+                else f"# Process\n\n## Next Session\n\nNEXT_{session_id}\n## What Changed\n\nchange\n"
+            )
+            metadata = {
+                "type": "candidate", "candidate_type": "session_handoff", "title": title,
+                "project": "Devtrail", "status": "candidate", "created_at": created_at,
+                "handoff_type": handoff_type, "session_id": session_id,
+            }
+            if updated_at and handoff_type == "process":
+                metadata["updated_at"] = updated_at
+            _write(handoff_dir.parent.parent.parent, f"60_Candidates/SessionHandoffs/Devtrail/{title}.md", body, **metadata)
+
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+
+    assert "plan-session-0" in briefing.text and "process-session-0" in briefing.text
+    assert "plan-session-1" in briefing.text and "process-session-1" in briefing.text
+    assert "plan-session-2" in briefing.text and "process-session-2" in briefing.text
+    assert "plan-session-3" not in briefing.text and "process-session-3" not in briefing.text
+    assert "NEXT_session-0" in briefing.text
+
+
+def test_briefing_marks_old_suggested_next_actions_as_unverified(tmp_path):
+    _write(tmp_path, "30_Projects/Devtrail/Context.md", body="컨텍스트")
+    body = "# Process\n\n## Next Session\n\n예전 다음 작업\n"
+    _write(
+        tmp_path,
+        "60_Candidates/SessionHandoffs/Devtrail/process-old.md",
+        body,
+        type="candidate", candidate_type="session_handoff", title="과거 Process", project="Devtrail",
+        status="candidate", created_at="2026-01-01T09:00:00", handoff_type="process", session_id="old-session",
+    )
+
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+
+    assert "현재 상태와 일치하는지 확인한 뒤 진행" in briefing.text
+    assert "과거 Process" in briefing.text or "process-old.md" in briefing.text
+    assert "오래된 기록일 수 있음" in briefing.text
 
 
 def test_get_project_briefing_warns_on_unpaired_plan(tmp_path):
@@ -1005,6 +1130,37 @@ def test_write_session_process_rewrite_updates_process_and_worklog(tmp_path):
     assert "긴급수정" in worklog
     sessions = list((tmp_path / "10_Worklog" / "Sessions").glob("*.md"))
     assert len(sessions) == 1
+
+
+def test_write_session_process_worklog_update_respects_project_boundary(tmp_path):
+    settings = _settings(tmp_path)
+    alpha = vault_tools.write_session_process(
+        project="Alpha", what_changed="ALPHA_ORIGINAL", files_touched="a.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="shared-session-id", settings=settings,
+    )
+    beta_first = vault_tools.write_session_process(
+        project="Beta", what_changed="BETA_ORIGINAL", files_touched="b.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="shared-session-id", settings=settings,
+    )
+    beta_updated = vault_tools.write_session_process(
+        project="Beta", what_changed="BETA_UPDATED", files_touched="b.py",
+        project_decisions={}, implementation_trace="x", agent_execution_notes={},
+        docs_update_candidates="", next_session="", learning_recovery={},
+        session_id="shared-session-id", settings=settings,
+    )
+
+    assert alpha.worklog_rel_path != beta_first.worklog_rel_path
+    assert beta_first.worklog_rel_path == beta_updated.worklog_rel_path
+    alpha_content = (tmp_path / alpha.worklog_rel_path).read_text(encoding="utf-8")
+    beta_content = (tmp_path / beta_updated.worklog_rel_path).read_text(encoding="utf-8")
+    assert "ALPHA_ORIGINAL" in alpha_content
+    assert "BETA_UPDATED" not in alpha_content
+    assert "BETA_UPDATED" in beta_content
+    assert "BETA_ORIGINAL" not in beta_content
 
 
 def test_excerpt_orders_next_session_first(tmp_path):

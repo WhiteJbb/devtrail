@@ -135,11 +135,17 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 
 | `stop-process-check` | Stop · PreCompact | 세션 기록 누락 경고 |
 
-세 훅은 `.claude/.vault-mcp/current_session.json` 마커를 공유한다. 마커는 **첫 MCP
-tool 호출**이 만든다 — 서버 기동만으로 쓰면 `claude mcp list`의 헬스체크(서버를
-띄웠다 즉시 닫는다)까지 라이브 세션으로 기록돼, MCP tool이 없는 세션이
-`write_work_plan`을 호출할 수단 없이 plan-check에 갇힌다. 마커가 없으면 훅은
-강제하지 않는다(MCP 미연결 fallback 세션).
+MCP 서버는 첫 tool 호출 시 `.claude/.vault-mcp/mcp_sessions/` 아래에 프로세스별 마커를 만든다.
+훅은 같은 repo에서 최근 12시간 안에 갱신됐고 PID가 살아 있는 MCP 마커가 정확히 하나일
+때만 그 상태를 사용한다. 마커가 없거나 여러 개이거나 프로세스 상태를 확인할 수 없으면
+강제하지 않는다(MCP 미연결 fallback 포함). 새 SessionStart 훅은 다른 MCP 프로세스의
+마커를 삭제하지 않는다.
+
+Claude hook payload의 `session_id`와 MCP 서버 내부 session ID는 서로 다른 값이고,
+현재 MCP 설정에는 둘을 명시적으로 연결하는 경로가 없다. 따라서 같은 repo에서 Claude
+세션 여러 개가 각각 MCP 서버를 실행하면 live 마커가 여러 개가 되어 plan/stop enforcement가
+fail-open 된다. 동시 세션별 enforcement가 필요하면 MCP 설정에 명시적 session binding을
+추가해야 한다.
 
 ### capture-session fallback (MCP 미연결 시)
 

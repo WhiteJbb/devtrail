@@ -17,8 +17,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 import frontmatter
 
@@ -33,6 +34,8 @@ from app.services.candidate_writer import (
     CandidateSpec,
     CandidateWriter,
     CandidateWriteResult,
+    atomic_write_text,
+    candidate_write_lock,
     handoff_project_dir,
 )
 from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
@@ -72,7 +75,6 @@ _MEMORY_APPEND_FILES = (
 )
 _MEMORY_FILE_MAX_CHARS = 700
 _MEMORY_STALE_DAYS = 30  # CurrentFocus/OpenLoops가 이보다 오래되면 briefing에 경고
-_ORPHAN_REATTACH_WINDOW_HOURS = 24
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 
@@ -239,13 +241,22 @@ def _list_session_handoffs(vault_dir: Path, project: str) -> list[dict]:
                 "rel_path": str(md_path.relative_to(vault_dir)).replace("\\", "/"),
                 "title": str(meta.get("title", "")),
                 "created_at": str(meta.get("created_at", "")),
+                "updated_at": str(meta.get("updated_at", "")),
                 "handoff_type": str(meta.get("handoff_type", "")),
                 "session_id": str(meta.get("session_id", "")),
                 "body": post.content,
             }
         )
-    items.sort(key=lambda h: h["created_at"], reverse=True)
+    items.sort(key=_handoff_timestamp, reverse=True)
     return items
+
+
+def _handoff_timestamp(handoff: dict) -> float:
+    value = handoff.get("updated_at") or handoff.get("created_at") or ""
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _excerpt_sections(body: str, headings: tuple[str, ...]) -> str:
@@ -290,12 +301,12 @@ def _rewrite_handoff(vault_dir: Path, rel_path: str, spec: CandidateSpec) -> Can
     post = frontmatter.loads(path.read_text(encoding="utf-8"))
     post.metadata["updated_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     post.content = spec.body.strip() + "\n"
-    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    atomic_write_text(path, frontmatter.dumps(post))
     return CandidateWriteResult(spec=spec, path=path, rel_path=rel_path)
 
 
-def _update_worklog_note(vault_dir: Path, session_id: str, body: str) -> str | None:
-    """같은 session_id의 10_Worklog/Sessions 노트 본문을 갱신한다. 없으면 None."""
+def _update_worklog_note(vault_dir: Path, session_id: str, project: str, body: str) -> str | None:
+    """같은 프로젝트·session_id의 10_Worklog/Sessions 노트 본문을 갱신한다."""
     sessions_dir = vault_dir / "10_Worklog" / "Sessions"
     if not sessions_dir.exists() or not session_id:
         return None
@@ -305,6 +316,8 @@ def _update_worklog_note(vault_dir: Path, session_id: str, body: str) -> str | N
         except Exception:
             continue
         if str(post.metadata.get("session_id", "")).strip() != session_id:
+            continue
+        if str(post.metadata.get("project") or "").strip().casefold() != project.strip().casefold():
             continue
         first_line = post.content.strip().splitlines()[0] if post.content.strip() else ""
         title_line = first_line if first_line.startswith("# ") else "# 작업 세션"
@@ -321,39 +334,9 @@ def _update_worklog_note(vault_dir: Path, session_id: str, body: str) -> str | N
         preserved = extract_context_sections(post.content)
         tail = f"\n{preserved}\n" if preserved else ""
         post.content = f"{title_line}\n\n{body.strip()}\n{tail}"
-        md_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        atomic_write_text(md_path, frontmatter.dumps(post))
         return str(md_path.relative_to(vault_dir)).replace("\\", "/")
     return None
-
-
-def _reattach_orphan_plan_if_needed(vault_dir: Path, project: str, session_id: str) -> str:
-    """이 session_id의 Plan이 없으면, 같은 프로젝트의 최근 미짝 Plan에 재귀속한다.
-
-    MCP 서버 재시작 등으로 Plan 때와 다른 session_id가 생성된 경우를 위한 안전망이다.
-    재귀속 후보는 최근 _ORPHAN_REATTACH_WINDOW_HOURS 이내에 생성된 미짝 Plan으로
-    제한한다 — "같은 세션 중 서버 재시작" 복구에는 이 정도면 충분하고, 제한이 없으면
-    이번 세션이 write_work_plan을 그냥 안 불렀을 뿐인데 몇 주 전 무관한 세션의 미짝
-    Plan에 오늘의 Process가 잘못 엮여 정당한 "미짝 Plan 경고"도 사라지게 된다.
-    """
-    handoffs = _list_session_handoffs(vault_dir, project)
-    plans = [h for h in handoffs if h["handoff_type"] == "plan"]
-    processes = [h for h in handoffs if h["handoff_type"] == "process"]
-    paired_ids = {p["session_id"] for p in processes}
-
-    if any(p["session_id"] == session_id for p in plans):
-        return session_id
-
-    cutoff = (datetime.now() - timedelta(hours=_ORPHAN_REATTACH_WINDOW_HOURS)).strftime("%Y-%m-%dT%H:%M:%S")
-    orphan_plans = [
-        p
-        for p in plans
-        if p["session_id"] and p["session_id"] not in paired_ids and p["created_at"] >= cutoff
-    ]
-    if not orphan_plans:
-        return session_id
-
-    orphan_plans.sort(key=lambda p: p["created_at"], reverse=True)
-    return orphan_plans[0]["session_id"]
 
 
 # ── 조회 ─────────────────────────────────────────────────────────────────────
@@ -452,7 +435,6 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     """
     vault_dir = _vault_dir(settings)
     project_memory = ProjectMemoryLoader(vault_dir).load()
-    agent_memory = AgentMemoryLoader(vault_dir).load()
 
     candidate_path = Path(project_or_repo)
     explicit_project = ""
@@ -497,6 +479,7 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
                 source_refs=[],
             )
 
+    agent_memory = AgentMemoryLoader(vault_dir).load(project=resolved_project)
     project_ctx = project_memory.find(resolved_project)
     handoffs = _list_session_handoffs(vault_dir, resolved_project)
     is_cold_start = project_ctx is None and not handoffs
@@ -582,22 +565,34 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
         pass
 
     plans = [h for h in handoffs if h["handoff_type"] == "plan"]
-    processes = [h for h in handoffs if h["handoff_type"] == "process"]
+    processes = sorted(
+        (h for h in handoffs if h["handoff_type"] == "process"),
+        key=_handoff_timestamp,
+        reverse=True,
+    )
     paired_ids = {p["session_id"] for p in processes}
-    recent = handoffs[:_RECENT_HANDOFF_LIMIT]
-    if recent:
+    sessions: dict[str, list[dict]] = {}
+    for h in handoffs:
+        sessions.setdefault(h["session_id"] or h["rel_path"], []).append(h)
+    recent_sessions = sorted(
+        sessions.values(), key=lambda group: max(_handoff_timestamp(h) for h in group), reverse=True
+    )[:_RECENT_HANDOFF_LIMIT]
+    if recent_sessions:
         excerpt_parts = []
-        for h in recent:
-            # Next Session을 맨 앞에 — excerpt는 400자에서 잘리므로 다음 세션에
-            # 가장 필요한 정보가 먼저 살아남아야 한다 (Goal은 Plan 전용 섹션)
-            excerpt = _excerpt_sections(h["body"], ("Next Session", "Goal", "What Changed"))
-            excerpt_parts.append(f"### {h['title']} ({h['handoff_type']})\n\n{_truncate(excerpt, 400)}")
-            source_refs.append(h["rel_path"])
+        for group in recent_sessions:
+            for h in sorted(group, key=_handoff_timestamp, reverse=True):
+                # 세션별로 Plan/Process를 함께 보여 제한 3개가 파일 3개로 소모되지 않게 한다.
+                excerpt = _excerpt_sections(h["body"], ("Next Session", "Goal", "What Changed"))
+                recorded_at = h.get("updated_at") or h.get("created_at") or "기록 시각 없음"
+                excerpt_parts.append(
+                    f"### {h['title']} ({h['handoff_type']}, {recorded_at[:10]})\n\n{_truncate(excerpt, 400)}"
+                )
+                source_refs.append(h["rel_path"])
         sections.append("## Recent Session Handoff / Latest Plan-Process\n\n" + "\n\n".join(excerpt_parts))
 
     orphan_plans = [p for p in plans if p["session_id"] not in paired_ids]
     if orphan_plans:
-        latest_orphan = max(orphan_plans, key=lambda p: p["created_at"])
+        latest_orphan = max(orphan_plans, key=_handoff_timestamp)
         sections.append(
             "## ⚠ 미짝 Plan 경고\n\n"
             f"'{latest_orphan['title']}'에 대응하는 Process가 없습니다. 컴팩팅/종료 전에 "
@@ -606,11 +601,32 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
 
     next_actions: list[str] = []
     if processes:
-        next_excerpt = _excerpt_sections(processes[0]["body"], ("Next Session",))
+        latest_process = processes[0]
+        next_excerpt = _excerpt_sections(latest_process["body"], ("Next Session",))
         if next_excerpt:
             next_actions.append(next_excerpt)
     if next_actions:
-        sections.append("## Suggested Next Actions\n\n" + _truncate("\n\n".join(next_actions)))
+        latest_process = processes[0]
+        recorded_at = latest_process.get("updated_at") or latest_process.get("created_at") or "기록 시각 없음"
+        action_text = (
+            "_세션 Process에 기록된 제안입니다. 현재 상태와 일치하는지 확인한 뒤 진행하세요._\n\n"
+            f"출처: `{latest_process['rel_path']}` · 마지막 기록: {recorded_at}"
+        )
+        try:
+            recorded = datetime.fromisoformat(recorded_at)
+            now = datetime.now(recorded.tzinfo) if recorded.tzinfo else datetime.now()
+            stale_reasons = []
+            if (now - recorded).days > _MEMORY_STALE_DAYS:
+                stale_reasons.append(f"{_MEMORY_STALE_DAYS}일이 지난 기록")
+            if plans and _handoff_timestamp(max(plans, key=_handoff_timestamp)) > _handoff_timestamp(latest_process):
+                stale_reasons.append("이후 작성된 Plan이 있음")
+            if stale_reasons:
+                action_text += "\n\n⚠ 오래된 기록일 수 있음: " + ", ".join(stale_reasons) + "."
+        except ValueError:
+            action_text += "\n\n⚠ 기록 시각을 확인할 수 없으므로 현재 상태를 먼저 검증하세요."
+        action_text += "\n\n" + "\n\n".join(next_actions)
+        sections.append("## Suggested Next Actions\n\n" + _truncate(action_text))
+        source_refs.append(latest_process["rel_path"])
 
     # 오늘 Plan이 아직 없으면 리마인더 — 사후 "미짝 Plan 경고"의 대칭.
     today = datetime.now().strftime("%Y-%m-%d")
@@ -725,32 +741,33 @@ def write_work_plan(
 ) -> CandidateWriteResult:
     """작업 시작 전 Plan을 session_handoff candidate로 기록한다."""
     vault_dir = _vault_dir(settings)
-    project = _canonicalize_project(vault_dir, project)
-    writer = CandidateWriter(vault_dir)
-    date = datetime.now().strftime("%Y-%m-%d")
-    title = f"Plan — {project or '미지정'} — {date} — {session_id[:8]}"
-    body = (
-        "# Plan\n\n"
-        f"## Goal\n\n{goal}\n\n"
-        f"## Context Read\n\n{context_read}\n\n"
-        f"## Scope\n\n{scope}\n\n"
-        f"## Approach\n\n{approach}\n\n"
-        f"## Risks\n\n{risks}\n"
-    )
-    spec = CandidateSpec(
-        kind="session_handoff",
-        title=title,
-        body=body,
-        project=project,
-        handoff_type="plan",
-        session_id=session_id,
-    )
-    # 같은 세션이 Plan을 다시 쓰면 갱신한다 — '(2)' 파일이 생기면 briefing의
-    # 최근 handoff 창을 같은 세션 산출물이 잠식한다.
-    existing = _find_session_handoff(vault_dir, project, session_id, "plan")
-    if existing:
-        return _rewrite_handoff(vault_dir, existing["rel_path"], spec)
-    return writer.write(spec)
+    with candidate_write_lock(vault_dir):
+        project = _canonicalize_project(vault_dir, project)
+        writer = CandidateWriter(vault_dir)
+        date = datetime.now().strftime("%Y-%m-%d")
+        title = f"Plan — {project or '미지정'} — {date} — {session_id[:8]}"
+        body = (
+            "# Plan\n\n"
+            f"## Goal\n\n{goal}\n\n"
+            f"## Context Read\n\n{context_read}\n\n"
+            f"## Scope\n\n{scope}\n\n"
+            f"## Approach\n\n{approach}\n\n"
+            f"## Risks\n\n{risks}\n"
+        )
+        spec = CandidateSpec(
+            kind="session_handoff",
+            title=title,
+            body=body,
+            project=project,
+            handoff_type="plan",
+            session_id=session_id,
+        )
+        # 같은 세션이 Plan을 다시 쓰면 갱신한다 — '(2)' 파일이 생기면 briefing의
+        # 최근 handoff 창을 같은 세션 산출물이 잠식한다.
+        existing = _find_session_handoff(vault_dir, project, session_id, "plan")
+        if existing:
+            return _rewrite_handoff(vault_dir, existing["rel_path"], spec)
+        return writer.write(spec)
 
 
 def _normalize_bullet_items(value) -> list[str]:
@@ -985,11 +1002,30 @@ def write_session_process(
     append_to: list[str] | None = None,
     settings: Settings | None = None,
 ) -> SessionProcessResult:
+    """Process의 전체 탐색·병합·기록을 vault 단위 잠금 안에서 처리한다."""
+    arguments = locals().copy()
+    with candidate_write_lock(_vault_dir(settings)):
+        return _write_session_process_unlocked(**arguments)
+
+
+def _write_session_process_unlocked(
+    project: str,
+    what_changed: str | None = None,
+    files_touched: str | None = None,
+    project_decisions: dict | None = None,
+    implementation_trace: str | None = None,
+    agent_execution_notes: dict | None = None,
+    docs_update_candidates: str | None = None,
+    next_session: str | None = None,
+    learning_recovery: dict | None = None,
+    session_id: str = "",
+    append_to: list[str] | None = None,
+    settings: Settings | None = None,
+) -> SessionProcessResult:
     """컴팩팅 전/세션 종료 시 Process를 기록하고 10_Worklog/Sessions/에 이중 기록한다.
 
     project_decisions/agent_execution_notes에 실질 내용이 있으면 Decisions/MemoryPatches
-    candidate로 분리 생성한다. 서버 재시작 등으로 이 session_id의 Plan이 없으면 같은
-    프로젝트의 최근 미짝 Plan에 재귀속한다.
+    candidate로 분리 생성한다. Plan은 명시적으로 같은 session_id인 경우에만 연결한다.
 
     **증분 갱신**: 이미 이 세션의 Process가 있으면, 넘긴 필드만 갱신하고 생략한
     필드는 기존 내용을 그대로 둔다. 커밋이 하나 더 생겼다고 전체를 다시 쓰지 않기
@@ -999,8 +1035,7 @@ def write_session_process(
     project = _canonicalize_project(vault_dir, project)
     writer = CandidateWriter(vault_dir)
     capture_agent = CaptureAgent(settings=settings)
-
-    session_id = _reattach_orphan_plan_if_needed(vault_dir, project, session_id)
+    session_id = session_id.strip() or uuid4().hex
 
     decisions = project_decisions or {}
     notes = agent_execution_notes or {}
@@ -1037,7 +1072,7 @@ def write_session_process(
     )
     if existing_process:
         process_result = _rewrite_handoff(vault_dir, existing_process["rel_path"], process_spec)
-        worklog_rel_path = _update_worklog_note(vault_dir, session_id, body)
+        worklog_rel_path = _update_worklog_note(vault_dir, session_id, project, body)
     else:
         process_result = writer.write(process_spec)
         worklog_rel_path = None
@@ -1093,7 +1128,7 @@ def write_session_process(
         memory_patch_result = writer.upsert_exact(
             CandidateSpec(
                 kind="memory_patch",
-                title=f"{project or '미지정'} — Agent Execution Notes — {date}",
+                title=f"{project or '미지정'} — Agent Execution Notes — {date} — {session_id}",
                 body="\n".join(lesson_lines) + "\n",
                 project=project,
                 evidence=str(notes.get("evidence", "")),
@@ -1104,9 +1139,9 @@ def write_session_process(
                 # 실행 노트는 "일하는 방식" 교훈이므로 OpenLoops(할 일)가 아니라
                 # Lessons에 반영한다 — apply 시 이 파일로 append된다.
                 target_file="40_AgentMemory/06_Lessons.md",
+                session_id=session_id,
             )
-            # upsert_exact: 제목이 정확히 같은(=같은 날 같은 프로젝트 재기록) 후보만
-            # 갱신하고, 날짜만 다른 이전 세션 후보는 유사도 dedup에 걸리지 않게 한다.
+            # 세션 ID를 키에 넣어 같은 날 같은 프로젝트의 다른 세션 교훈을 보존한다.
         )
 
     return SessionProcessResult(

@@ -321,6 +321,30 @@ def test_apply_memory_patch_frontmatter_target_file_used(tmp_path):
     assert result.promoted_path == "40_AgentMemory/06_Lessons.md"
 
 
+def test_project_scoped_lesson_is_filtered_from_other_project_briefing(tmp_path):
+    from app.vault_tools import get_project_briefing
+
+    rel = _write_candidate(
+        tmp_path, "memory_patch", "Alpha 작업 방식", body="alpha-only-lesson", project="Alpha",
+        target_file="40_AgentMemory/06_Lessons.md",
+    )
+    candidate_path = tmp_path / rel
+    post = frontmatter.loads(candidate_path.read_text(encoding="utf-8"))
+    post.metadata["scope"] = "project"
+    candidate_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    for project in ("Alpha", "Beta"):
+        context = tmp_path / "30_Projects" / project / "Context.md"
+        context.parent.mkdir(parents=True, exist_ok=True)
+        context.write_text(frontmatter.dumps(frontmatter.Post(f"{project} context", project=project)), encoding="utf-8")
+
+    CuratorAgent(settings=_settings(tmp_path)).apply_memory_patch(rel)
+    alpha = get_project_briefing("Alpha", settings=_settings(tmp_path)).text
+    beta = get_project_briefing("Beta", settings=_settings(tmp_path)).text
+
+    assert "alpha-only-lesson" in alpha
+    assert "alpha-only-lesson" not in beta
+
+
 def test_apply_memory_patch_rejects_unknown_target(tmp_path):
     rel = _write_candidate(tmp_path, "memory_patch", "교훈")
     agent = CuratorAgent(settings=_settings(tmp_path))

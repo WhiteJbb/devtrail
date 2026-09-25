@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -15,6 +16,7 @@ from typing import Any
 import frontmatter
 
 from app.config import Settings, get_settings
+from app.services.candidate_writer import atomic_write_text, candidate_write_lock
 from app.services.wiki_service import WikiService
 
 
@@ -183,6 +185,10 @@ class CuratorAgent:
     }
 
     def apply_memory_patch(self, rel_path: str, target: str = "") -> PromoteResult:
+        with candidate_write_lock(self.vault_dir):
+            return self._apply_memory_patch_locked(rel_path, target)
+
+    def _apply_memory_patch_locked(self, rel_path: str, target: str = "") -> PromoteResult:
         """memory_patch 후보를 40_AgentMemory/ 대상 파일에 반영(append)한다.
 
         대상 우선순위: target 인자 > 후보 frontmatter target_file > 05_OpenLoops.md.
@@ -230,20 +236,31 @@ class CuratorAgent:
             remainder = "\n".join(body_lines[1:]).strip()
             if remainder:
                 patch_body = remainder
-        append_text = f"\n\n<!-- patch applied {today} from {rel_path} -->\n\n{patch_body}"
+        scope = str(metadata.get("scope") or "global").strip().lower()
+        project = str(metadata.get("project") or "").strip()
+        if scope == "project" and not project:
+            raise ValueError("project scope memory patch requires project metadata")
+        patch_scope = {"scope": "project", "project": project} if scope == "project" else {
+            "scope": "global", "project": ""
+        }
+        marker = json.dumps(patch_scope, ensure_ascii=False)
+        append_text = (
+            f"\n\n<!-- devtrail-memory-patch: {marker} -->\n"
+            f"<!-- patch applied {today} from {rel_path} -->\n\n{patch_body}"
+        )
 
         if target_path.exists():
             existing = target_path.read_text(encoding="utf-8")
-            target_path.write_text(existing + append_text, encoding="utf-8")
+            atomic_write_text(target_path, existing + append_text)
         else:
             # 새 파일이어도 출처 마커를 남긴다 — H1을 떼고 붙이므로 마커가 유일한 출처다
-            target_path.write_text(append_text.lstrip() + "\n", encoding="utf-8")
+            atomic_write_text(target_path, append_text.lstrip() + "\n")
 
         # 원본 candidate에 applied 마킹
         metadata["status"] = "applied"
         metadata["applied_to"] = target_file
         applied_post = frontmatter.Post(patch_body, **metadata)
-        src_path.write_text(frontmatter.dumps(applied_post), encoding="utf-8")
+        atomic_write_text(src_path, frontmatter.dumps(applied_post))
 
         title = str(metadata.get("title") or src_path.stem)
         self.wiki_service.append_vault_log("apply-memory-patch", title, [target_file])
