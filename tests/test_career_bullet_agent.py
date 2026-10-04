@@ -164,3 +164,22 @@ def test_marker_released_when_note_body_grows(tmp_path):
 
     assert len(result.written) == 1
     assert llm.last_prompt != ""
+
+
+def test_long_process_note_keeps_judgment_sections(tmp_path):
+    """긴 Process 노트를 앞에서 자르면 판단 근거 섹션이 LLM에 도달하지 못한다."""
+    note = tmp_path / "10_Worklog" / "Sessions" / "2026-06-23-devtrail-session.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "---\nproject: Devtrail\ncreated_at: 2026-06-23T09:00:00\ntype: session\n---\n\n"
+        "# Process\n\n## What Changed\n- 변경 요약\n\n"
+        "## Files Touched\n" + "- app/file.py — 수정\n" * 800 + "\n"
+        "## Agent Execution Notes\n- 더 나은 작업 방식: 정본으로 돌아간다\n",
+        encoding="utf-8",
+    )
+    llm = FakeLLM(_career_response(0))
+    CareerBulletAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23)).suggest()
+
+    assert "정본으로 돌아간다" in llm.last_prompt
+    assert "app/file.py" not in llm.last_prompt
+
