@@ -324,3 +324,50 @@ def test_digest_includes_thread_block_only_when_updated_today(tmp_path):
     assert "글감 thread 현황" in text
     assert "홈랩 구축기" in text
     assert "누적 소스 2개" in text
+
+
+def test_empty_day_does_not_save_digest(tmp_path):
+    """세션·후보·태스크가 전부 0인 날은 digest를 vault에 남기지 않는다.
+
+    회귀 방지: 실측 Digest 84개 중 76개가 "(session 노트 없음)"이었고,
+    그 빈 파일들이 WeeklyReview 입력이 돼 없던 활동을 서술하게 만들었다.
+    """
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert result.digest_path is None
+    assert result.digest_rel_path == ""
+    assert not (tmp_path / "50_Outputs" / "Digest").glob("*.md") or not list(
+        (tmp_path / "50_Outputs" / "Digest").glob("*.md")
+    )
+    # 텍스트 자체는 만들어져 Telegram 경로로는 나간다
+    assert result.digest_text
+
+
+def test_day_with_session_saves_digest_with_marker(tmp_path):
+    _seed_session(tmp_path)
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert result.digest_path is not None
+    assert "has_content: true" in result.digest_path.read_text(encoding="utf-8")
+
+
+def test_overdue_task_alone_does_not_make_digest_content(tmp_path):
+    """기한 초과 태스크는 매일 같은 값이라 '오늘 있었던 일'로 치지 않는다."""
+    tasks_dir = tmp_path / "70_Tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / "Active.md").write_text(
+        "# Active Tasks\n\n## 이번 주\n- [ ] 지난 태스크 📅 2026-01-01 ^abc123\n",
+        encoding="utf-8",
+    )
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert result.digest_path is None

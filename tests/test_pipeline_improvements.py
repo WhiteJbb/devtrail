@@ -37,14 +37,16 @@ def test_dedup_prevents_duplicate_title(tmp_path):
     assert len(files) == 1
 
 
-def test_dedup_similar_title_blocked(tmp_path):
+def test_dedup_similar_title_preserves_separate_candidates(tmp_path):
     writer = CandidateWriter(vault_dir=tmp_path, now=datetime(2026, 6, 23, 9, 0))
     spec1 = CandidateSpec(kind="knowledge", title="RAG 검색 전략 개요", body="내용", source_refs=[])
     spec2 = CandidateSpec(kind="knowledge", title="RAG 검색 전략 개요 정리", body="내용2", source_refs=[])
     r1 = writer.write(spec1)
     r2 = writer.write(spec2)
 
-    assert r1.rel_path == r2.rel_path
+    assert r1.rel_path != r2.rel_path
+    assert "내용" in r1.path.read_text(encoding="utf-8")
+    assert "내용2" in r2.path.read_text(encoding="utf-8")
 
 
 def test_dedup_different_title_allowed(tmp_path):
@@ -151,9 +153,13 @@ def test_weekly_distill_saves_weekly_digest(tmp_path):
 
 
 def test_daily_distill_saves_daily_digest(tmp_path):
+    # _seed_session은 datetime.now() 기준으로 노트를 만든다. agent의 now를 고정
+    # 날짜로 주면 _today_sessions가 그 노트를 못 찾아, 내용이 빈 digest 경로를
+    # 검증하게 된다(빈 날은 저장을 건너뛰므로 이제 digest_rel_path가 비어버린다).
+    # weekly 쪽은 7일 창이라 어긋난 날짜도 걸려 들어와 그대로 통과했다.
     _seed_session(tmp_path)
     llm = _TwoCallLLM(_distill_response(), _career_response())
-    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime.now())
 
     result = agent.run(weekly=False)
 

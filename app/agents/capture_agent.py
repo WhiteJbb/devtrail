@@ -14,6 +14,8 @@ import frontmatter
 from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.prompts import render_prompt
+from app.services.candidate_writer import atomic_write_text
+from app.services.identity import resolve_agent, resolve_host
 from app.services.repo_snapshot import RepoSnapshot, capture_repo_snapshot
 from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
 from app.services.wiki_service import WikiService
@@ -142,6 +144,7 @@ class CaptureAgent:
         title: str | None = None,
         needs_distill: bool = True,
         distill_kinds: list[str] | None = None,
+        agent: str = "",
     ) -> CaptureResult:
         """작업 세션을 구조화된 Markdown 노트로 10_Worklog/Sessions/에 저장한다.
 
@@ -194,6 +197,10 @@ class CaptureAgent:
             "created_at": iso_now,
             "updated_at": iso_now,
             "session_id": session_id or "",
+            # 어느 노드에서 어느 에이전트가 남긴 기록인가. 기록 시점에만 알 수
+            # 있어 나중에 채울 수 없다 — 값이 없으면 빈 문자열로 남는다.
+            "host": resolve_host(),
+            "agent": resolve_agent(agent),
             "from_repo": from_repo,
             "from_agent": from_agent,
             "agent_summary_missing": from_agent and not summary_text,
@@ -564,7 +571,7 @@ class CaptureAgent:
         path = self.vault_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         post = frontmatter.Post(body.strip() + "\n", **metadata)
-        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+        atomic_write_text(path, frontmatter.dumps(post))
         return CaptureResult(path=path, rel_path=rel_path, created=True, kind=kind)
 
     def _log(self, action: str, label: str, rel_path: str) -> None:

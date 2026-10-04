@@ -56,7 +56,7 @@
 | 대상 | 방법 |
 |------|------|
 | 테스트 | `.venv/Scripts/python.exe -m pytest -q` 실제 실행 |
-| 훅 활성 | `.claude/settings.json` 존재·내용, `.claude/.vault-mcp/current_session.json` 마커, `.gitignore` 대조 |
+| 훅 활성 | `.claude/settings.json` 존재·내용, `.claude/.vault-mcp/mcp_sessions/` 마커, `.gitignore` 대조 |
 | 스케줄 | `Get-ScheduledTask` · `Get-ScheduledTaskInfo` · `logs/sync-vault-local.log` |
 | TTL 정리 근거 | `app/services/retention.py` 코드 + `50_Outputs/Digest/*.md`의 `## 후보 정리 (TTL 초과)` 로그 |
 | 머지 안전성 | `git diff main..dev --stat`, `git ls-files -s scripts/mac/*.sh`(exec bit), `git diff main..dev -- app/config.py` |

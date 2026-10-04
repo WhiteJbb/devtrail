@@ -1,6 +1,15 @@
 # Global Claude Code Rules
 # 새 컴퓨터 설정 시 이 파일 내용을 ~/.claude/CLAUDE.md에 복사한다.
 
+## 우선순위 — 레포 규칙이 이긴다
+
+이 파일은 **모든 프로젝트에 적용되는 vault 공용 규약**만 담는다. 레포 루트에
+`AGENTS.md`가 있으면 그 레포에서는 `AGENTS.md`가 정본이고, 충돌하면 `AGENTS.md`가
+이긴다. 특히 브랜치·커밋·PR 규칙, 언어·테스트·코드 배치 규칙은 레포마다 다르므로
+이 파일에 두지 않는다 — 레포 `AGENTS.md`를 따른다.
+
+아래 vault 규약은 `AGENTS.md`가 없는 프로젝트에서 작업할 때의 기준선이다.
+
 ## Session Lifecycle (MCP 우선, capture-session은 fallback)
 
 MCP(`devtrail mcp-serve`)가 연결돼 있으면 세션 종료/컴팩팅 전 기록은
@@ -66,7 +75,7 @@ devtrail capture-session --project <프로젝트명> --from-repo --from-agent --
 
 Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시작 전 아래 파일을 먼저 확인한다:
 - `{VAULT}/30_Projects/<Project>/Context.md` — 프로젝트 배경·목표·제약 (가장 먼저 읽을 것, briefing이 자동 주입)
-- `{VAULT}/40_AgentMemory/00_Profile.md` ~ `05_OpenLoops.md` — 전역 AI 메모리·미해결 이슈
+- `{VAULT}/40_AgentMemory/00_Profile.md` ~ `06_Lessons.md` — 전역 AI 메모리·미해결 이슈
 
 ### 폴더별 역할과 AI 권한
 
@@ -126,8 +135,13 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 
 ## 브랜치 & PR 규칙
 
-- 기능 추가나 구조에 영향을 주는 큰 변경은 반드시 `feat/` 또는 `refactor/` 브랜치에서 작업한다.
-- 문서(md 파일)만 수정할 때는 main에서 직접 커밋해도 된다.
-- GitHub 작업(PR 생성/머지, 이슈 등)은 `gh` CLI를 사용한다.
+**레포의 `AGENTS.md`를 따른다.** 통합 브랜치 이름과 PR base는 레포마다 다르므로
+(예: devtrail은 `dev`가 통합 브랜치이고 main 직접 커밋을 하지 않는다) 여기에
+기본값을 적어두면 조용히 틀린 브랜치에 커밋하게 된다.
+
+`AGENTS.md`가 없는 레포에서의 기준선만 남긴다:
+
+- 기능 추가나 구조에 영향을 주는 큰 변경은 `feat/` 또는 `refactor/` 브랜치에서 작업한다.
+- GitHub 작업(PR 생성/머지, 이슈 등)은 `gh` CLI를 사용하고 squash merge를 기본으로 한다.
+- 커밋·push는 사용자 요청이 있을 때만 한다.
 - 커밋 메시지와 PR 본문에 AI 작성 표시(`Co-Authored-By`, `Generated with` 등)를 넣지 않는다.
-- squash merge 기본 사용.

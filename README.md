@@ -161,6 +161,7 @@ Obsidian 템플릿은 [docs/vault-templates/](docs/vault-templates/)을 Vault의
 ### Vault 초기화
 
 ```bash
+devtrail doctor [--fix] [--project <이름>]       # 머신별 설치·연동 상태 진단·수리
 devtrail init-vault                             # 볼트 폴더 구조 생성
 devtrail install-hooks <repo> [-p project]      # git post-commit hook 설치
 devtrail index-vault                            # index.md 갱신
@@ -296,6 +297,19 @@ MCP(stdio) 서버입니다. MCP가 연결돼 있으면 세션 시작/종료 기�
 claude mcp add devtrail-vault -- devtrail mcp-serve
 ```
 
+`devtrail`이 PATH에 없으면(venv에만 설치한 경우) 연결이 `CONNECTION_CLOSED`로
+조용히 실패합니다. 실행 파일의 절대 경로로 등록하세요:
+
+```bash
+# Windows
+claude mcp add devtrail-vault -- "<repo>\.venv\Scripts\devtrail.exe" mcp-serve
+# macOS / Linux
+claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
+```
+
+등록 후 `claude mcp list`로 `✔ Connected`를 확인합니다. 등록 여부 자체는
+`devtrail doctor`가 점검합니다.
+
 | Tool | 역할 |
 |------|------|
 | `get_project_briefing` | 세션 시작 시 프로젝트 컨텍스트 · 최근 handoff · decision · Open Loops 반환 |
@@ -311,7 +325,35 @@ claude mcp add devtrail-vault -- devtrail mcp-serve
 1회 생성돼 모든 write 계열 tool에 자동 주입되므로 에이전트가 직접 들고 다닐 필요가
 없습니다(컴팩팅 중 분실 방지).
 
+### 새 머신 점검 — `devtrail doctor`
+
+```bash
+devtrail doctor          # 진단만
+devtrail doctor --fix    # 고칠 수 있는 것만 수리 (기존 파일은 덮어쓰지 않음)
+```
+
+`.claude/settings.json`(훅)과 `.claude/vault.json`(프로젝트 매핑)은 gitignore된
+**머신 로컬 파일**이라 clone만으로는 생기지 않습니다. 그리고 없어도 아무 경고가
+나오지 않습니다 — 훅 없이 몇 주간 작업하고 세션 기록이 0건인 것을 나중에 알게
+되는 종류의 실패입니다. `doctor`는 그 조용한 실패를 찾습니다.
+
+점검 항목: vault 경로(`.env`) · `mcp` 패키지 · 훅 설정 파일 · 훅 실행 전제(python) ·
+콘솔 스크립트 실행 · 프로젝트 매핑(값이 Vault에 실재하는지까지) · vault 구조 ·
+MCP 등록·연결.
+
+**MCP는 등록 여부가 아니라 연결 결과를 봅니다.** 등록돼 있어도 실행 파일이 기동하지
+못하면 세션에 tool이 뜨지 않아 증상은 미등록과 같기 때문입니다. 같은 이유로 repo
+`.venv`의 `devtrail` 콘솔 스크립트가 실제로 실행되는지도 확인합니다 — repo를 rename
+하거나 옮기면 셔뱅이 옛 경로를 가리켜 **오류 메시지 없이 exit 1** 하는데, 이때
+`capture-session`도 MCP도 조용히 죽습니다.
+
+`--fix`가 하는 것은 `settings.json` 복사, `vault.json` 생성(Vault 프로젝트 후보가
+하나일 때 — 여러 개면 `--project <이름>`), `init-vault` 재실행뿐입니다. `.env` 편집과
+`claude mcp add`는 하지 않고 명령만 안내합니다.
+
 ### Claude Code 훅 활성화 (선택, 머신별 1회)
+
+`devtrail doctor --fix`가 이 복사를 대신 해줍니다. 직접 하려면:
 
 ```bash
 cp .claude/settings.example.json .claude/settings.json
@@ -328,9 +370,13 @@ python으로 훅 구현(`scripts/hooks/*.py`)을 실행합니다 — Windows는 
 
 ## AI Agent 연동 (MCP 미지원 도구 — Cursor 등, 또는 fallback)
 
-### 1단계 — CLAUDE.md / AGENTS.md 설정
+### 1단계 — AGENTS.md 설정
 
-프로젝트 루트에 추가:
+에이전트 규칙은 **`AGENTS.md` 한 곳**에 둡니다 — Claude Code·Codex·Cursor가
+공통으로 읽는 파일입니다. `CLAUDE.md`는 `AGENTS.md`를 가리키기만 하고 규칙을
+중복해 적지 않습니다(중복되면 한쪽만 고쳐져 조용히 어긋납니다).
+
+프로젝트 루트 `AGENTS.md`에 추가:
 
 ```markdown
 ## Vault 경로
@@ -338,7 +384,7 @@ OBSIDIAN_VAULT_PATH: D:/personal-vault
 
 ## 작업 시작 전 필독 파일
 - {VAULT}/30_Projects/<프로젝트명>/Context.md — 프로젝트 배경·목표·제약
-- {VAULT}/40_AgentMemory/00_Profile.md ~ 05_OpenLoops.md — 전역 메모리·미해결 이슈
+- {VAULT}/40_AgentMemory/00_Profile.md ~ 06_Lessons.md — 전역 메모리·미해결 이슈
 
 ## Vault 수정 규칙
 - 20_Knowledge/, 30_Projects/, 40_AgentMemory/ 는 직접 수정하지 않는다.
@@ -360,7 +406,7 @@ devtrail search "RAG 검색"               # 관련 노트 확인
 capture-session 실행해줘
 ```
 
-CLAUDE.md/AGENTS.md의 규칙에 따라 요약을 작성하고 실행:
+AGENTS.md의 규칙에 따라 요약을 작성하고 실행:
 
 ```bash
 devtrail capture-session --project <name> --from-repo --from-agent --summary-file ./session-summary.md

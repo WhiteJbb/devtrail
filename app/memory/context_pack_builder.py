@@ -26,12 +26,7 @@ class ContextPackBuilder:
     def build(self, topic: str) -> ContextPack:
         source_refs: list[str] = []
 
-        # 1. AgentMemory
-        agent_memory = self._agent_loader.load()
-        agent_section = agent_memory.render()
-        source_refs.extend(agent_memory.source_refs)
-
-        # 2. Project Context — 토픽에서 프로젝트 이름 추출
+        # 1. Project Context — 토픽에서 프로젝트 이름 추출
         project_memory = self._project_loader.load()
         matched = project_memory.match_topic(topic)
         if matched:
@@ -43,13 +38,21 @@ class ContextPackBuilder:
         else:
             project_section = ""
 
+        # 프로젝트가 하나로 특정될 때 해당 범위의 AgentMemory만 포함한다.
+        scoped_project = matched[0].project if len(matched) == 1 else ""
+        agent_memory = self._agent_loader.load(project=scoped_project)
+        agent_section = agent_memory.render()
+        source_refs.extend(agent_memory.source_refs)
+
         # 3. Related Notes — keyword search (60_Candidates는 검토 전 임시 영역이므로 제외)
-        related = self.wiki_service.search(topic, limit=_MAX_NOTES * 2)
+        related = self.wiki_service.search(
+            topic,
+            limit=_MAX_NOTES * 2,
+            exclude_prefixes=("40_AgentMemory/", "60_Candidates/"),
+        )
         note_parts: list[str] = []
         for result in related:
             note = result.note
-            if note.path.startswith("60_Candidates/"):
-                continue
             if len(note_parts) >= _MAX_NOTES:
                 break
             preview = note.body.strip()

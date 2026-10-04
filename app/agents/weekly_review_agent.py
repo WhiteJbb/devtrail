@@ -82,12 +82,36 @@ class WeeklyReviewAgent:
                 continue
             if cutoff <= file_date <= today:
                 try:
-                    digests.append((date_str, f.read_text(encoding="utf-8")))
+                    content = f.read_text(encoding="utf-8")
                 except OSError:
                     continue
+                if not self._digest_has_content(content):
+                    continue
+                digests.append((date_str, content))
 
         digests.sort(key=lambda x: x[0])
         return [content for _, content in digests]
+
+    @staticmethod
+    def _digest_has_content(raw: str) -> bool:
+        """내용이 빈 digest를 회고 입력에서 뺀다.
+
+        빈 digest만 모인 주를 LLM에 넘기면 없던 활동을 지어낸다 — 실제로
+        2026-09-20 회고가 세션 기록 0건인 주를 "집중했다 / 매일 반복되었다"로
+        서술했다. source에 없는 사실을 만들지 않는다는 불변식 위반이다.
+
+        새 digest는 `has_content` 키로 판단한다. 키가 없는 기존 파일은 본문
+        문자열로 폴백한다 — 오판해도 결과는 현행과 같아 악화되지 않는다.
+        """
+        try:
+            post = frontmatter.loads(raw)
+        except Exception:
+            return True
+        flag = post.metadata.get("has_content")
+        if isinstance(flag, bool):
+            return flag
+        body = post.content
+        return not ("(session 노트 없음)" in body and "총 후보 0개 생성" in body)
 
     def _save_review(self, text: str) -> tuple[Path | None, str]:
         date = self._date()

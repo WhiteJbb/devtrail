@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -377,3 +378,30 @@ def test_distill_session_notes_priority(tmp_path):
 
     # session 노트가 첫 번째여야 한다
     assert notes[0].path == session_note.path
+
+
+# ── host / agent 식별자 ───────────────────────────────────────────────────────
+
+def test_session_frontmatter_carries_host_and_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEVTRAIL_AGENT", "claude-code")
+    result = _agent(tmp_path).capture_session(project="Devtrail")
+    meta = frontmatter.loads(result.path.read_text(encoding="utf-8")).metadata
+    assert meta["host"] == socket.gethostname().strip()
+    assert meta["agent"] == "claude-code"
+
+
+def test_explicit_agent_argument_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEVTRAIL_AGENT", "claude-code")
+    result = _agent(tmp_path).capture_session(project="Devtrail", agent="codex")
+    meta = frontmatter.loads(result.path.read_text(encoding="utf-8")).metadata
+    assert meta["agent"] == "codex"
+
+
+def test_unknown_agent_recorded_as_empty(tmp_path, monkeypatch):
+    """감지 실패 시 추측하지 않는다 — 빈 값은 집계에서 빠지지만 틀린 값은 결론을 바꾼다."""
+    for var in ("DEVTRAIL_AGENT", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"):
+        monkeypatch.delenv(var, raising=False)
+    result = _agent(tmp_path).capture_session(project="Devtrail")
+    meta = frontmatter.loads(result.path.read_text(encoding="utf-8")).metadata
+    assert meta["agent"] == ""
+    assert meta["host"] == socket.gethostname().strip()
