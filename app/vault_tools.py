@@ -427,6 +427,17 @@ def _load_project_config(repo_dir: Path) -> str:
     return str(data.get("project", "")).strip()
 
 
+def _repo_enforces_plan(repo_dir: Path) -> bool:
+    """repo의 Claude Code 설정에 plan-check 훅이 걸려 있는지 본다."""
+    for name in ("settings.json", "settings.local.json"):
+        try:
+            if "plan-check" in (repo_dir / ".claude" / name).read_text(encoding="utf-8"):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def get_project_briefing(project_or_repo: str, settings: Settings | None = None) -> ProjectBriefing:
     """세션 시작 시 프로젝트 컨텍스트/최근 handoff/decision/open loops를 반환한다.
 
@@ -438,8 +449,12 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
 
     candidate_path = Path(project_or_repo)
     explicit_project = ""
+    # repo를 모르면(프로젝트명 호출) 기존대로 리마인더를 낸다. repo를 알면 plan-check
+    # 훅이 걸린 곳에서만 낸다 — 훅 없는 repo에 Plan을 요구하면 매 세션 잡음이다.
+    plan_reminder = True
     if candidate_path.exists() and candidate_path.is_dir():
         explicit_project = _load_project_config(candidate_path)
+        plan_reminder = _repo_enforces_plan(candidate_path)
 
     resolved_project = explicit_project
     if not resolved_project:
@@ -632,7 +647,7 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     # 오늘 Plan이 아직 없으면 리마인더 — 사후 "미짝 Plan 경고"의 대칭.
     today = datetime.now().strftime("%Y-%m-%d")
     has_todays_plan = any(p["created_at"][:10] == today for p in plans)
-    if not has_todays_plan:
+    if plan_reminder and not has_todays_plan:
         sections.append(
             "## 리마인더\n\n구현을 시작하기 전에 `write_work_plan`으로 이 세션의 Plan을 먼저 기록하세요."
         )
