@@ -973,6 +973,23 @@ def test_briefing_reminds_plan_when_none_today(tmp_path):
     assert "write_work_plan" in briefing.text
 
 
+def test_briefing_plan_reminder_follows_repo_plan_check_hook(tmp_path):
+    vault = tmp_path / "vault"
+    _write_project_context(vault, "Devtrail", "배경")
+    repo = tmp_path / "repo"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "vault.json").write_text('{"project": "Devtrail"}', encoding="utf-8")
+
+    briefing = vault_tools.get_project_briefing(str(repo), settings=_settings(vault))
+    assert "## 리마인더" not in briefing.text
+
+    (repo / ".claude" / "settings.json").write_text(
+        '{"hooks": {"PreToolUse": [{"hooks": [{"command": "sh run-hook.sh plan-check"}]}]}}', encoding="utf-8"
+    )
+    briefing = vault_tools.get_project_briefing(str(repo), settings=_settings(vault))
+    assert "## 리마인더" in briefing.text
+
+
 def test_briefing_no_plan_reminder_when_todays_plan_exists(tmp_path):
     from datetime import datetime
     _write_project_context(tmp_path, "Devtrail", "배경")
