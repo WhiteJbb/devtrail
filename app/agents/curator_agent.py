@@ -85,6 +85,9 @@ class CuratorAgent:
 
         items: list[CandidateItem] = []
         for md_path in sorted(candidates_dir.rglob("*.md")):
+            # _Archive/는 검토 목록에서 뺀 보관소다 — 경로를 직접 주면 preview/promote는 된다.
+            if "_Archive" in md_path.relative_to(candidates_dir).parts:
+                continue
             item = self._parse_candidate(md_path)
             if item is None:
                 continue
