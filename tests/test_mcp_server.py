@@ -217,3 +217,22 @@ def test_get_project_briefing_returns_dict_with_matched_field(vault_env, monkeyp
     result = get_project_briefing(project_or_repo="없는프로젝트이름")
     assert result["matched"] is False
     assert "candidates" in result
+
+
+def test_write_tools_warn_on_suspicious_hangul(vault_env, monkeypatch):
+    """모델이 유니코드 이스케이프를 틀려 생긴 음절(등급 → 뒱급)을 기록 시점에 되돌려 준다."""
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    write_session_process = mod.mcp._tool_manager.get_tool("write_session_process").fn
+
+    clean = write_session_process(project="Devtrail", what_changed="경고 등급을 내렸다")
+    assert "warnings" not in clean
+
+    corrupted = write_session_process(
+        project="Devtrail",
+        what_changed="경고 뒱급을 내렸다",
+        agent_execution_notes={"next_checks": "예삸를 먼저 확인"},
+    )
+    assert "뒱급을" in corrupted["warnings"][0]
+    assert "예삸를" in corrupted["warnings"][0]
+    assert corrupted["process"]["rel_path"]
+
