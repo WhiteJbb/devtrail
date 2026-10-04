@@ -118,8 +118,10 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 - 여러 항목이 있는 필드(goal, what_changed 등)는 한 문단으로 잇지 말고 markdown
   불릿/번호 리스트로 쓴다 — 기록은 사람이 다시 읽는 문서다.
 - Process 기록 후 작업이 더 이어졌다면(커밋 발생) 세션을 끝내기 전에
-  `write_session_process`를 **다시 호출**한다. 같은 세션 기록이 갱신되므로
-  중복 파일 걱정 없이 최신 상태를 반영하면 된다.
+  `write_session_process`를 **다시 호출**한다. 전체를 다시 쓸 필요 없이 **바뀐
+  필드만** 넘기면 된다 — 생략한 필드는 유지되고, 기존 내용 뒤에 이어붙이려면
+  `append_to`에 필드 이름을 준다. 같은 세션 기록이 갱신되므로 중복 파일은 안 생긴다.
+- 기록 도구 결과에 `warnings`가 오면(손상 의심 한글 음절) 해당 필드를 고쳐 다시 기록한다.
 - `agent_execution_notes`의 next_checks/better_approach는 Lessons로 증류되는
   필드다 — 이번 세션 한정 사실이 아니라 다음 세션에도 통하는 교훈으로 쓴다.
 
@@ -184,6 +186,7 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `10_Worklog/Sessions/` | capture-session / write_session_process 출력 | 읽기 전용 |
 | `10_Worklog/Daily/` | daily-log (사람이 직접 채우는 일지) | 읽기 전용 |
 | `10_Worklog/GitSummaries/` | 커밋별 git 요약 | 읽기 전용 |
+| `10_Worklog/Summaries/` | worklog 회고 (`<날짜>-worklog.md`) | 읽기 전용 |
 | `20_Knowledge/` | 승격된 공식 지식 노트 | **직접 수정 금지** — `promote-candidate` 경유 |
 | `30_Projects/<P>/Context.md` | 프로젝트 배경·목표·제약 | **직접 수정 금지** — 사람이 관리 |
 | `30_Projects/<P>/Decisions/` | 의사결정 이력 (DecisionLog) | **직접 수정 금지** — `promote-candidate` 경유 |
@@ -192,10 +195,16 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `30_Projects/<P>/Conversations/` | 중요한 대화 발췌 | 사람 요청 시 기록 |
 | `30_Projects/<P>/PromptLog.md` | 중요 프롬프트 원문 | append 허용 |
 | `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈, 기본은 OpenLoops) |
-| `50_Outputs/` | Digest · WeeklyReview · Blog · Career | 읽기 전용 |
+| `50_Outputs/` | Digest · WeeklyReview · Blog · Resume · Portfolio · Interview · Todo | 읽기 전용 |
 | `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어 후보 | AI가 생성, 사람이 검토 후 promote |
 | `60_Candidates/SessionHandoffs/<P>/` | 세션별 Plan/Process | `write_work_plan`/`write_session_process` 전용. promote 대상 아님 |
+| `60_Candidates/_Archive/` | 검토 목록에서 뺀 보관 후보 (TTL 만료 decision·memory_patch, 통합본으로 대체된 중복) | 이동·삭제는 사용자 승인 후. `list-candidates`에는 안 나오고 경로를 직접 주면 preview·promote 가능 |
 | `70_Tasks/` | 태스크 (`Active.md` + `Done/`) | task 커맨드 경유 — 직접 편집 금지 |
+| `index.md` (루트) | vault 노트 카탈로그 — 인덱싱 커맨드가 갱신 | 직접 편집 금지 |
+| `log.md` (루트) | 파이프라인 작업 로그 — distill·promote·apply 등이 자동 append | 직접 편집 금지 |
+
+빈 폴더는 git에 올라가지 않으므로 clone 직후의 vault에는 표의 폴더 일부가 없을 수 있다.
+쓰기 시점에 자동 생성되고, `devtrail doctor --fix`로 한 번에 만들 수도 있다.
 
 ### 후보 흐름
 
