@@ -10,11 +10,14 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
+from app.services.note_excerpt import prioritized_excerpt
 from app.services.wiki_service import WikiNote, WikiService
 
 
 _RAW_PREFIXES = ("00_Inbox/", "10_Worklog/")
 _MAX_NOTE_CHARS = 3000
+# 다음 할 일은 Process 노트 뒤쪽(Next Session)에 있다 — 앞에서 자르면 통째로 빠진다.
+_PRIORITY_SECTIONS = ("Next Session", "Docs Update Candidates", "What Changed")
 _MAX_NOTES = 20
 
 
@@ -85,9 +88,7 @@ class TodoAgent:
             header = f"### {note.path}"
             if meta:
                 header += f" ({', '.join(meta)})"
-            body = note.body.strip()
-            if len(body) > _MAX_NOTE_CHARS:
-                body = body[:_MAX_NOTE_CHARS].rstrip() + "\n...(일부 생략)"
+            body = prioritized_excerpt(note.body, _PRIORITY_SECTIONS, _MAX_NOTE_CHARS)
             parts.append(f"{header}\n{body}")
         return "\n\n".join(parts)
 
