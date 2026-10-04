@@ -51,6 +51,19 @@ def test_answer_records_and_reports_done(tmp_path, monkeypatch):
     assert "mark_answered로 세션 노트에 기록한다" in content
 
 
+def test_briefing_shows_learning_questions_only_for_own_project(tmp_path, monkeypatch):
+    from app.vault_tools import get_project_briefing
+
+    _setup_vault(tmp_path, monkeypatch)
+    for project in ("Devtrail", "Other"):
+        ctx = tmp_path / "30_Projects" / project / "Context.md"
+        ctx.parent.mkdir(parents=True)
+        ctx.write_text(f"# {project}\n\n배경\n", encoding="utf-8")
+
+    assert "라우터가 답을 기록하는가?" in get_project_briefing("Devtrail").text
+    assert "라우터가 답을 기록하는가?" not in get_project_briefing("Other").text
+
+
 def test_answer_with_no_questions(tmp_path, monkeypatch):
     from app.config import get_settings
 

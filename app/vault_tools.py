@@ -552,7 +552,8 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
         from app.services.review_question import list_questions
 
         unanswered = [q for q in list_questions(vault_dir) if not q.answered]
-        scoped = [q for q in unanswered if q.project.lower() == resolved_project.lower()] or unanswered
+        # 다른 프로젝트의 질문으로 폴백하지 않는다 — 무관한 주제가 매 세션 주입된다.
+        scoped = [q for q in unanswered if q.project.lower() == resolved_project.lower()]
         if scoped:
             question_lines = "\n".join(f"- {q.question} ({q.source_rel_path})" for q in scoped[:3])
             sections.append(
