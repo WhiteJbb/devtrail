@@ -38,6 +38,7 @@ from app.services.candidate_writer import (
     candidate_write_lock,
     handoff_project_dir,
 )
+from app.services.note_excerpt import excerpt_sections as _excerpt_sections
 from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
 from app.services.wiki_service import WikiService
 
@@ -257,29 +258,6 @@ def _handoff_timestamp(handoff: dict) -> float:
         return datetime.fromisoformat(str(value)).timestamp()
     except ValueError:
         return 0.0
-
-
-def _excerpt_sections(body: str, headings: tuple[str, ...]) -> str:
-    """body에서 지정된 '## Heading' 섹션만 headings 순서대로 발췌한다.
-
-    문서 순서가 아니라 headings 인자 순서를 따른다 — excerpt는 뒤에서 truncate되므로
-    다음 세션에 가장 필요한 섹션(Next Session)을 앞에 둬야 잘려도 덜 아프다.
-    """
-    lines = body.splitlines()
-    sections: dict[str, list[str]] = {}
-    current: str | None = None
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("## "):
-            heading = stripped[3:].strip()
-            current = heading if heading in headings else None
-            if current is not None:
-                sections.setdefault(current, []).append(line)
-            continue
-        if current is not None:
-            sections[current].append(line)
-    ordered = ["\n".join(sections[h]).strip() for h in headings if h in sections]
-    return "\n\n".join(part for part in ordered if part).strip()
 
 
 def _find_session_handoff(vault_dir: Path, project: str, session_id: str, handoff_type: str) -> dict | None:

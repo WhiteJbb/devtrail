@@ -23,6 +23,7 @@ from mcp.server.fastmcp import FastMCP
 
 from app import vault_tools
 from app.config import get_settings
+from app.services.hangul_check import suspicious_hangul_words
 from app.services.session_markers import marker_path, read_marker, write_json_atomic
 
 _SESSION_ID = str(uuid4())
@@ -89,6 +90,21 @@ def _candidate_result_dict(result) -> dict | None:
     return {"rel_path": result.rel_path, "path": str(result.path), "title": result.spec.title}
 
 
+def _with_text_warning(payload: dict | None, *values) -> dict | None:
+    """기록된 텍스트에 손상 의심 한글 음절이 있으면 결과에 warnings를 붙인다."""
+    words = suspicious_hangul_words(*values)
+    if payload is None or not words:
+        return payload
+    return {
+        **payload,
+        "warnings": [
+            "드문 한글 음절이 든 단어가 있습니다: " + ", ".join(words[:20]) + ". "
+            "의도한 표기가 아니면(유니코드 이스케이프 손상 — 예: 등급 → 뒱급) "
+            "해당 필드만 고쳐 다시 기록하세요."
+        ],
+    }
+
+
 @mcp.tool()
 def get_project_briefing(project_or_repo: str) -> dict:
     """세션 시작 시 프로젝트 컨텍스트, 최근 handoff, decision, open loops를 반환한다.
@@ -132,7 +148,7 @@ def record_note(kind: str, title: str, body: str, project: str = "") -> dict:
     """
     _touch_session_marker()
     result = vault_tools.record_note(kind, title, body, project=project, settings=get_settings())
-    return _candidate_result_dict(result)
+    return _with_text_warning(_candidate_result_dict(result), title, body)
 
 
 @mcp.tool()
@@ -140,7 +156,7 @@ def record_agent_improvement(project: str, issue: str, improvement: str, evidenc
     """반복 실수, 개선할 작업 방식, 프로젝트별 주의사항을 MemoryPatch 후보로 기록한다."""
     _touch_session_marker()
     result = vault_tools.record_agent_improvement(project, issue, improvement, evidence, settings=get_settings())
-    return _candidate_result_dict(result)
+    return _with_text_warning(_candidate_result_dict(result), issue, improvement, evidence)
 
 
 @mcp.tool()
@@ -156,7 +172,7 @@ def write_work_plan(project: str, goal: str, context_read: str, scope: str, appr
         project, goal, context_read, scope, approach, risks, session_id=_SESSION_ID, settings=get_settings()
     )
     _write_session_marker(plan_written=True)
-    return _candidate_result_dict(result)
+    return _with_text_warning(_candidate_result_dict(result), goal, context_read, scope, approach, risks)
 
 
 @mcp.tool()
@@ -212,13 +228,17 @@ def write_session_process(
         settings=get_settings(),
     )
     _write_session_marker(process_written=True)
-    return {
-        "session_id": result.session_id,
-        "process": _candidate_result_dict(result.process),
-        "worklog_rel_path": result.worklog_rel_path,
-        "decision": _candidate_result_dict(result.decision),
-        "memory_patch": _candidate_result_dict(result.memory_patch),
-    }
+    return _with_text_warning(
+        {
+            "session_id": result.session_id,
+            "process": _candidate_result_dict(result.process),
+            "worklog_rel_path": result.worklog_rel_path,
+            "decision": _candidate_result_dict(result.decision),
+            "memory_patch": _candidate_result_dict(result.memory_patch),
+        },
+        what_changed, files_touched, project_decisions, implementation_trace,
+        agent_execution_notes, docs_update_candidates, next_session, learning_recovery,
+    )
 
 
 def main() -> None:

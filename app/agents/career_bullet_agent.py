@@ -12,6 +12,7 @@ from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
 from app.services.candidate_writer import CandidateSpec, CandidateWriteResult, CandidateWriter
 from app.services.json_utils import complete_json
+from app.services.note_excerpt import prioritized_excerpt
 from app.services.wiki_service import WikiNote, WikiService
 
 
@@ -23,7 +24,9 @@ _SOURCE_PREFIXES = (
     "10_Worklog/Summaries/",
 )
 _KNOWLEDGE_PREFIXES = ("20_Knowledge/", "30_Projects/")
-_MAX_NOTE_CHARS = 3000
+# 이력서 소재는 "왜 그렇게 판단했는가"에 있다 — Files Touched 대신 판단 근거 섹션을 먼저 담는다.
+_MAX_NOTE_CHARS = 8000
+_PRIORITY_SECTIONS = ("What Changed", "Project Decisions", "Implementation Trace", "Agent Execution Notes")
 _MAX_NOTES = 20
 
 # 이 에이전트 전용 처리 완료 마커. `needs_distill`(DistillAgent 소유)과 키를 나눠
@@ -153,9 +156,7 @@ class CareerBulletAgent:
             header = f"### {note.path}"
             if meta:
                 header += f" ({', '.join(meta)})"
-            body = note.body.strip()
-            if len(body) > _MAX_NOTE_CHARS:
-                body = body[:_MAX_NOTE_CHARS].rstrip() + "\n...(일부 생략)"
+            body = prioritized_excerpt(note.body, _PRIORITY_SECTIONS, _MAX_NOTE_CHARS)
             parts.append(f"{header}\n{body}")
         return "\n\n".join(parts)
 
