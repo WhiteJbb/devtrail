@@ -76,6 +76,19 @@ def test_list_candidates_empty_vault(tmp_path):
     assert agent.list_candidates() == []
 
 
+def test_list_candidates_skips_archive(tmp_path):
+    kept = _write_candidate(tmp_path, "knowledge", "남은 후보")
+    archived = _write_candidate(tmp_path, "decision", "보관된 결정")
+    src = tmp_path / archived
+    dest = tmp_path / "60_Candidates/_Archive/Decisions" / src.name
+    dest.parent.mkdir(parents=True)
+    src.rename(dest)
+
+    agent = CuratorAgent(settings=_settings(tmp_path))
+
+    assert [item.rel_path for item in agent.list_candidates()] == [kept]
+
+
 def test_list_candidates_has_correct_title(tmp_path):
     _write_candidate(tmp_path, "knowledge", "RAG 파이프라인 설계")
 
