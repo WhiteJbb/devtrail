@@ -70,3 +70,34 @@ def test_todo_agent_save_false_no_file(tmp_path, monkeypatch):
 
     assert result.text == "## 다음 할 일\n- [ ] 작업"
     assert not result.path.exists()
+
+
+_LONG_PROCESS = (
+    "---\nproject: Devtrail\ncreated_at: 2025-01-01T09:00:00\ntype: session\n---\n\n"
+    "# Process\n\n## What Changed\n- 변경 요약\n\n"
+    "## Files Touched\n" + "- app/file.py — 수정\n" * 800 + "\n"
+    "## Next Session\n1. 꼬리에 있는 다음 할 일\n"
+)
+
+
+def test_todo_agent_keeps_tail_sections_of_long_process_note(tmp_path, monkeypatch):
+    """긴 Process 노트를 앞에서 자르면 Next Session이 LLM에 도달하지 못한다."""
+    settings = _vault_settings(tmp_path)
+    session_dir = tmp_path / "10_Worklog" / "Sessions"
+    session_dir.mkdir(parents=True)
+    (session_dir / "2025-01-01-devtrail-session.md").write_text(_LONG_PROCESS, encoding="utf-8")
+
+    captured = {}
+
+    class CaptureLLM:
+        name = "capture"
+        def complete(self, prompt: str, system: str = "") -> str:
+            captured["prompt"] = prompt
+            return "## 결과\n- 항목"
+
+    agent = TodoAgent(settings=settings)
+    monkeypatch.setattr(agent, "_llm", lambda: CaptureLLM())
+    agent.generate()
+
+    assert "꼬리에 있는 다음 할 일" in captured["prompt"]
+    assert "app/file.py" not in captured["prompt"]

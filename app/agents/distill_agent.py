@@ -17,13 +17,19 @@ from app.prompts import render_prompt
 from app.services.blog_thread import format_thread_context
 from app.services.candidate_writer import CandidateSpec, CandidateWriteResult, CandidateWriter
 from app.services.json_utils import JSONParseError, complete_json
+from app.services.note_excerpt import prioritized_excerpt
 from app.services.wiki_service import WikiNote, WikiService
 
 
 _RAW_PREFIXES = ("00_Inbox/", "10_Worklog/")
 _KNOWLEDGE_PREFIXES = ("20_Knowledge/", "30_Projects/")
 _CANDIDATE_PREFIX = "60_Candidates/"
-_MAX_NOTE_CHARS = 3000
+# 지식·글감은 무엇을 왜 그렇게 했는지에서 나온다 — 긴 Process 노트는 그 섹션을 먼저 담는다.
+# 노트 전체는 context_char_budget이 따로 제한한다.
+_MAX_NOTE_CHARS = 6000
+_PRIORITY_SECTIONS = (
+    "What Changed", "Agent Execution Notes", "Implementation Trace", "Project Decisions", "Learning Recovery",
+)
 _MAX_RELATED = 12
 _CHARS_PER_TOKEN = 3  # 한국어 혼용 기준 보수적 추정
 _RANGE_MODE_NOTE = (
@@ -367,9 +373,7 @@ class DistillAgent:
             header = f"### {note.path}"
             if meta:
                 header += f" ({', '.join(meta)})"
-            body = note.body.strip()
-            if len(body) > _MAX_NOTE_CHARS:
-                body = body[:_MAX_NOTE_CHARS].rstrip() + "\n...(일부 생략)"
+            body = prioritized_excerpt(note.body, _PRIORITY_SECTIONS, _MAX_NOTE_CHARS)
             chunk = f"{header}\n{body}"
             if used + len(chunk) > budget:
                 remaining = budget - used

@@ -479,3 +479,25 @@ def test_thread_continuation_bypasses_critic(tmp_path):
     text = result.written[0].path.read_text(encoding="utf-8")
     assert "title: 홈랩 구축기" in text
     assert "- 2026-06-23: 모니터링 추가" in text
+
+
+def test_long_process_note_keeps_judgment_sections_in_distill_context(tmp_path):
+    """긴 Process 노트를 앞에서 자르면 교훈·판단 섹션이 LLM에 도달하지 못한다."""
+    when = datetime(2026, 6, 23, 9, 0, 0)
+    CaptureAgent(settings=_settings(tmp_path), now=when).capture_session(
+        project="Devtrail",
+        summary_text=(
+            "## What Changed\n- 변경 요약\n\n"
+            "## Files Touched\n" + "- app/file.py — 수정\n" * 800 + "\n"
+            "## Agent Execution Notes\n- 더 나은 작업 방식: 정본으로 돌아간다\n"
+        ),
+        from_agent=True,
+        source="mcp_session_process",
+        needs_distill=True,
+    )
+    llm = FakeLLM(_distill_response())
+    DistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23, 10, 0, 0)).distill_today()
+
+    assert any("정본으로 돌아간다" in p for p in llm.prompts)
+    assert not any("app/file.py" in p for p in llm.prompts)
+
