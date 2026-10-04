@@ -10,11 +10,14 @@ from app.config import Settings, get_settings
 from app.llm.base import LLMProvider
 from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
+from app.services.note_excerpt import prioritized_excerpt
 from app.services.wiki_service import WikiNote, WikiService
 
 
 _RAW_PREFIXES = ("00_Inbox/", "10_Worklog/")
-_MAX_NOTE_CHARS = 3000
+# 회고에는 한 일과 판단, 남은 일이 필요하다 — Files Touched 대신 그 섹션을 먼저 담는다.
+_MAX_NOTE_CHARS = 5000
+_PRIORITY_SECTIONS = ("What Changed", "Project Decisions", "Agent Execution Notes", "Next Session")
 _MAX_NOTES = 20
 
 
@@ -85,9 +88,7 @@ class WorklogAgent:
             header = f"### {note.path}"
             if meta:
                 header += f" ({', '.join(meta)})"
-            body = note.body.strip()
-            if len(body) > _MAX_NOTE_CHARS:
-                body = body[:_MAX_NOTE_CHARS].rstrip() + "\n...(일부 생략)"
+            body = prioritized_excerpt(note.body, _PRIORITY_SECTIONS, _MAX_NOTE_CHARS)
             parts.append(f"{header}\n{body}")
         return "\n\n".join(parts)
 
