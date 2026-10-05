@@ -1,4 +1,4 @@
-"""MCP 서버 — Agent Session Lifecycle의 7개 정본 tool을 stdio로 노출한다.
+"""MCP 서버 — Agent Session Lifecycle의 10개 정본 tool을 stdio로 노출한다.
 
 Claude Code/Desktop 같은 MCP 클라이언트는 세션당 이 서버 프로세스를 1개 띄우므로,
 프로세스 시작 시 session_id를 1회 생성해 모든 write 계열 tool 호출에 자동 주입한다.

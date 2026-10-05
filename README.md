@@ -288,7 +288,7 @@ devtrail project-briefing     # get_project_briefing() 결과를 stdout에 출�
 ## MCP 연동 (Claude Code Session Lifecycle)
 
 `devtrail mcp-serve`는 Vault를 **Agent Session Lifecycle 공용 메모리 버스**로 노출하는
-MCP(stdio) 서버입니다. MCP가 연결돼 있으면 세션 시작/종료 기록은 아래 7개 tool이
+MCP(stdio) 서버입니다. MCP가 연결돼 있으면 세션 시작/종료 기록은 아래 10개 tool이
 1차 경로이고, `capture-session` CLI는 MCP 미연결 시의 fallback입니다.
 
 등록 (Claude Code):
@@ -551,7 +551,7 @@ URL 전송 시 자동으로 캡처 + LLM 요약 실행. 음성·이미지도 자
 app/
 ├─ cli.py              # 진입점
 ├─ config.py           # .env 설정
-├─ mcp_server.py       # MCP(stdio) 서버 — Agent Session Lifecycle 7개 tool 노출
+├─ mcp_server.py       # MCP(stdio) 서버 — Agent Session Lifecycle 10개 tool 노출
 ├─ vault_tools.py      # MCP tool이 호출하는 상태 없는 Vault 함수 모음
 ├─ agents/             # CaptureAgent, DistillAgent, WikiBlogAgent
 │                      # CuratorAgent, NightlyDistillAgent, WeeklyReviewAgent
