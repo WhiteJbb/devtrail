@@ -315,6 +315,9 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 | `get_project_briefing` | 세션 시작 시 프로젝트 컨텍스트 · 최근 handoff · decision · Open Loops 반환 |
 | `search_vault` | read_scope 안 노트 검색 (status=stable/candidate 포함) |
 | `read_note` | scope 안 노트 전문 읽기 |
+| `get_recent_sessions` | 프로젝트의 최근 세션 목록 (세션당 한 항목: goal · what_changed · next_session 발췌) |
+| `get_decisions` | 프로젝트의 결정 이력 (검토 대기 · 승격 · `include_archived`로 보관분까지) |
+| `get_known_problems` | 세션에서 기록된 막힌 점 · 실수와 그 뒤의 교훈 (Process의 Agent Execution Notes 기반) |
 | `record_note` | 결정/지식/아이디어를 `60_Candidates/`에 후보로 기록 (knowledge/decision/blog_idea/career_bullet) |
 | `record_agent_improvement` | 반복 실수 · 개선할 작업 방식 · 프로젝트 주의사항을 MemoryPatch 후보로 기록 |
 | `write_work_plan` | 작업 시작 전, 실제 수정 전에 Plan 기록 |

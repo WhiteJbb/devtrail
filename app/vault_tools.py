@@ -245,6 +245,8 @@ def _list_session_handoffs(vault_dir: Path, project: str) -> list[dict]:
                 "updated_at": str(meta.get("updated_at", "")),
                 "handoff_type": str(meta.get("handoff_type", "")),
                 "session_id": str(meta.get("session_id", "")),
+                "host": str(meta.get("host", "") or ""),
+                "agent": str(meta.get("agent", "") or ""),
                 "body": post.content,
             }
         )
@@ -405,6 +407,152 @@ def _load_project_config(repo_dir: Path) -> str:
     return str(data.get("project", "")).strip()
 
 
+def _list_decisions(vault_dir: Path, project: str, include_archived: bool = False) -> list[dict]:
+    """프로젝트의 결정을 최신순으로 반환한다 — 검토 대기 후보 + 승격된 정본 (+ 보관).
+
+    후보만 읽으면 promote하는 순간 결정이 사라져, 검토를 성실히 할수록 컨텍스트를 잃는다.
+    """
+    sources = [
+        (vault_dir / "60_Candidates" / "Decisions", True, "candidate"),
+        (vault_dir / "30_Projects" / project / "Decisions", False, "promoted"),
+    ]
+    if include_archived:
+        sources.append((vault_dir / "60_Candidates" / "_Archive" / "Decisions", True, "archived"))
+
+    entries: list[tuple[float, dict]] = []
+    for dir_path, project_filter, status in sources:
+        if not dir_path.exists():
+            continue
+        for md_path in dir_path.glob("*.md"):
+            try:
+                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            meta = post.metadata
+            if project_filter and str(meta.get("project", "")).strip().lower() != project.lower():
+                continue
+            entries.append(
+                (
+                    md_path.stat().st_mtime,
+                    {
+                        "title": str(meta.get("title", md_path.stem)),
+                        "status": status,
+                        "date": str(meta.get("updated_at") or meta.get("created_at") or "")[:10],
+                        "summary": str(meta.get("summary") or "").strip() or _truncate(post.content, 200),
+                        "rel_path": str(md_path.relative_to(vault_dir)).replace("\\", "/"),
+                    },
+                )
+            )
+    entries.sort(key=lambda e: e[0], reverse=True)
+    return [entry for _, entry in entries]
+
+
+_EXECUTION_NOTE_LABELS = {
+    "막힌 점": "blocked",
+    "에이전트가 한 실수": "mistakes",
+    "다음부터 먼저 확인할 점": "next_checks",
+    "더 나은 작업 방식": "better_approach",
+    "evidence": "evidence",
+    "scope": "scope",
+    "confidence": "confidence",
+    "requires_user_review": "requires_user_review",
+}
+_EXECUTION_NOTE_RE = re.compile(
+    r"^- (" + "|".join(re.escape(label) for label in _EXECUTION_NOTE_LABELS) + r"):[ \t]*", re.MULTILINE
+)
+
+
+def _parse_execution_notes(body: str) -> dict[str, str]:
+    """Process 본문의 Agent Execution Notes를 필드별로 되읽는다 (값은 여러 줄일 수 있다)."""
+    section = _excerpt_sections(body, ("Agent Execution Notes",))
+    parts = _EXECUTION_NOTE_RE.split(section)
+    # split 결과: [머리말, label1, value1, label2, value2, ...]
+    return {
+        _EXECUTION_NOTE_LABELS[label]: value.strip()
+        for label, value in zip(parts[1::2], parts[2::2])
+    }
+
+
+def _section_text(body: str, heading: str, limit: int) -> str:
+    """'## heading' 섹션의 본문만(제목 줄 제외) limit 안으로 잘라 반환한다."""
+    lines = _excerpt_sections(body, (heading,)).splitlines()[1:]
+    return _truncate("\n".join(lines), limit)
+
+
+def get_recent_sessions(project: str, limit: int = 5, settings: Settings | None = None) -> list[dict]:
+    """프로젝트의 최근 세션을 최신순으로 반환한다 — 세션당 한 항목(Plan/Process 묶음)."""
+    vault_dir = _vault_dir(settings)
+    handoffs = _list_session_handoffs(vault_dir, _canonicalize_project(vault_dir, project))
+    sessions: dict[str, dict[str, dict]] = {}
+    for h in handoffs:
+        sessions.setdefault(h["session_id"] or h["rel_path"], {})[h["handoff_type"]] = h
+
+    results: list[dict] = []
+    for group in sessions.values():
+        process, plan = group.get("process"), group.get("plan")
+        main = process or plan or next(iter(group.values()))
+        recorded_at = main["updated_at"] or main["created_at"]
+        results.append(
+            {
+                "session_id": main["session_id"],
+                "recorded_at": recorded_at,
+                "host": main["host"],
+                "agent": main["agent"],
+                "goal": _section_text(plan["body"], "Goal", 300) if plan else "",
+                "what_changed": _section_text(process["body"], "What Changed", 600) if process else "",
+                "next_session": _section_text(process["body"], "Next Session", 400) if process else "",
+                "plan_rel_path": plan["rel_path"] if plan else "",
+                "process_rel_path": process["rel_path"] if process else "",
+                "_sort": _handoff_timestamp(main),
+            }
+        )
+    results.sort(key=lambda r: r.pop("_sort"), reverse=True)
+    return results[: max(limit, 0)]
+
+
+def get_decisions(
+    project: str, limit: int = 20, include_archived: bool = False, settings: Settings | None = None
+) -> list[dict]:
+    """프로젝트의 결정 이력을 최신순으로 반환한다. status: candidate(검토 대기) / promoted / archived."""
+    vault_dir = _vault_dir(settings)
+    decisions = _list_decisions(vault_dir, _canonicalize_project(vault_dir, project), include_archived)
+    return decisions[: max(limit, 0)]
+
+
+def get_known_problems(project: str, limit: int = 10, settings: Settings | None = None) -> list[dict]:
+    """프로젝트 세션에서 기록된 막힌 점·실수와 그 뒤의 교훈을 최신순으로 반환한다.
+
+    ponytail: 전용 `problem` 후보 kind가 아직 없어 Process의 Agent Execution Notes를
+    되읽는다. component·cause_class 집계가 필요해지면 problem kind를 추가하고 여기에 합친다.
+    """
+    vault_dir = _vault_dir(settings)
+    handoffs = _list_session_handoffs(vault_dir, _canonicalize_project(vault_dir, project))
+    results: list[dict] = []
+    for h in handoffs:  # 이미 최신순
+        if h["handoff_type"] != "process":
+            continue
+        notes = _parse_execution_notes(h["body"])
+        blocked, mistakes = notes.get("blocked", ""), notes.get("mistakes", "")
+        # "없음"만 적힌 세션은 문제 기록이 아니다 — 둘 다 그러면 건너뛴다.
+        if all(not text or text.startswith("없음") for text in (blocked, mistakes)):
+            continue
+        results.append(
+            {
+                "recorded_at": h["updated_at"] or h["created_at"],
+                "session_id": h["session_id"],
+                "host": h["host"],
+                "agent": h["agent"],
+                "blocked": _truncate(blocked, 800),
+                "mistakes": _truncate(mistakes, 800),
+                "next_checks": _truncate(notes.get("next_checks", ""), 800),
+                "rel_path": h["rel_path"],
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _repo_enforces_plan(repo_dir: Path) -> bool:
     """repo의 Claude Code 설정에 plan-check 훅이 걸려 있는지 본다."""
     for name in ("settings.json", "settings.local.json"):
@@ -515,29 +663,14 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     # 결정 이력은 검토 대기 후보(60_Candidates/Decisions)와 승격된 정본
     # (30_Projects/<P>/Decisions)을 함께 읽는다 — 후보만 읽으면 promote하는 순간
     # briefing에서 결정이 사라져, 검토를 성실히 할수록 컨텍스트를 잃는다.
-    decision_entries: list[tuple[float, str, str]] = []
-
-    def _collect_decisions(dir_path: Path, *, project_filter: bool, tag: str) -> None:
-        if not dir_path.exists():
-            return
-        for md_path in dir_path.glob("*.md"):
-            try:
-                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if project_filter and str(post.metadata.get("project", "")).strip().lower() != resolved_project.lower():
-                continue
-            rel = str(md_path.relative_to(vault_dir)).replace("\\", "/")
-            title = post.metadata.get("title", md_path.stem)
-            decision_entries.append((md_path.stat().st_mtime, f"- {title} ({rel}){tag}", rel))
-
-    _collect_decisions(vault_dir / "60_Candidates" / "Decisions", project_filter=True, tag=" — 검토 대기")
-    _collect_decisions(vault_dir / "30_Projects" / resolved_project / "Decisions", project_filter=False, tag="")
-    decision_entries.sort(key=lambda e: e[0], reverse=True)
-    recent_entries = decision_entries[:_RECENT_DECISION_LIMIT]
-    source_refs.extend(rel for _, _, rel in recent_entries)
-    if recent_entries:
-        sections.append("## Recent Decisions\n\n" + _truncate("\n".join(line for _, line, _ in recent_entries)))
+    recent_decisions = _list_decisions(vault_dir, resolved_project)[:_RECENT_DECISION_LIMIT]
+    source_refs.extend(d["rel_path"] for d in recent_decisions)
+    if recent_decisions:
+        decision_lines = [
+            f"- {d['title']} ({d['rel_path']})" + (" — 검토 대기" if d["status"] == "candidate" else "")
+            for d in recent_decisions
+        ]
+        sections.append("## Recent Decisions\n\n" + _truncate("\n".join(decision_lines)))
 
     # 미해결 학습 질문 — Learning Recovery 루프를 세션 시작 시점에 노출한다.
     # AI가 답을 대신 말해버리면 학습 회수가 안 되므로 지시문을 함께 넣는다.

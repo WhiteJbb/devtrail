@@ -1357,3 +1357,84 @@ def test_process_first_call_requires_content(tmp_path):
             session_id="sess-empty",
             settings=settings,
         )
+
+
+# ── 조회 tool 3종: get_recent_sessions / get_decisions / get_known_problems ──
+
+
+def _record_session(vault: Path, session_id: str, *, blocked: str = "", mistakes: str = "", next_session: str = ""):
+    vault_tools.write_work_plan(
+        project="Devtrail", goal=f"{session_id} 목표", context_read="c", scope="s",
+        approach="a", risks="r", session_id=session_id, settings=_settings(vault),
+    )
+    return vault_tools.write_session_process(
+        project="Devtrail",
+        what_changed=f"{session_id} 변경",
+        agent_execution_notes={
+            "blocked": blocked,
+            "mistakes": mistakes,
+            "next_checks": "- 먼저 측정한다\n- 정본을 읽는다",
+        },
+        next_session=next_session,
+        session_id=session_id,
+        settings=_settings(vault),
+    )
+
+
+def test_get_recent_sessions_groups_plan_and_process(tmp_path):
+    _record_session(tmp_path, "sess-1", next_session="1. 이어서 할 일")
+    vault_tools.write_work_plan(
+        project="Devtrail", goal="계획만 있는 세션", context_read="c", scope="s",
+        approach="a", risks="r", session_id="sess-2", settings=_settings(tmp_path),
+    )
+
+    sessions = vault_tools.get_recent_sessions("devtrail", settings=_settings(tmp_path))
+
+    assert {s["session_id"] for s in sessions} == {"sess-1", "sess-2"}
+    by_id = {s["session_id"]: s for s in sessions}
+    assert "sess-1 목표" in by_id["sess-1"]["goal"]
+    assert by_id["sess-1"]["what_changed"] == "sess-1 변경"  # 섹션 제목 줄은 뺀다
+    assert "이어서 할 일" in by_id["sess-1"]["next_session"]
+    assert by_id["sess-1"]["process_rel_path"] and by_id["sess-1"]["plan_rel_path"]
+    assert by_id["sess-2"]["process_rel_path"] == "" and "계획만 있는 세션" in by_id["sess-2"]["goal"]
+    assert vault_tools.get_recent_sessions("Devtrail", limit=1, settings=_settings(tmp_path))[0].keys() >= {"host", "agent"}
+    assert vault_tools.get_recent_sessions("Other", settings=_settings(tmp_path)) == []
+
+
+def _write_decision(vault: Path, rel_dir: str, title: str, project: str = "Devtrail") -> None:
+    path = vault / rel_dir / f"{title}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\ntitle: {title}\nproject: {project}\ncandidate_type: decision\nsummary: {title} 요약\n---\n\n본문\n",
+        encoding="utf-8",
+    )
+
+
+def test_get_decisions_covers_candidate_promoted_and_archived(tmp_path):
+    _write_decision(tmp_path, "60_Candidates/Decisions", "검토 대기 결정")
+    _write_decision(tmp_path, "60_Candidates/Decisions", "남의 결정", project="Other")
+    _write_decision(tmp_path, "30_Projects/Devtrail/Decisions", "승격된 결정")
+    _write_decision(tmp_path, "60_Candidates/_Archive/Decisions", "보관된 결정")
+
+    default = vault_tools.get_decisions("Devtrail", settings=_settings(tmp_path))
+    assert {(d["title"], d["status"]) for d in default} == {("검토 대기 결정", "candidate"), ("승격된 결정", "promoted")}
+    assert default[0]["summary"].endswith("요약") and default[0]["rel_path"].endswith(".md")
+
+    with_archive = vault_tools.get_decisions("Devtrail", include_archived=True, settings=_settings(tmp_path))
+    assert ("보관된 결정", "archived") in {(d["title"], d["status"]) for d in with_archive}
+    assert len(vault_tools.get_decisions("Devtrail", limit=1, settings=_settings(tmp_path))) == 1
+
+
+def test_get_known_problems_reads_execution_notes(tmp_path):
+    _record_session(tmp_path, "sess-clean")
+    _record_session(tmp_path, "sess-none", blocked="없음", mistakes="없음 (선확인으로 회피)")
+    _record_session(tmp_path, "sess-bad", blocked="MCP 서버가 구버전이었다", mistakes="1. 범위를 과소 보고\n2. heredoc 실패")
+
+    problems = vault_tools.get_known_problems("Devtrail", settings=_settings(tmp_path))
+
+    assert [p["session_id"] for p in problems] == ["sess-bad"]
+    assert problems[0]["blocked"] == "MCP 서버가 구버전이었다"
+    assert "heredoc 실패" in problems[0]["mistakes"]
+    assert "정본을 읽는다" in problems[0]["next_checks"]  # 여러 줄 값이 다음 필드 전까지 이어진다
+    assert problems[0]["rel_path"].startswith("60_Candidates/SessionHandoffs/")
+

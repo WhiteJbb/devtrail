@@ -30,13 +30,16 @@ def _reload_mcp_server(tmp_path, monkeypatch):
     return mcp_server_module
 
 
-def test_registers_seven_canonical_tools(vault_env, monkeypatch):
+def test_registers_canonical_tools(vault_env, monkeypatch):
     mod = _reload_mcp_server(vault_env, monkeypatch)
     tools = {t.name for t in mod.mcp._tool_manager.list_tools()}
     assert tools == {
         "get_project_briefing",
         "search_vault",
         "read_note",
+        "get_recent_sessions",
+        "get_decisions",
+        "get_known_problems",
         "record_note",
         "record_agent_improvement",
         "write_work_plan",

@@ -141,6 +141,41 @@ def read_note(rel_path: str) -> str:
 
 
 @mcp.tool()
+def get_recent_sessions(project: str, limit: int = 5) -> list[dict]:
+    """프로젝트의 최근 세션을 최신순으로 반환한다 (세션당 한 항목).
+
+    각 항목: recorded_at, host, agent, goal(Plan), what_changed·next_session(Process 발췌),
+    plan_rel_path·process_rel_path. 전문은 read_note로 조회한다.
+    """
+    _touch_session_marker()
+    return vault_tools.get_recent_sessions(project, limit=limit, settings=get_settings())
+
+
+@mcp.tool()
+def get_decisions(project: str, limit: int = 20, include_archived: bool = False) -> list[dict]:
+    """프로젝트의 결정 이력을 최신순으로 반환한다.
+
+    status=candidate(검토 대기) / promoted(승격된 정본) / archived(보관, include_archived=True일 때만).
+    각 항목: title, status, date, summary, rel_path. 전문은 read_note로 조회한다.
+    """
+    _touch_session_marker()
+    return vault_tools.get_decisions(
+        project, limit=limit, include_archived=include_archived, settings=get_settings()
+    )
+
+
+@mcp.tool()
+def get_known_problems(project: str, limit: int = 10) -> list[dict]:
+    """프로젝트 세션에서 기록된 막힌 점·실수와 그 뒤의 교훈을 최신순으로 반환한다.
+
+    "예전에 이 문제 있었나"를 확인할 때 쓴다. 출처는 세션 Process의 Agent Execution
+    Notes다 — 각 항목: recorded_at, host, agent, blocked, mistakes, next_checks, rel_path.
+    """
+    _touch_session_marker()
+    return vault_tools.get_known_problems(project, limit=limit, settings=get_settings())
+
+
+@mcp.tool()
 def record_note(kind: str, title: str, body: str, project: str = "") -> dict:
     """작업 중 결정/지식/아이디어를 60_Candidates/에 후보로 기록한다.
 
