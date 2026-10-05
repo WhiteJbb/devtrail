@@ -1525,7 +1525,7 @@ def project_briefing(
 
 @activity_app.command("install")
 def activity_install(
-    shell: str = typer.Option("all", "--shell", "-s", help="pwsh | bash | all"),
+    shell: str = typer.Option("all", "--shell", "-s", help="pwsh | bash | zsh | all"),
     profile: Path = typer.Option(None, "--profile", help="프로필 경로 직접 지정 (WSL·원격 노드용)"),
 ) -> None:
     """셸 프로필에 활동 수집 훅 블록을 넣는다. 재실행하면 최신 블록으로 갈아끼운다."""
@@ -1533,7 +1533,7 @@ def activity_install(
 
     targets = _activity_targets(shell)
     if profile and len(targets) > 1:
-        _fail("--profile은 셸 하나를 지정할 때만 쓸 수 있습니다 (--shell pwsh 또는 bash).")
+        _fail("--profile은 셸 하나를 지정할 때만 쓸 수 있습니다 (--shell pwsh, bash 또는 zsh).")
 
     for name in targets:
         try:
