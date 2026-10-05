@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -35,6 +37,38 @@ def test_bash_hook_registers_prompt_command_idempotently():
     script = activity_hook.hook_script("bash")
     assert "PROMPT_COMMAND" in script
     assert "*:__devtrail_activity:*" in script  # 중복 등록 방지 가드
+
+
+def test_zsh_hook_registers_via_add_zsh_hook():
+    script = activity_hook.hook_script("zsh")
+    assert "add-zsh-hook preexec __devtrail_preexec" in script
+    assert "add-zsh-hook precmd __devtrail_precmd" in script
+
+
+@pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh가 없는 환경")
+def test_zsh_hook_records_masks_and_skips_in_real_zsh(tmp_path):
+    """실제 zsh에서 훅을 돌려 JSONL 한 줄씩이 유효한지 본다 — 종료 코드, 비밀값 마스킹,
+    공백으로 시작한 명령 제외, 중복 등록 방지."""
+    hook = activity_hook._SCRIPT_DIR / "zsh-hook.sh"
+    script = f"""
+source {hook}; source {hook}
+print -r -- "$precmd_functions"
+__devtrail_preexec 'docker compose up -d'; true; __devtrail_precmd
+__devtrail_preexec 'deploy --token=abc123 "quoted"'; (exit 3); __devtrail_precmd
+__devtrail_preexec ' hidden command'; true; __devtrail_precmd
+true; __devtrail_precmd
+"""
+    done = subprocess.run(
+        ["zsh", "-f", "-c", script], env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True, timeout=30,
+    )
+    assert done.stdout.split() == ["__devtrail_precmd"]
+
+    events = [json.loads(line) for line in next((tmp_path / ".devtrail" / "activity").glob("*.jsonl")).read_text().splitlines()]
+    assert [(e["cmd"], e["exit"], e["shell"]) for e in events] == [
+        ("docker compose up -d", 0, "zsh"),
+        ('deploy --token=*** "quoted"', 3, "zsh"),
+    ]
 
 
 def test_pwsh_hook_preserves_previous_prompt():
@@ -169,4 +203,4 @@ def test_status_counts_today_and_reports_last_event(tmp_path):
     assert result.today_events == 2
     assert result.last_event["cmd"] == "git status"
     installed = {s.shell: s.installed for s in result.shells}
-    assert installed == {"bash": True, "pwsh": False}
+    assert installed == {"bash": True, "pwsh": False, "zsh": False}

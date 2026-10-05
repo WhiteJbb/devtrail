@@ -182,7 +182,7 @@ devtrail daily-log [-p project] --from-agent                   # LLM이 오늘 �
 셸 활동 수집(커밋 없는 작업 — SSH·Docker·홈랩 운영):
 
 ```bash
-devtrail activity install [--shell pwsh|bash|all]         # 셸 프로필에 수집 훅 설치
+devtrail activity install [--shell pwsh|bash|zsh|all]         # 셸 프로필에 수집 훅 설치
 devtrail activity install --shell bash --profile <경로>   # WSL·원격 노드용
 devtrail activity status                                  # 훅 설치 여부·오늘 이벤트 수
 devtrail activity uninstall [--shell ...]                 # 훅 블록 제거

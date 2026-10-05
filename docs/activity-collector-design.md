@@ -47,7 +47,7 @@ bash PROMPT_COMMAND ──┤→ ~/.devtrail/activity/YYYY-MM-DD.jsonl  (append-
  "cwd": "C:/Users/admin/Desktop/devtrail", "cmd": "docker compose up -d", "exit": 0}
 ```
 
-- `ts` 초 단위면 충분. `shell`: `pwsh` | `bash`.
+- `ts` 초 단위면 충분. `shell`: `pwsh` | `bash` | `zsh`.
 - `exit`: PowerShell은 `$LASTEXITCODE`/`$?` 조합, bash는 `$?`.
 - git HEAD·소요 시간은 1차 제외 — 훅을 무겁게 만들 가치가 아직 없다.
   (sessionizer가 cwd로 repo를 알 수 있으니 필요하면 배치 쪽에서 보강)
@@ -81,7 +81,7 @@ JSONL로 append. devtrail 마커 블록(`# >>> devtrail activity >>>` … `# <<<
 ### 설치 CLI
 
 ```
-devtrail activity install [--shell pwsh|bash|all]   # 프로필에 마커 블록 append
+devtrail activity install [--shell pwsh|bash|zsh|all]   # 프로필에 마커 블록 append
 devtrail activity uninstall                          # 마커 블록 제거
 devtrail activity status                             # 오늘 이벤트 수·마지막 이벤트·훅 설치 여부
 devtrail activity sessionize [--date YYYY-MM-DD]     # 수동 실행 (디버그용)
