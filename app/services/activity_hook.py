@@ -4,7 +4,7 @@
 sessionizer(PR B)가 맡는다 — 훅을 고칠 일이 없어야 여러 셸과 나중의 원격
 노드에 안전하게 뿌릴 수 있다.
 
-훅 스크립트를 ASCII로만 쓰는 이유: 블록이 사용자의 `$PROFILE`·`.bashrc`에
+훅 스크립트를 ASCII로만 쓰는 이유: 블록이 사용자의 `$PROFILE`·`.bashrc`·`.zshrc`에
 그대로 들어가는데 그 파일들의 인코딩이 환경마다(cp949·utf-8) 다르다. 프로필
 읽기/쓰기를 surrogateescape 바이트 왕복으로 처리하는 것도 같은 이유다 —
 남의 파일에 우리 블록만 덧붙이고 나머지 바이트는 건드리지 않는다.
@@ -13,6 +13,7 @@ sessionizer(PR B)가 맡는다 — 훅을 고칠 일이 없어야 여러 셸과 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -20,12 +21,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-SHELLS = ("pwsh", "bash")
+SHELLS = ("pwsh", "bash", "zsh")
 
 MARKER_BEGIN = "# >>> devtrail activity >>>"
 MARKER_END = "# <<< devtrail activity <<<"
 
-_HOOK_FILES = {"pwsh": "pwsh-hook.ps1", "bash": "bash-hook.sh"}
+_HOOK_FILES = {"pwsh": "pwsh-hook.ps1", "bash": "bash-hook.sh", "zsh": "zsh-hook.sh"}
 _SCRIPT_DIR = Path(__file__).parent.parent.parent / "scripts" / "activity"
 
 _BLOCK_RE = re.compile(
@@ -71,6 +72,8 @@ def default_profile(shell: str) -> Path:
     _validate_shell(shell)
     if shell == "bash":
         return Path.home() / ".bashrc"
+    if shell == "zsh":
+        return Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
     return _powershell_profile()
 
 
