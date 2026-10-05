@@ -429,6 +429,10 @@ N5의 `component` / `cause_class` frontmatter가 있어야 final.md §10의 집�
 
 - **조회 tool 3종**: `get_recent_sessions` / `get_decisions` /
   `get_known_problems`. final.md §4가 요구한 read 쪽 공백.
+  → **[2026-10-05] 구현됨.** final.md §17은 "검색 패턴이 반복되는 것을 확인한 뒤"
+  추가하라고 했지만, 사용보다 서비스 완성을 우선하기로 한 사용자 결정(2026-10-04)에
+  따라 먼저 넣었다. `get_known_problems`는 `problem` kind가 아직 없어 Process의
+  Agent Execution Notes(막힌 점·실수)를 되읽는다 — N5가 들어오면 합친다.
 - **Task 1급화**: `70_Tasks/Active.md`(개인 todo) → project·status·agent·
   related_decision. 단 §11-7("Git과 역할 중복 금지")의 사촌 문제 — GitHub
   Issues와 중복될 수 있으므로 경계를 먼저 정한다.
