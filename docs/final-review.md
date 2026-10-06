@@ -390,7 +390,7 @@ final.md가 던진 질문:
 | N2 | `devtrail init-vault` → `SessionHandoffs/`·`06_Lessons.md` | ✅ 완료 |
 | N3 | `.claude/vault.json` + `Context.md` | ✅ 완료 |
 | N4 | `cp settings.example.json settings.json` | ✅ 완료 |
-| N5 | `problem` candidate kind 추가 | 미착수 |
+| N5 | `problem` candidate kind 추가 | ✅ 2026-10-06 — `record_problem` / `60_Candidates/Problems/` / `30_Projects/<P>/Problems/`, `component`·`cause_class` frontmatter. `get_known_problems`가 세션 기록과 합쳐 돌려준다 |
 | N6 | Plan/Process frontmatter에 `host`·`agent` | 미착수 |
 
 #### [개정 2026-09-03] 실제 NOW

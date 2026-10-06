@@ -190,13 +190,14 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `20_Knowledge/` | 승격된 공식 지식 노트 | **직접 수정 금지** — `promote-candidate` 경유 |
 | `30_Projects/<P>/Context.md` | 프로젝트 배경·목표·제약 | **직접 수정 금지** — 사람이 관리 |
 | `30_Projects/<P>/Decisions/` | 의사결정 이력 (DecisionLog) | **직접 수정 금지** — `promote-candidate` 경유 |
+| `30_Projects/<P>/Problems/` | 승격된 트러블슈팅 기록 (`record_problem` 후보 출신) | **직접 수정 금지** — `promote-candidate` 경유 |
 | `30_Projects/<P>/Plans/` | 기능 단위 구현 계획 | 사람과 협의 후 작성 |
 | `30_Projects/<P>/Design/` | IA · UserScenarios · Personas | 사람과 협의 후 작성 |
 | `30_Projects/<P>/Conversations/` | 중요한 대화 발췌 | 사람 요청 시 기록 |
 | `30_Projects/<P>/PromptLog.md` | 중요 프롬프트 원문 | append 허용 |
 | `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈, 기본은 OpenLoops) |
 | `50_Outputs/` | Digest · WeeklyReview · Blog · Resume · Portfolio · Interview · Todo | 읽기 전용 |
-| `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어 후보 | AI가 생성, 사람이 검토 후 promote |
+| `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어·문제 후보 | AI가 생성, 사람이 검토 후 promote |
 | `60_Candidates/SessionHandoffs/<P>/` | 세션별 Plan/Process | `write_work_plan`/`write_session_process` 전용. promote 대상 아님 |
 | `60_Candidates/_Archive/` | 검토 목록에서 뺀 보관 후보 (TTL 만료 decision·memory_patch, 통합본으로 대체된 중복) | 이동·삭제는 사용자 승인 후. `list-candidates`에는 안 나오고 경로를 직접 주면 preview·promote 가능 |
 | `70_Tasks/` | 태스크 (`Active.md` + `Done/`) | task 커맨드 경유 — 직접 편집 금지 |

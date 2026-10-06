@@ -1,4 +1,4 @@
-"""MCP 서버 — Agent Session Lifecycle의 10개 정본 tool을 stdio로 노출한다.
+"""MCP 서버 — Agent Session Lifecycle의 11개 정본 tool을 stdio로 노출한다.
 
 Claude Code/Desktop 같은 MCP 클라이언트는 세션당 이 서버 프로세스를 1개 띄우므로,
 프로세스 시작 시 session_id를 1회 생성해 모든 write 계열 tool 호출에 자동 주입한다.
@@ -165,14 +165,16 @@ def get_decisions(project: str, limit: int = 20, include_archived: bool = False)
 
 
 @mcp.tool()
-def get_known_problems(project: str, limit: int = 10) -> list[dict]:
-    """프로젝트 세션에서 기록된 막힌 점·실수와 그 뒤의 교훈을 최신순으로 반환한다.
+def get_known_problems(project: str, limit: int = 10, component: str = "") -> list[dict]:
+    """프로젝트에서 겪은 문제를 최신순으로 반환한다. "예전에 이 문제 있었나"를 확인할 때 쓴다.
 
-    "예전에 이 문제 있었나"를 확인할 때 쓴다. 출처는 세션 Process의 Agent Execution
-    Notes다 — 각 항목: recorded_at, host, agent, blocked, mistakes, next_checks, rel_path.
+    source="problem": record_problem으로 남긴 기록 — title, component, cause_class,
+        symptoms, cause, solution, prevention, status(candidate/promoted), rel_path
+    source="session": 세션 Process의 막힌 점·실수 — blocked, mistakes, next_checks, rel_path
+    component를 주면(예: "docker") problem 기록만 그 component로 걸러 준다.
     """
     _touch_session_marker()
-    return vault_tools.get_known_problems(project, limit=limit, settings=get_settings())
+    return vault_tools.get_known_problems(project, limit=limit, component=component, settings=get_settings())
 
 
 @mcp.tool()
@@ -184,6 +186,42 @@ def record_note(kind: str, title: str, body: str, project: str = "") -> dict:
     _touch_session_marker()
     result = vault_tools.record_note(kind, title, body, project=project, settings=get_settings())
     return _with_text_warning(_candidate_result_dict(result), title, body)
+
+
+@mcp.tool()
+def record_problem(
+    project: str,
+    title: str,
+    symptoms: str,
+    cause: str,
+    solution: str,
+    attempts: str = "",
+    prevention: str = "",
+    component: str = "",
+    cause_class: str = "",
+    source_refs: list[str] | None = None,
+) -> dict:
+    """겪은 문제와 해결을 problem 후보(60_Candidates/Problems/)로 기록한다.
+
+    해결했거나 원인을 알게 된 문제만 남긴다 — 진행 중인 막힘은 write_session_process의
+    agent_execution_notes.blocked에 쓴다. 같은 문제가 다시 나면 get_known_problems로 찾는다.
+
+    component: 문제가 난 부분을 한 단어로 (docker, mcp, nightly, hooks, vault-sync …)
+    cause_class: 원인 분류를 한 단어로 (permission, config, network, dependency,
+        encoding, concurrency, environment, logic …). 집계 키이므로 기존 기록과 같은
+        표기를 쓴다 — get_known_problems 결과의 값을 먼저 본다.
+    symptoms/cause/attempts/solution/prevention은 각각 한 절이 된다. 여러 항목은
+    markdown 불릿/번호 리스트로 쓴다.
+    """
+    _touch_session_marker()
+    result = vault_tools.record_problem(
+        project, title, symptoms, cause, solution,
+        attempts=attempts, prevention=prevention, component=component, cause_class=cause_class,
+        source_refs=source_refs, settings=get_settings(),
+    )
+    return _with_text_warning(
+        _candidate_result_dict(result), title, symptoms, cause, solution, attempts, prevention
+    )
 
 
 @mcp.tool()

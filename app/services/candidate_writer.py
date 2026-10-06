@@ -98,6 +98,7 @@ _CANDIDATE_DIRS = {
     "memory_patch": "60_Candidates/MemoryPatches",
     "blog_idea": "60_Candidates/BlogIdeas",
     "career_bullet": "60_Candidates/CareerBullets",
+    "problem": "60_Candidates/Problems",
     "session_handoff": "60_Candidates/SessionHandoffs",
 }
 
@@ -127,6 +128,8 @@ class CandidateSpec:
     requires_user_review: bool = False
     target_file: str = ""  # memory_patch 전용: apply 시 반영될 40_AgentMemory 파일
     thread: str = ""  # blog_idea 전용: 여러 세션을 묶는 thread 슬러그
+    component: str = ""  # problem 전용: 문제가 난 부분 (docker, mcp, nightly …)
+    cause_class: str = ""  # problem 전용: 원인 분류 (permission, config, network …)
 
 
 @dataclass(frozen=True)
@@ -229,6 +232,13 @@ class CandidateWriter:
             metadata["session_id"] = spec.session_id
             # Plan/Process는 다음 세션이 이어받는 운영 메모리다 — 어느 노드의
             # 어느 에이전트가 남긴 것인지가 인계 판단에 들어간다.
+            metadata["host"] = resolve_host()
+            metadata["agent"] = resolve_agent()
+        if kind == "problem":
+            # "macmini에서 반복되는 문제", "docker 관련 장애"처럼 집계하려면 기록 시점
+            # 환경과 분류가 frontmatter에 있어야 한다 — 본문에서 소급할 수 없다.
+            metadata["component"] = spec.component.strip().lower()
+            metadata["cause_class"] = spec.cause_class.strip().lower()
             metadata["host"] = resolve_host()
             metadata["agent"] = resolve_agent()
         if slug:
@@ -427,6 +437,7 @@ class CandidateWriter:
             "blog_ideas": "blog_idea",
             "career_bullets": "career_bullet",
             "career": "career_bullet",
+            "problems": "problem",
             "session_handoffs": "session_handoff",
             "handoff": "session_handoff",
         }
