@@ -32,7 +32,7 @@ CANDIDATE_ARCHIVE_DIR = "60_Candidates/_Archive"
 # 재생성 가능한 파생물(raw 노트에서 다시 뽑을 수 있음)은 삭제,
 # 사람 판단이 들어간 것은 _Archive/로 보관한다.
 _EXPIRE_DELETE_KINDS = {"knowledge", "blog_idea", "career_bullet"}
-_EXPIRE_ARCHIVE_KINDS = {"decision", "memory_patch"}
+_EXPIRE_ARCHIVE_KINDS = {"decision", "memory_patch", "problem"}
 
 
 @dataclass(frozen=True)
@@ -101,7 +101,7 @@ def cleanup_candidates(
     """TTL이 지난 60_Candidates 후보를 kind별 정책으로 처분한다.
 
     - status=candidate + 재생성 가능 kind(knowledge/blog_idea/career_bullet) → 삭제
-    - status=candidate + 사람 판단 kind(decision/memory_patch) → _Archive/<폴더>/ 이동
+    - status=candidate + 사람 판단 kind(decision/memory_patch/problem) → _Archive/<폴더>/ 이동
     - status=promoted/applied → 공식 영역에 사본이 있으므로 kind 무관 삭제
     - SessionHandoffs는 자체 정책(cleanup_vault)이 있으므로 제외
 

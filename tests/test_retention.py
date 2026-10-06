@@ -217,6 +217,14 @@ def test_expired_decision_candidate_is_archived(tmp_path):
     assert not (tmp_path / "60_Candidates/Decisions/old-decision.md").exists()
 
 
+def test_expired_problem_is_archived_not_deleted(tmp_path):
+    """problem은 raw에서 다시 뽑을 수 없는 사람 판단 기록이다 — 삭제하지 않는다."""
+    _write_candidate(tmp_path, "Problems", "old-problem.md", "problem", "2026-06-01")
+    result = cleanup_vault(tmp_path, now=_NOW, candidate_ttl_days=14)
+    assert result.archived_candidates == ["60_Candidates/Problems/old-problem.md"]
+    assert (tmp_path / "60_Candidates/_Archive/Problems/old-problem.md").exists()
+
+
 def test_expired_memory_patch_is_archived(tmp_path):
     _write_candidate(tmp_path, "MemoryPatches", "patch.md", "memory_patch", "2026-06-01")
     result = cleanup_vault(tmp_path, now=_NOW, candidate_ttl_days=14)

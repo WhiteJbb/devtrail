@@ -1134,6 +1134,7 @@ def push_digest(
                 "blog_idea": "블로그 후보",
                 "memory_patch": "메모리 패치",
                 "career_bullet": "이력서/포폴 소재",
+                "problem": "문제/트러블슈팅",
             }.get(kind, kind)
             lines.append(f"**{kind_label}** ({len(items)}개)")
             for item in items[:3]:
