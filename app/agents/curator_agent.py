@@ -31,6 +31,7 @@ _PROMOTE_TARGETS = {
     # career_bullet은 이력서/포폴 소재지 지식이 아니다 — 20_Knowledge(기본값)로
     # 떨어지면 지식 영역이 이력서용 추상 제목으로 오염된다.
     "career_bullet": "50_Outputs/Career",
+    "problem": "30_Projects",
 }
 
 _KIND_LABEL = {
@@ -39,6 +40,7 @@ _KIND_LABEL = {
     "memory_patch": "MemoryPatch",
     "blog_idea": "BlogIdea",
     "career_bullet": "CareerBullet",
+    "problem": "Problem",
 }
 
 
@@ -336,6 +338,8 @@ class CuratorAgent:
         base = _PROMOTE_TARGETS.get(kind, "20_Knowledge")
         if kind == "decision" and project:
             return f"30_Projects/{project}/Decisions/{filename}"
+        if kind == "problem" and project:
+            return f"30_Projects/{project}/Problems/{filename}"
         if kind == "knowledge" and project:
             return f"20_Knowledge/{project}/{filename}"
         return f"{base}/{filename}"

@@ -1438,3 +1438,66 @@ def test_get_known_problems_reads_execution_notes(tmp_path):
     assert "정본을 읽는다" in problems[0]["next_checks"]  # 여러 줄 값이 다음 필드 전까지 이어진다
     assert problems[0]["rel_path"].startswith("60_Candidates/SessionHandoffs/")
 
+
+# ── problem kind: record_problem → 후보 → get_known_problems → promote ────────
+
+
+def _record_problem(vault: Path, title: str, component: str = "docker", cause_class: str = "permission"):
+    return vault_tools.record_problem(
+        project="devtrail",
+        title=title,
+        symptoms="컨테이너가 재시작을 반복한다",
+        cause="볼륨 권한 불일치",
+        solution="chown 1000:1000",
+        attempts="1. restart → 실패\n2. recreate → 위험",
+        prevention="compose에 user 명시",
+        component=component,
+        cause_class=cause_class,
+        source_refs=["10_Worklog/Sessions/2026-10-06-devtrail-session.md"],
+        settings=_settings(vault),
+    )
+
+
+def test_record_problem_writes_classified_candidate(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    result = _record_problem(tmp_path, "Docker 재시작 루프")
+
+    assert result.rel_path.startswith("60_Candidates/Problems/")
+    post = frontmatter.loads(result.path.read_text(encoding="utf-8"))
+    assert post.metadata["candidate_type"] == "problem"
+    assert post.metadata["project"] == "Devtrail"  # 레지스트리 표기로 정규화
+    assert post.metadata["component"] == "docker" and post.metadata["cause_class"] == "permission"
+    assert "host" in post.metadata and "agent" in post.metadata
+    assert post.metadata["summary"] == "컨테이너가 재시작을 반복한다"
+    for heading in ("## 증상", "## 원인", "## 시도", "## 해결", "## 예방", "## Source Refs"):
+        assert heading in post.content
+
+
+def test_get_known_problems_merges_problem_notes_and_sessions(tmp_path):
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    _record_session(tmp_path, "sess-bad", blocked="MCP 서버가 구버전이었다")
+    _record_problem(tmp_path, "Docker 재시작 루프")
+    _record_problem(tmp_path, "Vault 동기화 충돌", component="vault-sync", cause_class="concurrency")
+
+    problems = vault_tools.get_known_problems("Devtrail", settings=_settings(tmp_path))
+    assert sorted(p["source"] for p in problems) == ["problem", "problem", "session"]
+    docker = next(p for p in problems if p.get("component") == "docker")
+    assert docker["status"] == "candidate"
+    assert docker["cause"] == "볼륨 권한 불일치" and docker["solution"] == "chown 1000:1000"
+
+    only_docker = vault_tools.get_known_problems("Devtrail", component="Docker", settings=_settings(tmp_path))
+    assert [p["title"] for p in only_docker] == ["Docker 재시작 루프"]
+
+
+def test_problem_promotes_into_project_problems_dir(tmp_path):
+    from app.agents.curator_agent import CuratorAgent
+
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    result = _record_problem(tmp_path, "Docker 재시작 루프")
+    promoted = CuratorAgent(settings=_settings(tmp_path)).promote_candidate(result.rel_path)
+
+    assert promoted.promoted_path == "30_Projects/Devtrail/Problems/Docker 재시작 루프.md"
+    assert (tmp_path / promoted.promoted_path).exists()
+    statuses = {p["status"] for p in vault_tools.get_known_problems("Devtrail", settings=_settings(tmp_path)) if p["source"] == "problem"}
+    assert statuses == {"promoted"}  # 승격돼도 조회에서 사라지지 않는다
+

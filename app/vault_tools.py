@@ -519,38 +519,83 @@ def get_decisions(
     return decisions[: max(limit, 0)]
 
 
-def get_known_problems(project: str, limit: int = 10, settings: Settings | None = None) -> list[dict]:
-    """프로젝트 세션에서 기록된 막힌 점·실수와 그 뒤의 교훈을 최신순으로 반환한다.
+def _list_problem_notes(vault_dir: Path, project: str, component: str) -> list[dict]:
+    """record_problem으로 남긴 problem 후보·정본을 반환한다 (component로 걸러낼 수 있다)."""
+    sources = [
+        (vault_dir / "60_Candidates" / "Problems", True, "candidate"),
+        (vault_dir / "30_Projects" / project / "Problems", False, "promoted"),
+    ]
+    wanted = component.strip().lower()
+    results: list[dict] = []
+    for dir_path, project_filter, status in sources:
+        if not dir_path.exists():
+            continue
+        for md_path in dir_path.glob("*.md"):
+            try:
+                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            meta = post.metadata
+            if project_filter and str(meta.get("project", "")).strip().lower() != project.lower():
+                continue
+            if wanted and str(meta.get("component", "")).strip().lower() != wanted:
+                continue
+            results.append(
+                {
+                    "source": "problem",
+                    "status": status,
+                    "recorded_at": str(meta.get("updated_at") or meta.get("created_at") or ""),
+                    "host": str(meta.get("host", "") or ""),
+                    "agent": str(meta.get("agent", "") or ""),
+                    "title": str(meta.get("title", md_path.stem)),
+                    "component": str(meta.get("component", "") or ""),
+                    "cause_class": str(meta.get("cause_class", "") or ""),
+                    "symptoms": _section_text(post.content, "증상", 400),
+                    "cause": _section_text(post.content, "원인", 400),
+                    "solution": _section_text(post.content, "해결", 600),
+                    "prevention": _section_text(post.content, "예방", 400),
+                    "rel_path": str(md_path.relative_to(vault_dir)).replace("\\", "/"),
+                }
+            )
+    return results
 
-    ponytail: 전용 `problem` 후보 kind가 아직 없어 Process의 Agent Execution Notes를
-    되읽는다. component·cause_class 집계가 필요해지면 problem kind를 추가하고 여기에 합친다.
+
+def get_known_problems(
+    project: str, limit: int = 10, component: str = "", settings: Settings | None = None
+) -> list[dict]:
+    """프로젝트에서 겪은 문제를 최신순으로 반환한다 — 두 출처를 합친다.
+
+    - source="problem": record_problem으로 남긴 트러블슈팅 기록 (component·cause_class 있음)
+    - source="session": 세션 Process의 Agent Execution Notes에 적힌 막힌 점·실수 (분류 없음)
+    component를 주면 problem 기록만 그 component로 걸러서 돌려준다.
     """
     vault_dir = _vault_dir(settings)
-    handoffs = _list_session_handoffs(vault_dir, _canonicalize_project(vault_dir, project))
-    results: list[dict] = []
-    for h in handoffs:  # 이미 최신순
-        if h["handoff_type"] != "process":
-            continue
-        notes = _parse_execution_notes(h["body"])
-        blocked, mistakes = notes.get("blocked", ""), notes.get("mistakes", "")
-        # "없음"만 적힌 세션은 문제 기록이 아니다 — 둘 다 그러면 건너뛴다.
-        if all(not text or text.startswith("없음") for text in (blocked, mistakes)):
-            continue
-        results.append(
-            {
-                "recorded_at": h["updated_at"] or h["created_at"],
-                "session_id": h["session_id"],
-                "host": h["host"],
-                "agent": h["agent"],
-                "blocked": _truncate(blocked, 800),
-                "mistakes": _truncate(mistakes, 800),
-                "next_checks": _truncate(notes.get("next_checks", ""), 800),
-                "rel_path": h["rel_path"],
-            }
-        )
-        if len(results) >= limit:
-            break
-    return results
+    resolved = _canonicalize_project(vault_dir, project)
+    results: list[dict] = _list_problem_notes(vault_dir, resolved, component)
+    if not component:
+        for h in _list_session_handoffs(vault_dir, resolved):
+            if h["handoff_type"] != "process":
+                continue
+            notes = _parse_execution_notes(h["body"])
+            blocked, mistakes = notes.get("blocked", ""), notes.get("mistakes", "")
+            # "없음"만 적힌 세션은 문제 기록이 아니다 — 둘 다 그러면 건너뛴다.
+            if all(not text or text.startswith("없음") for text in (blocked, mistakes)):
+                continue
+            results.append(
+                {
+                    "source": "session",
+                    "recorded_at": h["updated_at"] or h["created_at"],
+                    "session_id": h["session_id"],
+                    "host": h["host"],
+                    "agent": h["agent"],
+                    "blocked": _truncate(blocked, 800),
+                    "mistakes": _truncate(mistakes, 800),
+                    "next_checks": _truncate(notes.get("next_checks", ""), 800),
+                    "rel_path": h["rel_path"],
+                }
+            )
+    results.sort(key=lambda r: r["recorded_at"], reverse=True)
+    return results[: max(limit, 0)]
 
 
 def _repo_enforces_plan(repo_dir: Path) -> bool:
@@ -820,6 +865,43 @@ def record_note(kind: str, title: str, body: str, project: str = "", settings: S
     writer = CandidateWriter(vault_dir)
     spec = CandidateSpec(kind=normalized_kind, title=title, body=body, project=project)
     return writer.write(spec)
+
+
+def record_problem(
+    project: str,
+    title: str,
+    symptoms: str,
+    cause: str,
+    solution: str,
+    attempts: str = "",
+    prevention: str = "",
+    component: str = "",
+    cause_class: str = "",
+    source_refs: list[str] | None = None,
+    settings: Settings | None = None,
+) -> CandidateWriteResult:
+    """겪은 문제와 해결을 problem 후보로 기록한다 (final.md §15의 troubleshooting 형식)."""
+    vault_dir = _vault_dir(settings)
+    sections = [
+        ("증상", symptoms),
+        ("원인", cause),
+        ("시도", attempts),
+        ("해결", solution),
+        ("예방", prevention),
+    ]
+    body = "\n\n".join(f"## {heading}\n\n{text.strip()}" for heading, text in sections if text and text.strip())
+    spec = CandidateSpec(
+        kind="problem",
+        title=title,
+        body=body,
+        summary=_truncate(" ".join(symptoms.split()), 200),
+        project=_canonicalize_project(vault_dir, project),
+        tags=["problem"] + [t for t in (component.strip().lower(), cause_class.strip().lower()) if t],
+        source_refs=list(source_refs or []),
+        component=component,
+        cause_class=cause_class,
+    )
+    return CandidateWriter(vault_dir).write(spec)
 
 
 def record_agent_improvement(

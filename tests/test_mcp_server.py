@@ -41,6 +41,7 @@ def test_registers_canonical_tools(vault_env, monkeypatch):
         "get_decisions",
         "get_known_problems",
         "record_note",
+        "record_problem",
         "record_agent_improvement",
         "write_work_plan",
         "write_session_process",
