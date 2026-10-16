@@ -19,6 +19,12 @@ def marker_path(repo_root: Path, session_id: str) -> Path:
     return repo_root / ".claude" / ".vault-mcp" / "mcp_sessions" / f"{key}.json"
 
 
+def claude_session_path(repo_root: Path, session_id: str) -> Path:
+    """SessionStart 훅이 남기는 Claude 세션 시작 마커 경로. MCP 마커와 디렉터리를 나눈다."""
+    key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return repo_root / ".claude" / ".vault-mcp" / "claude_sessions" / f"{key}.json"
+
+
 def write_json_atomic(path: Path, data: dict) -> None:
     """훅과 MCP가 읽는 마커를 부분 파일로 노출하지 않는다."""
     path.parent.mkdir(parents=True, exist_ok=True)

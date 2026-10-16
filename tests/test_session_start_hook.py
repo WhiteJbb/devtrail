@@ -34,3 +34,22 @@ def test_session_start_preserves_live_mcp_marker(tmp_path, monkeypatch):
 
     assert session_start_hook.main() == 0
     assert json.loads(path.read_text(encoding="utf-8")) == marker
+
+
+def test_session_start_records_start_marker_once(tmp_path, monkeypatch):
+    """Stop 훅 fallback용 시작 마커를 남기고, resume/compact 재시작에는 덮어쓰지 않는다."""
+    from app.services.session_markers import claude_session_path
+
+    payload = {"cwd": str(tmp_path), "session_id": "claude-1", "source": "startup"}
+    monkeypatch.setattr(session_start_hook, "_read_payload", lambda: payload)
+    monkeypatch.setattr(session_start_hook, "_find_devtrail", lambda _: None)
+
+    assert session_start_hook.main() == 0
+    path = claude_session_path(tmp_path, "claude-1")
+    first = json.loads(path.read_text(encoding="utf-8"))
+    assert first["session_id"] == "claude-1"
+    datetime.fromisoformat(first["started_at"])
+
+    monkeypatch.setattr(session_start_hook, "_read_payload", lambda: {**payload, "source": "compact"})
+    assert session_start_hook.main() == 0
+    assert json.loads(path.read_text(encoding="utf-8")) == first

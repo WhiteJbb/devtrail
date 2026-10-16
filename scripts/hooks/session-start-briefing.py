@@ -5,7 +5,13 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from app.services.session_markers import claude_session_path, write_json_atomic
 
 
 def _read_payload():
@@ -26,11 +32,29 @@ def _find_devtrail(repo_root: Path):
     return None
 
 
+def _record_session_start(cwd: str, session_id: str) -> None:
+    """Stop 훅이 MCP 마커 없이도 세션 시작 시각을 알 수 있게 남긴다.
+
+    resume/compact로 같은 세션이 다시 시작돼도 처음 시각을 보존한다 — 덮어쓰면
+    컴팩팅 전 커밋이 판정에서 빠진다.
+    """
+    path = claude_session_path(Path(cwd), session_id)
+    if path.exists():
+        return
+    try:
+        write_json_atomic(path, {"session_id": session_id, "started_at": datetime.now().isoformat()})
+    except OSError:
+        pass
+
+
 def main() -> int:
     payload = _read_payload()
-    cwd = payload.get("cwd") if isinstance(payload, dict) and payload.get("cwd") else os.getcwd()
-    repo_root = Path(__file__).resolve().parents[2]
-    exe = _find_devtrail(repo_root)
+    if not isinstance(payload, dict):
+        payload = {}
+    cwd = payload.get("cwd") or os.getcwd()
+    if payload.get("session_id"):
+        _record_session_start(cwd, str(payload["session_id"]))
+    exe = _find_devtrail(REPO_ROOT)
     if not exe:
         return 0
 
