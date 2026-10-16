@@ -10,7 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.session_markers import unique_live_mcp_marker
+from app.services.session_markers import claude_session_path, read_marker, unique_live_mcp_marker
 
 
 def _read_payload():
@@ -44,15 +44,30 @@ def main() -> int:
 
     cwd = payload.get("cwd") or os.getcwd()
     marker = unique_live_mcp_marker(Path(cwd))
-    if marker is None:
-        return 0
-    process_written = bool(marker.get("process_written"))
+    if marker is not None:
+        process_written = bool(marker.get("process_written"))
+        started_key = "updated_at"
+    else:
+        # MCP tool을 한 번도 안 부른 세션 — 마커가 없다는 것 자체가 "기록 없음"이다.
+        # SessionStart 훅이 남긴 시작 마커로 이 세션의 커밋만 본다 (세션별 파일이라
+        # 동시 세션에도 섞이지 않는다). 시작 마커도 없으면(훅 설치 전 세션) 통과.
+        session_id = payload.get("session_id")
+        marker = read_marker(claude_session_path(Path(cwd), str(session_id))) if session_id else None
+        if marker is None:
+            return 0
+        process_written = False
+        started_key = "started_at"
     try:
-        session_started_at = datetime.fromisoformat(str(marker["updated_at"]))
+        session_started_at = datetime.fromisoformat(str(marker[started_key]))
     except (KeyError, TypeError, ValueError):
         return 0
 
-    git_status = _git(["status", "--porcelain"], cwd)
+    # .claude/ 아래는 훅·MCP 마커 자신이 만드는 파일이라 "세션의 변경"으로 치지 않는다
+    # (.claude를 gitignore하지 않은 repo에서 마커가 스스로 차단을 유발한다).
+    git_status = "\n".join(
+        line for line in (_git(["status", "--porcelain"], cwd) or "").splitlines()
+        if not line[3:].startswith(".claude/")
+    )
     since = session_started_at.strftime("%Y-%m-%dT%H:%M:%S")
     session_commits = _git(["log", "--since", since, "-1", "--format=%H"], cwd)
 

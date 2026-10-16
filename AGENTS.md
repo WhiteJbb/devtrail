@@ -139,9 +139,15 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 
 MCP 서버는 첫 tool 호출 시 `.claude/.vault-mcp/mcp_sessions/` 아래에 프로세스별 마커를 만든다.
 훅은 같은 repo에서 최근 12시간 안에 갱신됐고 PID가 살아 있는 MCP 마커가 정확히 하나일
-때만 그 상태를 사용한다. 마커가 없거나 여러 개이거나 프로세스 상태를 확인할 수 없으면
-강제하지 않는다(MCP 미연결 fallback 포함). 새 SessionStart 훅은 다른 MCP 프로세스의
-마커를 삭제하지 않는다.
+때만 그 상태를 사용한다. 여러 개이거나 프로세스 상태를 확인할 수 없으면 강제하지 않는다.
+SessionStart 훅은 다른 MCP 프로세스의 마커를 삭제하지 않는다.
+
+MCP 마커가 **없는** 경우는 다르다. SessionStart 훅이 `.claude/.vault-mcp/claude_sessions/`에
+Claude `session_id`별 시작 시각을 남기고(재시작·컴팩팅에도 처음 값 보존), Stop 훅은 MCP 마커가
+없으면 이 시작 마커로 "세션 시작 이후 커밋·변경이 있는데 기록이 없다"를 판정한다 — MCP tool을
+한 번도 안 부른 세션이 기록 없이 끝나는 구멍(2026-10-14 nightshift)을 막기 위해서다. 시작 마커도
+없는 세션(훅 설치 전부터 살아 있던 세션)만 통과한다. `.claude/` 아래 변경은 세션의 변경으로
+세지 않는다.
 
 Claude hook payload의 `session_id`와 MCP 서버 내부 session ID는 서로 다른 값이고,
 현재 MCP 설정에는 둘을 명시적으로 연결하는 경로가 없다. 따라서 같은 repo에서 Claude
