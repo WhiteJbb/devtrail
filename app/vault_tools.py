@@ -800,13 +800,19 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
         sections.append("## Suggested Next Actions\n\n" + _truncate(action_text))
         source_refs.append(latest_process["rel_path"])
 
-    # 오늘 Plan이 아직 없으면 리마인더 — 사후 "미짝 Plan 경고"의 대칭.
+    # 생명주기 안내는 항상 넣는다 — Devtrail 외 repo는 CLAUDE.md에 이 지시가 없어
+    # briefing이 유일한 통로다 (2026-10-14 nightshift 세션이 기록 0건으로 끝난 원인).
+    # 오늘 Plan이 아직 없으면 Plan 리마인더도 — 사후 "미짝 Plan 경고"의 대칭.
     today = datetime.now().strftime("%Y-%m-%d")
     has_todays_plan = any(p["created_at"][:10] == today for p in plans)
+    reminders = []
     if plan_reminder and not has_todays_plan:
-        sections.append(
-            "## 리마인더\n\n구현을 시작하기 전에 `write_work_plan`으로 이 세션의 Plan을 먼저 기록하세요."
-        )
+        reminders.append("구현을 시작하기 전에 `write_work_plan`으로 이 세션의 Plan을 먼저 기록하세요.")
+    reminders.append(
+        "세션을 마치기 전(컴팩팅 전 포함)에 `write_session_process`로 이 세션의 Process를 기록하세요. "
+        "커밋이나 변경이 생긴 세션은 기록 없이 끝낼 수 없습니다."
+    )
+    sections.append("## 리마인더\n\n" + "\n".join(f"- {r}" for r in reminders))
 
     # 인덱스 우선: 주입하지 않은 전문은 필요할 때 read_note로 조회
     unique_refs = list(dict.fromkeys(source_refs))
