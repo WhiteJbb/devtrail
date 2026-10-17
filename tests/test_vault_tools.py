@@ -1532,3 +1532,80 @@ def test_execution_notes_multi_item_values_render_as_nested_bullets(tmp_path):
     assert "다음부터 먼저 확인: 새 UI는 필요한 조건에서만\n" in patch
     assert "더 나은 방식: 한 줄짜리" in patch
     assert ": - " not in patch
+
+
+# ── update_open_loops ─────────────────────────────────────────────────────────
+from datetime import datetime  # noqa: E402
+
+_OPEN_LOOPS_SEED = """---
+type: agent_memory
+scope: global
+updated_at: 2026-10-04
+---
+# OpenLoops
+
+쓸 것만 남긴다.
+
+## Devtrail
+
+### 결정 대기 (사용자)
+
+- 승격 병목: decision 자동 승격 vs Telegram 1탭
+
+### 실효 확인
+
+- 재증류 차단(#58): career_distilled가 찍히는지
+  이어지는 설명 줄
+- nightly를 돌리는 머신이 최신 main을 받았는지
+"""
+
+
+def _seed_open_loops(vault):
+    path = vault / "40_AgentMemory" / "05_OpenLoops.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_OPEN_LOOPS_SEED, encoding="utf-8")
+    return path
+
+
+def test_update_open_loops_adds_under_section_and_resolves(tmp_path, monkeypatch):
+    path = _seed_open_loops(tmp_path)
+    result = vault_tools.update_open_loops(
+        "Devtrail",
+        add=["career 추가분 증류(#80)가 중복을 막는지"],
+        resolve=["재증류 차단(#58)", "없는 항목"],
+        section="실효 확인",
+        settings=_settings(tmp_path),
+    )
+    text = path.read_text(encoding="utf-8")
+    today = datetime.now().strftime("%Y-%m-%d")
+    assert result.added == [f"({today}) career 추가분 증류(#80)가 중복을 막는지"]
+    assert result.resolved == ["재증류 차단(#58): career_distilled가 찍히는지"]
+    assert result.not_found == ["없는 항목"]
+    assert "재증류 차단" not in text and "이어지는 설명 줄" not in text
+    # 소제목 끝, 기존 항목 뒤에 들어간다
+    assert text.index("최신 main을 받았는지") < text.index("career 추가분 증류(#80)")
+    assert text.index("career 추가분 증류(#80)") < len(text)
+    assert "## Devtrail" in text and "승격 병목" in text
+    assert frontmatter.loads(text).metadata["updated_at"] == today
+    # 블록 앞에 project 마커가 붙어 다른 프로젝트 briefing에는 섞이지 않는다
+    assert '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n## Devtrail' in text
+    # 같은 항목을 다시 넣으면 중복되지 않는다
+    again = vault_tools.update_open_loops("Devtrail", add=["career 추가분 증류(#80)가 중복을 막는지"], section="실효 확인", settings=_settings(tmp_path))
+    assert again.added == []
+    assert path.read_text(encoding="utf-8").count("career 추가분 증류(#80)") == 1
+
+
+def test_update_open_loops_creates_project_block_and_scopes_briefing(tmp_path):
+    _seed_open_loops(tmp_path)
+    _write_project_context(tmp_path, "nightshift", "배경")
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    vault_tools.update_open_loops("nightshift", add=["iPhone Safari 실기기 확인"], section="다음 기능", settings=_settings(tmp_path))
+    text = (tmp_path / "40_AgentMemory" / "05_OpenLoops.md").read_text(encoding="utf-8")
+    assert text.rstrip().endswith("- (" + datetime.now().strftime("%Y-%m-%d") + ") iPhone Safari 실기기 확인")
+    assert "## nightshift\n\n### 다음 기능" in text
+    # 마커가 없던 기존 Devtrail 블록은 그대로다
+    assert "## Devtrail" in text and "승격 병목" in text
+
+    ns = vault_tools.get_project_briefing("nightshift", settings=_settings(tmp_path)).text
+    dt = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path)).text
+    assert "iPhone Safari" in ns and "iPhone Safari" not in dt

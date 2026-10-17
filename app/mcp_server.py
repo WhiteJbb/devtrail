@@ -1,4 +1,4 @@
-"""MCP 서버 — Agent Session Lifecycle의 11개 정본 tool을 stdio로 노출한다.
+"""MCP 서버 — Agent Session Lifecycle의 12개 정본 tool을 stdio로 노출한다.
 
 Claude Code/Desktop 같은 MCP 클라이언트는 세션당 이 서버 프로세스를 1개 띄우므로,
 프로세스 시작 시 session_id를 1회 생성해 모든 write 계열 tool 호출에 자동 주입한다.
@@ -230,6 +230,25 @@ def record_agent_improvement(project: str, issue: str, improvement: str, evidenc
     _touch_session_marker()
     result = vault_tools.record_agent_improvement(project, issue, improvement, evidence, settings=get_settings())
     return _with_text_warning(_candidate_result_dict(result), issue, improvement, evidence)
+
+
+@mcp.tool()
+def update_open_loops(
+    project: str,
+    add: list[str] | None = None,
+    resolve: list[str] | None = None,
+    section: str = "",
+) -> dict:
+    """40_AgentMemory/05_OpenLoops.md의 이 프로젝트 블록을 고친다 — 다음 세션 briefing에 그대로 들어간다.
+
+    add: 다음 세션에도 남는 할 일만 (이번 세션 안에서 끝낼 일·Process next_session과 중복되는 것은 넣지 않는다).
+         PR/이슈 번호나 확인 방법을 함께 적는다. 날짜는 자동으로 붙는다.
+    resolve: 끝난 항목을 지운다 — 기존 줄의 일부 문자열을 넘기면 된다. 끝낸 일을 안 지우면 다음 세션이 끝난 일을 다시 한다.
+    section: 넣을 '### 소제목' (예: "실효 확인", "다음 기능"). 없으면 블록 끝에 만든다.
+    """
+    _touch_session_marker()
+    result = vault_tools.update_open_loops(project, add=add, resolve=resolve, section=section, settings=get_settings())
+    return _with_text_warning(dataclasses.asdict(result), add)
 
 
 @mcp.tool()
