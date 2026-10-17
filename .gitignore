@@ -46,3 +46,6 @@ workspace/resume/*
 .pytest_cache/
 .coverage
 htmlcov/
+
+# 스크립트 락 파일 (run-nightly-safe/update-devtrail/weekly) — untracked면 update-devtrail이 매일 건너뛴다
+*.lock
