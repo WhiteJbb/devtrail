@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from inspect import signature
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,21 @@ class JSONParseError(ValueError):
     """LLM 응답에서 JSON을 찾지 못했을 때."""
 
 
+# JSON이 허용하지 않는 백슬래시 이스케이프(\s, \d, \. 등). 모델이 노트의 정규식·경로를
+# 문자열에 그대로 복사하면 생긴다 — 2026-10-17 nightly가 `/^\s*❯/` 한 줄로 두 번 다 실패했다.
+_BAD_ESCAPE_RE = re.compile(r'\\(?![\\/"bfnrtu])')
+
+
+def _loads(text: str) -> Any:
+    """json.loads — 불법 이스케이프만 있으면 백슬래시를 리터럴로 고쳐 한 번 더 시도한다."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        if "Invalid \\escape" not in e.msg:
+            raise
+        return json.loads(_BAD_ESCAPE_RE.sub(r"\\\\", text))
+
+
 def extract_json_object(text: str) -> Any:
     """문자열에서 첫 번째 최상위 JSON 객체를 파싱해 반환."""
     text = text.strip()
@@ -39,7 +55,7 @@ def extract_json_object(text: str) -> Any:
 
     # 그대로 시도
     try:
-        return json.loads(text)
+        return _loads(text)
     except json.JSONDecodeError:
         pass
 
@@ -71,7 +87,7 @@ def extract_json_object(text: str) -> Any:
             if depth == 0:
                 candidate = text[start : i + 1]
                 try:
-                    return json.loads(candidate)
+                    return _loads(candidate)
                 except json.JSONDecodeError as e:
                     raise JSONParseError(f"JSON 파싱 실패: {e}") from e
     raise JSONParseError("JSON 객체가 닫히지 않았습니다.")
