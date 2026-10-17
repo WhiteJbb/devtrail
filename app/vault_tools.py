@@ -598,6 +598,110 @@ def get_known_problems(
     return results[: max(limit, 0)]
 
 
+_OPEN_LOOPS_REL = "40_AgentMemory/05_OpenLoops.md"
+_OPEN_LOOPS_MARKER = '<!-- devtrail-memory-patch: {"scope": "project", "project": "%s"} -->'
+
+
+@dataclass(frozen=True)
+class OpenLoopsUpdate:
+    rel_path: str
+    added: list[str]
+    resolved: list[str]
+    not_found: list[str]
+
+
+def _block_end(lines: list[str], start: int) -> int:
+    """start 다음 줄부터 다음 '## ' 헤딩 또는 패치 마커 직전까지."""
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("## ") or lines[i].startswith("<!-- devtrail-memory-patch:"):
+            return i
+    return len(lines)
+
+
+def _insert_lines(lines: list[str], at: int, new: list[str]) -> int:
+    """at 앞의 빈 줄을 걷어낸 자리에 new를 넣고 빈 줄 하나로 닫는다. 삽입 후 블록 끝 인덱스 반환."""
+    while at > 0 and not lines[at - 1].strip():
+        at -= 1
+        del lines[at]
+    lines[at:at] = new + [""]
+    return at + len(new) + 1
+
+
+def update_open_loops(
+    project: str,
+    add: list[str] | None = None,
+    resolve: list[str] | None = None,
+    section: str = "",
+    settings: Settings | None = None,
+) -> OpenLoopsUpdate:
+    """OpenLoops의 `## <project>` 블록만 고친다 — 다음 세션에도 남는 할 일을 넣고(add), 끝난 줄을 지운다(resolve).
+
+    40_AgentMemory 중 OpenLoops만 에이전트가 직접 쓴다(2026-10-17 사용자 결정). 작업 목록은
+    틀린 줄 하나보다 낡은 목록이 briefing에서 끝난 일을 지시하는 비용이 크다. Lessons는
+    행동을 바꾸는 기억이라 그대로 apply-memory-patch 경유다.
+
+    블록 앞에 project-scope 패치 마커를 둬 다른 프로젝트 briefing에는 섞이지 않게 한다.
+    resolve는 블록 안 불릿 중 부분 문자열(대소문자 무시)이 든 줄과 그 들여쓴 이어진 줄을 지운다.
+    """
+    vault_dir = _vault_dir(settings)
+    project = _canonicalize_project(vault_dir, project) or project.strip()
+    if not project:
+        raise ValueError("project is required")
+    path = vault_dir / _OPEN_LOOPS_REL
+    today = datetime.now().strftime("%Y-%m-%d")
+    with candidate_write_lock(vault_dir):
+        post = frontmatter.loads(path.read_text(encoding="utf-8")) if path.exists() else frontmatter.Post("# OpenLoops\n")
+        lines = post.content.rstrip().splitlines()
+        heading = f"## {project}"
+        marker = _OPEN_LOOPS_MARKER % project
+        start = next((i for i, l in enumerate(lines) if l.strip().casefold() == heading.casefold()), -1)
+        if start < 0:
+            lines += ["", marker, heading, ""]
+            start = len(lines) - 2
+        elif start == 0 or lines[start - 1].strip() != marker:
+            lines.insert(start, marker)
+            start += 1
+        end = _block_end(lines, start)
+
+        resolved: list[str] = []
+        not_found: list[str] = []
+        for needle in resolve or []:
+            key = needle.strip().casefold()
+            if not key:
+                continue
+            hit = next((i for i in range(start + 1, end)
+                        if lines[i].startswith("- ") and key in lines[i].casefold()), -1)
+            if hit < 0:
+                not_found.append(needle)
+                continue
+            stop = hit + 1
+            while stop < end and lines[stop].startswith("  ") and lines[stop].strip():
+                stop += 1
+            resolved.append(lines[hit][2:].strip())
+            del lines[hit:stop]
+            end -= stop - hit
+
+        block_text = "\n".join(lines[start:end]).casefold()
+        new = [f"- ({today}) {item.strip()}" for item in add or []
+               if item.strip() and item.strip().casefold() not in block_text]
+        if new:
+            at = end
+            if section.strip():
+                sub = f"### {section.strip()}"
+                sub_at = next((i for i in range(start + 1, end) if lines[i].strip().casefold() == sub.casefold()), -1)
+                if sub_at < 0:
+                    end = _insert_lines(lines, end, ["", sub])
+                    sub_at = end - 2
+                at = next((i for i in range(sub_at + 1, end) if lines[i].startswith("### ")), end)
+            _insert_lines(lines, at, new)
+
+        post.metadata["updated_at"] = today
+        post.content = "\n".join(lines).rstrip() + "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, frontmatter.dumps(post))
+    return OpenLoopsUpdate(rel_path=_OPEN_LOOPS_REL, added=[l[2:] for l in new], resolved=resolved, not_found=not_found)
+
+
 def _repo_enforces_plan(repo_dir: Path) -> bool:
     """repo의 Claude Code 설정에 plan-check 훅이 걸려 있는지 본다."""
     for name in ("settings.json", "settings.local.json"):
