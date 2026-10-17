@@ -240,3 +240,24 @@ def test_write_tools_warn_on_suspicious_hangul(vault_env, monkeypatch):
     assert "예삸를" in corrupted["warnings"][0]
     assert corrupted["process"]["rel_path"]
 
+
+
+def test_write_session_process_warns_on_blank_learning_recovery(vault_env, monkeypatch):
+    """빈 틀("- ", "1. ")만 넘긴 Learning Recovery는 복습 질문이 안 생기므로 경고로 돌려준다."""
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    write_session_process = mod.mcp._tool_manager.get_tool("write_session_process").fn
+
+    blank = write_session_process(
+        project="Devtrail", what_changed="1. 작업",
+        learning_recovery={"ai_led": "- ", "unclear_concepts": "- ", "questions": "1. ", "related_candidates": "-"},
+    )
+    assert any("learning_recovery" in w for w in blank["warnings"])
+
+    filled = write_session_process(
+        project="Devtrail", what_changed="2. 작업", append_to=["what_changed"],
+        learning_recovery={"ai_led": "토큰 선택", "unclear_concepts": "", "questions": "왜 fontsource인가", "related_candidates": ""},
+    )
+    assert "warnings" not in filled
+
+    omitted = write_session_process(project="Devtrail", what_changed="3. 작업", append_to=["what_changed"])
+    assert "warnings" not in omitted

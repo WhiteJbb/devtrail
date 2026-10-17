@@ -371,3 +371,19 @@ def test_overdue_task_alone_does_not_make_digest_content(tmp_path):
     result = agent.run()
 
     assert result.digest_path is None
+
+
+def test_digest_session_line_skips_empty_label_bullets(tmp_path):
+    """Process 노트의 What Changed는 번호 목록이다 — 첫 '- '가 '- 결정:' 빈 라벨이면 안 된다."""
+    CaptureAgent(settings=_settings(tmp_path), now=datetime(2026, 6, 23, 9, 0, 0)).capture_session(
+        project="Devtrail",
+        summary_text="# Process\n\n## What Changed\n1. xterm.js 도입\n2. 터치 스크롤\n\n## Project Decisions\n- 결정: \n- 이유: ",
+        from_agent=True,
+    )
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+
+    result = agent.run()
+
+    assert "Devtrail 작업 세션 — xterm.js 도입" in result.digest_text
+    assert "— 결정:" not in result.digest_text
