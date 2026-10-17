@@ -59,3 +59,11 @@ def test_complete_json_propagates_second_failure():
     with pytest.raises(JSONParseError):
         complete_json(llm, "p")
     assert llm.calls == 2
+
+
+def test_invalid_backslash_escape_is_repaired():
+    # 모델이 정규식을 JSON 문자열에 그대로 복사한 경우 (2026-10-17 nightly 실패 재현)
+    raw = '{"text": "정규식 /^\\s*❯\\s*1\\.\\s*Yes/ 로", "ok": "a\\nb \\"q\\" \\u00e9"}'
+    data = extract_json_object(raw)
+    assert data["text"] == "정규식 /^\\s*❯\\s*1\\.\\s*Yes/ 로"
+    assert data["ok"] == 'a\nb "q" é'  # 정상 이스케이프는 그대로
