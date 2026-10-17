@@ -183,3 +183,59 @@ def test_long_process_note_keeps_judgment_sections(tmp_path):
     assert "정본으로 돌아간다" in llm.last_prompt
     assert "app/file.py" not in llm.last_prompt
 
+
+
+def _process_note(vault, items, session_id="sess-1", append=False):
+    """실제 경로(write_session_process)로 Process → 세션 노트를 만들거나 이어 쓴다."""
+    from app import vault_tools
+
+    vault_tools.write_session_process(
+        project="Devtrail", what_changed="\n".join(items), session_id=session_id,
+        append_to=["what_changed"] if append else None, settings=_settings(vault),
+    )
+
+
+def test_continued_session_sends_only_new_what_changed_items(tmp_path):
+    """nightly 뒤에 세션이 이어져 노트가 재기록되면, 이미 증류한 항목은 다시 보내지 않는다.
+
+    회귀 방지: 2026-10-16 nightshift 세션이 밤을 넘겨 append_to로 이어 쓰자 재기록이
+    career_distilled를 풀어 25KB 노트 전체가 재투입될 상황이었다.
+    """
+    import frontmatter
+
+    now = datetime(2026, 6, 23)
+    _process_note(tmp_path, ["1. xterm.js 도입", "2. 터치 스크롤 수정"])
+    CareerBulletAgent(settings=_settings(tmp_path), llm=FakeLLM(_career_response(1)), now=now).suggest()
+    note = list((tmp_path / "10_Worklog" / "Sessions").glob("*.md"))[0]
+    assert frontmatter.load(str(note)).metadata["career_distilled_items"] == 2
+
+    _process_note(tmp_path, ["3. 알림 디바운스"], append=True)
+    assert frontmatter.load(str(note)).metadata["career_distilled"] is False
+
+    llm = FakeLLM(_career_response(1))
+    result = CareerBulletAgent(settings=_settings(tmp_path), llm=llm, now=now).suggest()
+    assert len(result.written) == 1
+    assert "알림 디바운스" in llm.last_prompt
+    assert "xterm.js" not in llm.last_prompt
+    assert frontmatter.load(str(note)).metadata["career_distilled_items"] == 3
+
+
+def test_rewrite_without_new_items_restores_marker_without_llm(tmp_path):
+    """다른 섹션만 바뀌어 마커가 풀린 노트는 LLM을 부르지 않고 마커만 되살린다."""
+    import frontmatter
+
+    now = datetime(2026, 6, 23)
+    _process_note(tmp_path, ["1. xterm.js 도입"])
+    CareerBulletAgent(settings=_settings(tmp_path), llm=FakeLLM(_career_response(1)), now=now).suggest()
+
+    from app import vault_tools
+    vault_tools.write_session_process(
+        project="Devtrail", next_session="1. 실기기 확인", session_id="sess-1", settings=_settings(tmp_path),
+    )
+    note = list((tmp_path / "10_Worklog" / "Sessions").glob("*.md"))[0]
+    assert frontmatter.load(str(note)).metadata["career_distilled"] is False
+
+    llm = FakeLLM(_career_response(1))
+    assert CareerBulletAgent(settings=_settings(tmp_path), llm=llm, now=now).suggest().written == []
+    assert llm.last_prompt == ""
+    assert frontmatter.load(str(note)).metadata["career_distilled"] is True

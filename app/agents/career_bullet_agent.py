@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +13,7 @@ from app.llm.factory import get_task_llm_provider
 from app.prompts import render_prompt
 from app.services.candidate_writer import CandidateSpec, CandidateWriteResult, CandidateWriter
 from app.services.json_utils import complete_json
-from app.services.note_excerpt import prioritized_excerpt
+from app.services.note_excerpt import excerpt_sections, prioritized_excerpt
 from app.services.wiki_service import WikiNote, WikiService
 
 
@@ -33,6 +34,22 @@ _MAX_NOTES = 20
 # 쓰는 이유는 nightly에서 둘이 같은 노트를 보기 때문이다 — 키를 공유하면 먼저
 # 도는 쪽이 노트를 소진해 나머지가 항상 빈손이 된다(49d7afd 회귀).
 _CAREER_MARK = "career_distilled"
+# 마커를 찍을 때 본 What Changed 항목 수. 세션이 nightly를 넘겨 이어지면 재기록이
+# 마커를 풀어 노트 전체가 다시 들어오고, 어제 뽑은 bullet이 또 나온다(2026-10-16
+# nightshift 실측). 이 수 이후의 항목만 넘겨 "추가분"만 증류한다.
+# ponytail: 항목 수 기반 — append_to로 뒤에 붙는 Process 형식만 정확하다. 중간 수정은
+# 놓치거나 중복될 수 있다. 더 정확히 하려면 항목 해시 목록을 저장한다.
+_ITEMS_MARK = "career_distilled_items"
+_WHAT_CHANGED = "What Changed"
+_LIST_ITEM_RE = re.compile(r"^\s*(?:\d+[.)]|[-*])\s+\S")
+
+
+def _what_changed_items(body: str) -> list[str] | None:
+    """What Changed 섹션의 리스트 항목. 섹션이 없으면 None(Process 형식이 아닌 노트)."""
+    section = excerpt_sections(body, (_WHAT_CHANGED,))
+    if not section:
+        return None
+    return [line for line in section.splitlines() if _LIST_ITEM_RE.match(line)]
 
 
 @dataclass(frozen=True)
@@ -61,6 +78,10 @@ class CareerBulletAgent:
 
     def suggest(self, project: str = "") -> CareerBulletResult:
         notes = self._collect_notes(project)
+        # 재기록으로 마커만 풀렸고 What Changed에 새 항목이 없는 노트는 LLM 없이 마커만 되살린다.
+        exhausted = [n for n in notes if self._new_items(n) == []]
+        notes = [n for n in notes if n not in exhausted]
+        self._mark_career_distilled(exhausted)
         if not notes:
             return CareerBulletResult(written=[], source_refs=[])
 
@@ -91,9 +112,18 @@ class CareerBulletAgent:
             try:
                 post = frontmatter.load(str(path))
                 post[_CAREER_MARK] = True
+                post[_ITEMS_MARK] = len(_what_changed_items(note.body) or [])
                 path.write_text(frontmatter.dumps(post), encoding="utf-8")
             except Exception:
                 pass
+
+    def _new_items(self, note: WikiNote) -> list[str] | None:
+        """이전 증류 이후 추가된 What Changed 항목. 처음 보는 노트·비Process 노트는 None(전체 처리)."""
+        done = note.metadata.get(_ITEMS_MARK)
+        if not isinstance(done, int) or done <= 0:
+            return None
+        items = _what_changed_items(note.body)
+        return None if items is None else items[done:]
 
     def _llm(self) -> LLMProvider:
         return self.llm or get_task_llm_provider("writer", self.settings)
@@ -156,7 +186,12 @@ class CareerBulletAgent:
             header = f"### {note.path}"
             if meta:
                 header += f" ({', '.join(meta)})"
-            body = prioritized_excerpt(note.body, _PRIORITY_SECTIONS, _MAX_NOTE_CHARS)
+            new_items = self._new_items(note)
+            if new_items:
+                header += " — 이전 증류 이후 추가된 What Changed 항목만"
+                body = f"## {_WHAT_CHANGED}\n" + "\n".join(new_items)
+            else:
+                body = prioritized_excerpt(note.body, _PRIORITY_SECTIONS, _MAX_NOTE_CHARS)
             parts.append(f"{header}\n{body}")
         return "\n\n".join(parts)
 

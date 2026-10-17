@@ -1058,10 +1058,10 @@ def _render_process_sections(
         ]),
         "Implementation Trace": implementation_trace.strip() or "- ",
         "Agent Execution Notes": "\n".join([
-            f"- 막힌 점: {notes.get('blocked', '')}",
-            f"- 에이전트가 한 실수: {notes.get('mistakes', '')}",
-            f"- 다음부터 먼저 확인할 점: {notes.get('next_checks', '')}",
-            f"- 더 나은 작업 방식: {notes.get('better_approach', '')}",
+            _render_note_field("막힌 점", notes.get("blocked")),
+            _render_note_field("에이전트가 한 실수", notes.get("mistakes")),
+            _render_note_field("다음부터 먼저 확인할 점", notes.get("next_checks")),
+            _render_note_field("더 나은 작업 방식", notes.get("better_approach")),
             f"- evidence: {notes.get('evidence', '')}",
             f"- scope: {notes.get('scope', 'project')}",
             f"- confidence: {notes.get('confidence', 'unspecified')}",
@@ -1071,6 +1071,23 @@ def _render_process_sections(
         "Next Session": next_session.strip() or "- ",
         "Learning Recovery": "\n".join(recovery_lines),
     }
+
+
+def _render_note_field(label: str, value) -> str:
+    """실행 노트 한 필드를 렌더한다. 에이전트가 "- a\n- b"로 넘긴 여러 항목은 중첩 불릿으로
+    — 그대로 붙이면 "- 막힌 점: - a" 꼴로 대시가 겹쳐 MemoryPatch까지 전파된다."""
+    items = _normalize_bullet_items(value)
+    if len(items) <= 1:
+        return f"- {label}: {items[0] if items else ''}"
+    return f"- {label}:\n" + "\n".join(f"  - {item}" for item in items)
+
+
+def learning_recovery_is_blank(recovery: dict | None) -> bool:
+    """learning_recovery의 네 항목이 모두 비었는지(빈 틀만 넘어왔는지) 본다."""
+    if not recovery:
+        return True
+    return not any(_normalize_bullet_items(recovery.get(k)) for k in
+                   ("ai_led", "unclear_concepts", "questions", "related_candidates"))
 
 
 def _assemble_process_body(sections: dict[str, str]) -> str:
@@ -1333,12 +1350,10 @@ def _write_session_process_unlocked(
     # 세션 한정 사실은 Process 기록에 이미 남아 있고, 통째로 append하면 Lessons가
     # 세션 보일러플레이트로 비대해져 briefing 예산을 낭비한다.
     lesson_lines: list[str] = []
-    next_checks = str(notes.get("next_checks", "")).strip()
-    better_approach = str(notes.get("better_approach", "")).strip()
-    if next_checks:
-        lesson_lines.append(f"- ({date}) 다음부터 먼저 확인: {next_checks}")
-    if better_approach:
-        lesson_lines.append(f"- ({date}) 더 나은 방식: {better_approach}")
+    for item in _normalize_bullet_items(notes.get("next_checks")):
+        lesson_lines.append(f"- ({date}) 다음부터 먼저 확인: {item}")
+    for item in _normalize_bullet_items(notes.get("better_approach")):
+        lesson_lines.append(f"- ({date}) 더 나은 방식: {item}")
     if lesson_lines:
         memory_patch_result = writer.upsert_exact(
             CandidateSpec(

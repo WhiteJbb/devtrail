@@ -1503,3 +1503,32 @@ def test_problem_promotes_into_project_problems_dir(tmp_path):
     statuses = {p["status"] for p in vault_tools.get_known_problems("Devtrail", settings=_settings(tmp_path)) if p["source"] == "problem"}
     assert statuses == {"promoted"}  # 승격돼도 조회에서 사라지지 않는다
 
+
+
+def test_execution_notes_multi_item_values_render_as_nested_bullets(tmp_path):
+    """에이전트가 "- a\\n- b"로 넘긴 실행 노트는 대시가 겹치지 않고 중첩 불릿이 되며,
+    Lessons 패치도 항목별 한 줄씩 나온다 (2026-10-16 nightshift MemoryPatch 실측)."""
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="1. 작업", session_id="sess-n",
+        agent_execution_notes={
+            "blocked": "",
+            "mistakes": "- 영어로 보고했다\n- prettier를 돌렸다",
+            "next_checks": "- 사용자와 같은 언어로 보고한다\n- 새 UI는 필요한 조건에서만",
+            "better_approach": "한 줄짜리",
+        },
+        settings=_settings(tmp_path),
+    )
+    body = result.process.path.read_text(encoding="utf-8")
+    assert "- 에이전트가 한 실수:\n  - 영어로 보고했다\n  - prettier를 돌렸다" in body
+    assert "- 더 나은 작업 방식: 한 줄짜리" in body
+    assert "- 막힌 점: \n" in body
+    assert ": - " not in body
+    parsed = vault_tools._parse_execution_notes(body)
+    assert "prettier를 돌렸다" in parsed["mistakes"]
+
+    patch = result.memory_patch.path.read_text(encoding="utf-8")
+    assert "다음부터 먼저 확인: 사용자와 같은 언어로 보고한다\n" in patch
+    assert "다음부터 먼저 확인: 새 UI는 필요한 조건에서만\n" in patch
+    assert "더 나은 방식: 한 줄짜리" in patch
+    assert ": - " not in patch
