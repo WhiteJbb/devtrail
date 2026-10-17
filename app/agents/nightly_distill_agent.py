@@ -5,6 +5,7 @@ distill-today + suggest-career-bullets + daily digest 생성 + Telegram 전송�
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ from app.services.task_service import DONE_DIR
 from app.services.wiki_service import WikiNote, WikiService
 
 _WEEKLY_LOOKBACK_DAYS = 7
+# 번호 목록(1. / 1))과 불릿(-) 항목 — 내용이 있는 것만
+_LIST_ITEM_RE = re.compile(r"^(?:\d+[.)]|-)\s+(.*\S)")
 
 
 @dataclass(frozen=True)
@@ -390,13 +393,17 @@ class NightlyDistillAgent:
         '<프로젝트> 작업 세션'으로 동일해 제목만 나열하면 하루 목록이 구분되지 않는다.
         본문 첫 불릿(What Changed 첫 항목)을 붙여 각 세션이 무엇이었는지 드러낸다."""
         for line in note.body.splitlines():
-            text = line.strip()
-            if text.startswith("- "):
-                headline = text[2:].replace("**", "").strip()
-                if len(headline) > 90:
-                    headline = headline[:90].rstrip() + "…"
-                if headline:
-                    return f"{note.title} — {headline}"
+            # Process 노트의 What Changed는 번호 목록이다 — "- "만 보면 그 뒤 Project Decisions의
+            # "- 결정:" 라벨을 집어 빈 headline이 된다(2026-10-16 digest 실측).
+            match = _LIST_ITEM_RE.match(line.strip())
+            if not match:
+                continue
+            headline = match.group(1).replace("**", "").strip()
+            if not headline or headline.endswith(":"):
+                continue
+            if len(headline) > 90:
+                headline = headline[:90].rstrip() + "…"
+            return f"{note.title} — {headline}"
         return note.title
 
     def _today_sessions(self) -> list[WikiNote]:

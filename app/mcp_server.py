@@ -301,7 +301,7 @@ def write_session_process(
         settings=get_settings(),
     )
     _write_session_marker(process_written=True)
-    return _with_text_warning(
+    payload = _with_text_warning(
         {
             "session_id": result.session_id,
             "process": _candidate_result_dict(result.process),
@@ -312,6 +312,13 @@ def write_session_process(
         what_changed, files_touched, project_decisions, implementation_trace,
         agent_execution_notes, docs_update_candidates, next_session, learning_recovery,
     )
+    # 빈 틀("- ", "1. ")만 넘긴 Learning Recovery는 저장은 되지만 복습 질문이 안 생긴다 —
+    # 에이전트가 알아채도록 돌려준다 (2026-10-16 nightshift 세션 실측).
+    if learning_recovery is not None and vault_tools.learning_recovery_is_blank(learning_recovery):
+        payload = {**payload, "warnings": [*payload.get("warnings", []),
+            "learning_recovery가 비어 있습니다. AI가 주도한 부분·이해 못 한 개념·직접 설명해볼 질문을 "
+            "채우면 digest 복습 질문으로 돌아옵니다."]}
+    return payload
 
 
 def main() -> None:
