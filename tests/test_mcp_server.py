@@ -43,6 +43,7 @@ def test_registers_canonical_tools(vault_env, monkeypatch):
         "record_note",
         "record_problem",
         "record_agent_improvement",
+        "update_open_loops",
         "write_work_plan",
         "write_session_process",
     }
@@ -261,3 +262,11 @@ def test_write_session_process_warns_on_blank_learning_recovery(vault_env, monke
 
     omitted = write_session_process(project="Devtrail", what_changed="3. 작업", append_to=["what_changed"])
     assert "warnings" not in omitted
+
+
+def test_update_open_loops_tool_edits_vault_file(vault_env, monkeypatch):
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    update_open_loops = mod.mcp._tool_manager.get_tool("update_open_loops").fn
+    result = update_open_loops(project="Devtrail", add=["Stop 훅 fallback 실효 확인 (#78)"], section="실효 확인")
+    assert result["added"] and result["resolved"] == [] and "warnings" not in result
+    assert "Stop 훅 fallback" in (vault_env / "40_AgentMemory" / "05_OpenLoops.md").read_text(encoding="utf-8")

@@ -289,7 +289,7 @@ devtrail project-briefing     # get_project_briefing() 결과를 stdout에 출�
 ## MCP 연동 (Claude Code Session Lifecycle)
 
 `devtrail mcp-serve`는 Vault를 **Agent Session Lifecycle 공용 메모리 버스**로 노출하는
-MCP(stdio) 서버입니다. MCP가 연결돼 있으면 세션 시작/종료 기록은 아래 11개 tool이
+MCP(stdio) 서버입니다. MCP가 연결돼 있으면 세션 시작/종료 기록은 아래 12개 tool이
 1차 경로이고, `capture-session` CLI는 MCP 미연결 시의 fallback입니다.
 
 등록 (Claude Code):
@@ -322,6 +322,7 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 | `record_note` | 결정/지식/아이디어를 `60_Candidates/`에 후보로 기록 (knowledge/decision/blog_idea/career_bullet) |
 | `record_problem` | 겪은 문제와 해결을 problem 후보로 기록 (증상·원인·시도·해결·예방, `component`·`cause_class` 분류) → promote 시 `30_Projects/<P>/Problems/` |
 | `record_agent_improvement` | 반복 실수 · 개선할 작업 방식 · 프로젝트 주의사항을 MemoryPatch 후보로 기록 |
+| `update_open_loops` | `40_AgentMemory/05_OpenLoops.md`의 프로젝트 블록에 다음 세션에도 남는 할 일을 넣고(add) 끝난 줄을 지운다(resolve) — 40_AgentMemory 중 유일하게 에이전트가 직접 쓰는 파일 |
 | `write_work_plan` | 작업 시작 전, 실제 수정 전에 Plan 기록 |
 | `write_session_process` | 세션 종료/컴팩팅 전 Process 기록 → `SessionHandoffs` candidate + `10_Worklog/Sessions/` 세션 기록 동시 생성 |
 
@@ -553,7 +554,7 @@ URL 전송 시 자동으로 캡처 + LLM 요약 실행. 음성·이미지도 자
 app/
 ├─ cli.py              # 진입점
 ├─ config.py           # .env 설정
-├─ mcp_server.py       # MCP(stdio) 서버 — Agent Session Lifecycle 11개 tool 노출
+├─ mcp_server.py       # MCP(stdio) 서버 — Agent Session Lifecycle 12개 tool 노출
 ├─ vault_tools.py      # MCP tool이 호출하는 상태 없는 Vault 함수 모음
 ├─ agents/             # CaptureAgent, DistillAgent, WikiBlogAgent
 │                      # CuratorAgent, NightlyDistillAgent, WeeklyReviewAgent
