@@ -37,7 +37,7 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 | `app/assistant/` | 자연어 의도 분류(`intent.py`)와 어시스턴트 응답 조립 |
 | `app/vault_tools.py` | MCP 도구 구현 (get_project_briefing, write_work_plan, write_session_process 등) |
 | `app/mcp_server.py` | MCP 서버 진입점 (`devtrail mcp-serve`) |
-| `scripts/hooks/` | Claude Code 훅 (plan-check, session-start-briefing, stop-process-check) + git post-commit |
+| `scripts/hooks/` | Claude Code 훅 (session-start-briefing, stop-process-check) + git post-commit |
 | `scripts/activity/`, `scripts/mac/`, `scripts/windows/` | 셸 활동 훅, 머신별 스케줄러 설치 스크립트 |
 | `tests/` | pytest 테스트 (`testpaths = ["tests"]`) |
 | `docs/` | 설계·계획 문서 |
@@ -89,8 +89,8 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 
 ### 작업 절차
 
-- 구현 전에 Plan을 남긴다 — 세션 단위는 MCP `write_work_plan`, 기능 단위
-  (며칠 이상)는 `docs/` 또는 Vault `30_Projects/<P>/Plans/`.
+- 기능 단위(며칠 이상) 계획은 `docs/` 또는 Vault `30_Projects/<P>/Plans/`에 남긴다.
+  세션 단위 Plan(`write_work_plan`)은 선택이다 — 2026-10-18에 요구를 뺐다(어느 세션도 안 썼다).
 - 사용자의 결정이 필요한 지점(설계 선택, 파괴적 변경)은 진행하지 말고 질문한다.
   결정 결과는 `write_session_process`의 project_decisions 또는 decision 후보로
   남겨 `30_Projects/<P>/Decisions/`에 쌓이게 한다.
@@ -108,8 +108,7 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 `devtrail mcp-serve`가 붙어 있으면 기록은 MCP 도구로 남긴다.
 
 1. **세션 시작** — `get_project_briefing`을 먼저 호출한다.
-2. **구현 전** — `write_work_plan`으로 Plan을 남긴다.
-3. **세션 종료·컴팩팅 전** — `write_session_process`를 호출한다.
+2. **세션 종료·컴팩팅 전** — `write_session_process`를 호출한다.
    SessionHandoffs candidate와 `10_Worklog/Sessions/` 세션 기록을 한 번에
    만들므로 `capture-session`을 따로 실행할 필요가 없다.
 
@@ -133,8 +132,6 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 | 훅 | 시점 | 역할 |
 |----|------|------|
 | `session-start-briefing` | SessionStart | 프로젝트 briefing 자동 주입 |
-| `plan-check` | PreToolUse (Edit/Write) | Plan 미기록 상태의 구현 차단 |
-
 | `stop-process-check` | Stop · PreCompact | 세션 기록 누락 경고 |
 
 MCP 서버는 첫 tool 호출 시 `.claude/.vault-mcp/mcp_sessions/` 아래에 프로세스별 마커를 만든다.

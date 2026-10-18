@@ -123,7 +123,7 @@ def check_hook_settings(repo_dir: Path) -> CheckResult:
     return CheckResult(
         "Claude Code 훅",
         WARN,
-        "settings.json 없음 — plan-check · session-start-briefing · stop-process-check가 전부 비활성",
+        "settings.json 없음 — session-start-briefing · stop-process-check가 비활성",
         hint="Claude Code 세션을 여는 머신이면 --fix로 복사하세요 (봇 서버 전용 노드는 불필요)",
         fixable=True,
     )
