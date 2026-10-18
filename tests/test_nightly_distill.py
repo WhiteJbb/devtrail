@@ -194,23 +194,52 @@ def test_run_auto_applies_low_risk_patches(tmp_path):
     assert applied.metadata["status"] == "applied"
 
 
-def test_run_leaves_review_required_patches_alone(tmp_path):
+def test_run_applies_patches_regardless_of_review_flag(tmp_path):
+    """사람 검토 게이트는 없다 — requires_user_review=True도 자동 반영된다 (2026-10-18)."""
     import frontmatter as fm
     patch = tmp_path / "60_Candidates" / "MemoryPatches" / "manual.md"
     patch.parent.mkdir(parents=True, exist_ok=True)
     meta = {"type": "candidate", "candidate_type": "memory_patch", "title": "검토 필요",
-            "status": "candidate", "created_at": "2026-06-23",
-            "requires_user_review": True}
-    patch.write_text(fm.dumps(fm.Post("본문", **meta)), encoding="utf-8")
+            "status": "candidate", "created_at": "2026-06-23", "project": "Devtrail",
+            "requires_user_review": True, "target_file": "40_AgentMemory/06_Lessons.md"}
+    patch.write_text(fm.dumps(fm.Post("- 교훈 본문", **meta)), encoding="utf-8")
+    (tmp_path / "40_AgentMemory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "40_AgentMemory" / "06_Lessons.md").write_text("# Lessons\n", encoding="utf-8")
 
-    _seed_session(tmp_path)
     llm = _MultiCallLLM([_distill_response(), _career_response()])
     agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
-
     result = agent.run()
 
-    assert result.auto_applied_patches == []
-    assert fm.loads(patch.read_text(encoding="utf-8")).metadata["status"] == "candidate"
+    assert any("manual.md" in e for e in result.auto_applied_patches)
+    assert fm.loads(patch.read_text(encoding="utf-8")).metadata["status"] == "applied"
+    assert "교훈 본문" in (tmp_path / "40_AgentMemory" / "06_Lessons.md").read_text(encoding="utf-8")
+
+
+def test_run_promotes_candidates_quiet_for_two_days(tmp_path):
+    """지식·결정 후보는 마지막 갱신 뒤 2일이 지나면 공식 영역으로 자동 승격, 최근 것은 남는다."""
+    import frontmatter as fm
+    kdir = tmp_path / "60_Candidates" / "Knowledge"
+    kdir.mkdir(parents=True, exist_ok=True)
+    old = {"type": "candidate", "candidate_type": "knowledge", "title": "오래된 지식", "status": "candidate",
+           "created_at": "2026-06-20T10:00:00", "updated_at": "2026-06-20T10:00:00", "project": "Devtrail"}
+    new = {**old, "title": "오늘 지식", "created_at": "2026-06-23T10:00:00", "updated_at": "2026-06-23T10:00:00"}
+    (kdir / "old.md").write_text(fm.dumps(fm.Post("# 오래된 지식\n본문", **old)), encoding="utf-8")
+    (kdir / "new.md").write_text(fm.dumps(fm.Post("# 오늘 지식\n본문", **new)), encoding="utf-8")
+    ddir = tmp_path / "60_Candidates" / "Decisions"
+    ddir.mkdir(parents=True, exist_ok=True)
+    dec = {**old, "candidate_type": "decision", "title": "오래된 결정"}
+    (ddir / "dec.md").write_text(fm.dumps(fm.Post("# 오래된 결정\n본문", **dec)), encoding="utf-8")
+
+    llm = _MultiCallLLM([_distill_response(), _career_response()])
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+    result = agent.run()
+
+    assert not (kdir / "old.md").exists()
+    assert (tmp_path / "20_Knowledge" / "Devtrail" / "old.md").exists()
+    assert (tmp_path / "30_Projects" / "Devtrail" / "Decisions" / "dec.md").exists()
+    assert (kdir / "new.md").exists()
+    assert any("old.md" in e for e in result.auto_applied_patches)
+    assert "자동 반영" in result.digest_text
 
 
 def test_digest_includes_thread_block_only_when_updated_today(tmp_path):

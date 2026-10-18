@@ -1,6 +1,6 @@
 #!/bin/bash
 # nightly 안전 실행 wrapper (macOS)
-# update-devtrail → sync-vault(pull) → nightly-distill → push-digest → sync-vault(push)
+# update-devtrail → sync-vault(pull) → nightly-distill → sync-vault(push)
 # 충돌/오류 발생 시 중단 + Telegram 알림
 
 set -uo pipefail
@@ -104,7 +104,6 @@ invoke_step "sync-vault (pull)" "$REPO_ROOT/scripts/mac/sync-vault.sh" --interna
 
 cd "$REPO_ROOT"
 invoke_step "nightly-distill" "$WA" nightly-distill || exit 1
-invoke_step "push-digest" "$WA" push-digest --daily || exit 1
 invoke_step "sync-vault (push)" "$REPO_ROOT/scripts/mac/sync-vault.sh" --internal --commit-msg "auto: nightly distill $(date '+%Y-%m-%d')" || exit 1
 
 log "=== run-nightly-safe done ==="

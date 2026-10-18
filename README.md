@@ -317,7 +317,7 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 | `search_vault` | read_scope 안 노트 검색 (status=stable/candidate 포함) |
 | `read_note` | scope 안 노트 전문 읽기 |
 | `get_recent_sessions` | 프로젝트의 최근 세션 목록 (세션당 한 항목: goal · what_changed · next_session 발췌) |
-| `get_decisions` | 프로젝트의 결정 이력 (검토 대기 · 승격 · `include_archived`로 보관분까지) |
+| `get_decisions` | 프로젝트의 결정 이력 (승격 전 후보 · 승격 · `include_archived`로 보관분까지) |
 | `get_known_problems` | 겪은 문제 조회 — `record_problem` 기록(분류 있음) + 세션 Process의 막힌 점 · 실수. `component`로 필터 |
 | `record_note` | 결정/지식/아이디어를 `60_Candidates/`에 후보로 기록 (knowledge/decision/blog_idea/career_bullet) |
 | `record_problem` | 겪은 문제와 해결을 problem 후보로 기록 (증상·원인·시도·해결·예방, `component`·`cause_class` 분류) → promote 시 `30_Projects/<P>/Problems/` |
@@ -394,7 +394,7 @@ OBSIDIAN_VAULT_PATH: D:/personal-vault
 
 ## Vault 수정 규칙
 - 20_Knowledge/, 30_Projects/, 40_AgentMemory/ 는 직접 수정하지 않는다.
-- 모든 제안·초안은 60_Candidates/ 에 파일로 생성하고 사람이 검토 후 promote 한다.
+- 모든 제안·초안은 60_Candidates/ 에 파일로 생성한다. 사람 검토 게이트는 없다 — memory_patch는 nightly가 바로 반영하고, knowledge/decision/problem은 2일 조용하면 자동 승격한다. 사람은 보기만 한다.
 ```
 
 ### 2단계 — 세션 시작 시 컨텍스트 로딩
@@ -425,7 +425,7 @@ devtrail capture-session --project <name> --from-repo --from-agent --summary-fil
 [세션 종료]  MCP: write_session_process (fallback: capture-session --from-agent) → 10_Worklog/Sessions/ 저장
 [야간]       nightly-distill → 60_Candidates/ 후보 생성
 [매주 일요일] weekly-distill → 50_Outputs/WeeklyReview/ 주간 회고
-[다음 날]    list-candidates → promote-candidate → 20_Knowledge/ 누적
+[2일 뒤 야간] nightly-distill이 조용한 후보를 자동 승격 → 20_Knowledge/ · 30_Projects/<P>/Decisions/ 누적
 ```
 
 ---

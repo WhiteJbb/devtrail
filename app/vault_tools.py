@@ -402,7 +402,7 @@ def _load_project_config(repo_dir: Path) -> str:
 
 
 def _list_decisions(vault_dir: Path, project: str, include_archived: bool = False) -> list[dict]:
-    """프로젝트의 결정을 최신순으로 반환한다 — 검토 대기 후보 + 승격된 정본 (+ 보관).
+    """프로젝트의 결정을 최신순으로 반환한다 — 승격 전 후보 + 승격된 정본 (+ 보관).
 
     후보만 읽으면 promote하는 순간 결정이 사라져, 검토를 성실히 할수록 컨텍스트를 잃는다.
     """
@@ -507,7 +507,7 @@ def get_recent_sessions(project: str, limit: int = 5, settings: Settings | None 
 def get_decisions(
     project: str, limit: int = 20, include_archived: bool = False, settings: Settings | None = None
 ) -> list[dict]:
-    """프로젝트의 결정 이력을 최신순으로 반환한다. status: candidate(검토 대기) / promoted / archived."""
+    """프로젝트의 결정 이력을 최신순으로 반환한다. status: candidate(승격 전) / promoted / archived."""
     vault_dir = _vault_dir(settings)
     decisions = _list_decisions(vault_dir, _canonicalize_project(vault_dir, project), include_archived)
     return decisions[: max(limit, 0)]
@@ -795,7 +795,7 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     source_refs.extend(d["rel_path"] for d in recent_decisions)
     if recent_decisions:
         decision_lines = [
-            f"- {d['title']} ({d['rel_path']})" + (" — 검토 대기" if d["status"] == "candidate" else "")
+            f"- {d['title']} ({d['rel_path']})"
             for d in recent_decisions
         ]
         sections.append("## Recent Decisions\n\n" + _truncate("\n".join(decision_lines)))
