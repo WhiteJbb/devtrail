@@ -338,7 +338,7 @@ def write_session_process(
     if learning_recovery is not None and vault_tools.learning_recovery_is_blank(learning_recovery):
         payload = {**payload, "warnings": [*payload.get("warnings", []),
             "learning_recovery가 비어 있습니다. AI가 주도한 부분·이해 못 한 개념·직접 설명해볼 질문을 "
-            "채우면 digest 복습 질문으로 돌아옵니다."]}
+            "채우면 세션 기록에 남습니다."]}
     return payload
 
 

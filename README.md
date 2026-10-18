@@ -507,15 +507,10 @@ devtrail serve-bot
 /capture <메모>     /distill           /candidates
 /search <검색어>    /context <주제>    /promote <path>
 /worklog            /todo              /briefing
-/answer [설명]      /sync
+/sync
 ```
 
 `/briefing`은 `40_AgentMemory/`를 요약해 보여줍니다. `/sync`는 Vault git 동기화를 수동 트리거합니다 (Windows 서버 전용, `scripts/windows/sync-vault.ps1` 실행).
-
-`/answer`는 오늘의 복습 질문(Learning Recovery)에 답을 남깁니다 — 인자 없이 보내면
-현재 질문을 확인하고, `/answer <설명>`으로 보내면 질문이 기록된 세션 노트의 해당 질문
-아래에 답변이 기록됩니다. 미답 질문은 다음 Claude Code 세션 briefing과 weekly digest에
-집계됩니다.
 
 **`/review`** — 후보를 한 건씩 인라인 버튼 카드로 검토합니다.
 
