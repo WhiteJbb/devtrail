@@ -425,13 +425,19 @@ def _list_decisions(vault_dir: Path, project: str, include_archived: bool = Fals
             meta = post.metadata
             if project_filter and str(meta.get("project", "")).strip().lower() != project.lower():
                 continue
+            # 뒤집힌 결정은 이력으로만 남긴다 — briefing에 올라오면 에이전트가 옛 결정을 따른다
+            superseded = str(meta.get("status", "") or "").strip().lower() == "superseded"
+            if superseded and not include_archived:
+                continue
+            date = str(meta.get("updated_at") or meta.get("created_at") or "")[:10]
             entries.append(
                 (
-                    md_path.stat().st_mtime,
+                    # 결정 날짜 기준 — 파일 mtime은 promote/수정 때 바뀌어 옛 결정이 최신으로 보인다
+                    (date, md_path.stat().st_mtime),
                     {
                         "title": str(meta.get("title", md_path.stem)),
-                        "status": status,
-                        "date": str(meta.get("updated_at") or meta.get("created_at") or "")[:10],
+                        "status": "superseded" if superseded else status,
+                        "date": date,
                         "summary": str(meta.get("summary") or "").strip() or _truncate(post.content, 200),
                         "rel_path": str(md_path.relative_to(vault_dir)).replace("\\", "/"),
                     },
