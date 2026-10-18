@@ -30,7 +30,16 @@ _SESSION_ID = str(uuid4())
 _PROCESS_STARTED_AT = datetime.now().isoformat()
 _MARKER_LOCK = threading.RLock()
 
-mcp = FastMCP("devtrail-vault")
+_INSTRUCTIONS = """\
+이 repo의 과거 세션·결정·겪은 문제·교훈은 Devtrail vault에 있다. 추측하지 말고 먼저 조회한다.
+- 에러·실패·테스트 깨짐을 디버깅하기 전에: get_known_problems(project) — 같은 문제를 이미 겪었을 수 있다.
+- 설계·구조·규칙을 바꾸거나 "왜 이렇게 돼 있나"가 궁금할 때: get_decisions(project) — 이전 결정과 근거.
+- 모르는 모듈·용어·과거 작업이 나오면: search_vault(query) → read_note(rel_path)로 전문.
+- 이어서 하는 작업이면: get_recent_sessions(project) — 직전 세션의 what_changed·next_session.
+기록은 커밋·변경이 생긴 세션마다 write_session_process. 문제를 해결했으면 record_problem.
+"""
+
+mcp = FastMCP("devtrail-vault", instructions=_INSTRUCTIONS)
 
 
 def _session_marker_path() -> Path:
@@ -118,7 +127,7 @@ def get_project_briefing(project_or_repo: str) -> dict:
 
 @mcp.tool()
 def search_vault(query: str, limit: int = 10) -> list[dict]:
-    """read_scope 안의 노트를 검색한다.
+    """모르는 모듈·용어·과거 작업·결정이 언급되면 추측 전에 먼저 호출한다. vault 전체 키워드 검색.
 
     status=stable(승격된 정본) / candidate(검토 대기 후보) / raw(세션·산출물 원문)이
     함께 반환되며 이 순서로 정렬된다. raw는 근거 조회용이지 확정 지식이 아니다.
@@ -130,7 +139,7 @@ def search_vault(query: str, limit: int = 10) -> list[dict]:
 
 @mcp.tool()
 def read_note(rel_path: str) -> str:
-    """scope 안의 노트 전문을 읽는다. scope 밖 경로는 오류를 반환한다.
+    """search_vault·get_*가 돌려준 rel_path의 전문을 읽는다. briefing 발췌가 잘려 있으면 이걸로 본다.
 
     읽기 허용: 20_Knowledge/, 30_Projects/, 40_AgentMemory/, 60_Candidates/,
     10_Worklog/, 50_Outputs/, 70_Tasks/.
@@ -141,7 +150,7 @@ def read_note(rel_path: str) -> str:
 
 @mcp.tool()
 def get_recent_sessions(project: str, limit: int = 5) -> list[dict]:
-    """프로젝트의 최근 세션을 최신순으로 반환한다 (세션당 한 항목).
+    """이어서 하는 작업을 시작할 때 호출한다 — 직전 세션들이 무엇을 바꾸고 무엇을 남겼는지.
 
     각 항목: recorded_at, host, agent, goal(Plan), what_changed·next_session(Process 발췌),
     plan_rel_path·process_rel_path. 전문은 read_note로 조회한다.
@@ -152,7 +161,7 @@ def get_recent_sessions(project: str, limit: int = 5) -> list[dict]:
 
 @mcp.tool()
 def get_decisions(project: str, limit: int = 20, include_archived: bool = False) -> list[dict]:
-    """프로젝트의 결정 이력을 최신순으로 반환한다.
+    """설계·구조·규칙을 바꾸기 전, 또는 "왜 이렇게 돼 있나"가 궁금할 때 호출한다 — 이전 결정과 근거.
 
     status=candidate(검토 대기) / promoted(승격된 정본) / archived(보관, include_archived=True일 때만).
     각 항목: title, status, date, summary, rel_path. 전문은 read_note로 조회한다.
@@ -165,7 +174,7 @@ def get_decisions(project: str, limit: int = 20, include_archived: bool = False)
 
 @mcp.tool()
 def get_known_problems(project: str, limit: int = 10, component: str = "") -> list[dict]:
-    """프로젝트에서 겪은 문제를 최신순으로 반환한다. "예전에 이 문제 있었나"를 확인할 때 쓴다.
+    """에러·실패·테스트 깨짐을 디버깅하기 전에 먼저 호출한다 — 같은 문제를 이미 겪고 해결했을 수 있다.
 
     source="problem": record_problem으로 남긴 기록 — title, component, cause_class,
         symptoms, cause, solution, prevention, status(candidate/promoted), rel_path

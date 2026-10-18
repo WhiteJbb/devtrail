@@ -134,6 +134,11 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 | `session-start-briefing` | SessionStart | 프로젝트 briefing 자동 주입 |
 | `stop-process-check` | Stop · PreCompact | 세션 기록 누락 경고 |
 
+읽기 도구를 "언제 부르는가"는 CLAUDE.md가 아니라 MCP 서버 쪽에 둔다 — `FastMCP(instructions=)`가
+클라이언트 시스템 프롬프트에 들어가고(서버를 붙인 repo 전부에 적용), tool docstring 첫 줄은 매 턴
+모델 눈앞에 있는 유일한 글이므로 트리거 문장("…하기 전에 먼저 호출한다")으로 쓴다(2026-10-18, 읽기 호출
+write 102 : read 1 관찰 후). 효과는 `~/.claude/projects/*/*.jsonl`의 tool_use 수로 잰다.
+
 MCP 서버는 첫 tool 호출 시 `.claude/.vault-mcp/mcp_sessions/` 아래에 프로세스별 마커를 만든다.
 훅은 같은 repo에서 최근 12시간 안에 갱신됐고 PID가 살아 있는 MCP 마커가 정확히 하나일
 때만 그 상태를 사용한다. 여러 개이거나 프로세스 상태를 확인할 수 없으면 강제하지 않는다.
