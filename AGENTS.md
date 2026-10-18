@@ -37,7 +37,7 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 | `app/assistant/` | 자연어 의도 분류(`intent.py`)와 어시스턴트 응답 조립 |
 | `app/vault_tools.py` | MCP 도구 구현 (get_project_briefing, write_work_plan, write_session_process 등) |
 | `app/mcp_server.py` | MCP 서버 진입점 (`devtrail mcp-serve`) |
-| `scripts/hooks/` | Claude Code 훅 (plan-check, session-start-briefing, stop-process-check) + git post-commit |
+| `scripts/hooks/` | Claude Code 훅 (session-start-briefing, stop-process-check) + git post-commit |
 | `scripts/activity/`, `scripts/mac/`, `scripts/windows/` | 셸 활동 훅, 머신별 스케줄러 설치 스크립트 |
 | `tests/` | pytest 테스트 (`testpaths = ["tests"]`) |
 | `docs/` | 설계·계획 문서 |
@@ -89,8 +89,8 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 
 ### 작업 절차
 
-- 구현 전에 Plan을 남긴다 — 세션 단위는 MCP `write_work_plan`, 기능 단위
-  (며칠 이상)는 `docs/` 또는 Vault `30_Projects/<P>/Plans/`.
+- 기능 단위(며칠 이상) 계획은 `docs/` 또는 Vault `30_Projects/<P>/Plans/`에 남긴다.
+  세션 단위 Plan(`write_work_plan`)은 선택이다 — 2026-10-18에 요구를 뺐다(어느 세션도 안 썼다).
 - 사용자의 결정이 필요한 지점(설계 선택, 파괴적 변경)은 진행하지 말고 질문한다.
   결정 결과는 `write_session_process`의 project_decisions 또는 decision 후보로
   남겨 `30_Projects/<P>/Decisions/`에 쌓이게 한다.
@@ -108,8 +108,7 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 `devtrail mcp-serve`가 붙어 있으면 기록은 MCP 도구로 남긴다.
 
 1. **세션 시작** — `get_project_briefing`을 먼저 호출한다.
-2. **구현 전** — `write_work_plan`으로 Plan을 남긴다.
-3. **세션 종료·컴팩팅 전** — `write_session_process`를 호출한다.
+2. **세션 종료·컴팩팅 전** — `write_session_process`를 호출한다.
    SessionHandoffs candidate와 `10_Worklog/Sessions/` 세션 기록을 한 번에
    만들므로 `capture-session`을 따로 실행할 필요가 없다.
 
@@ -133,8 +132,6 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 | 훅 | 시점 | 역할 |
 |----|------|------|
 | `session-start-briefing` | SessionStart | 프로젝트 briefing 자동 주입 |
-| `plan-check` | PreToolUse (Edit/Write) | Plan 미기록 상태의 구현 차단 |
-
 | `stop-process-check` | Stop · PreCompact | 세션 기록 누락 경고 |
 
 MCP 서버는 첫 tool 호출 시 `.claude/.vault-mcp/mcp_sessions/` 아래에 프로세스별 마커를 만든다.
@@ -193,17 +190,17 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `10_Worklog/Daily/` | daily-log (사람이 직접 채우는 일지) | 읽기 전용 |
 | `10_Worklog/GitSummaries/` | 커밋별 git 요약 | 읽기 전용 |
 | `10_Worklog/Summaries/` | worklog 회고 (`<날짜>-worklog.md`) | 읽기 전용 |
-| `20_Knowledge/` | 승격된 공식 지식 노트 | **직접 수정 금지** — `promote-candidate` 경유 |
+| `20_Knowledge/` | 승격된 공식 지식 노트 | **직접 수정 금지** — knowledge 후보가 2일 조용하면 nightly가 자동 승격 (2026-10-18) |
 | `30_Projects/<P>/Context.md` | 프로젝트 배경·목표·제약 | **직접 수정 금지** — 사람이 관리 |
-| `30_Projects/<P>/Decisions/` | 의사결정 이력 (DecisionLog) | **직접 수정 금지** — `promote-candidate` 경유 |
-| `30_Projects/<P>/Problems/` | 승격된 트러블슈팅 기록 (`record_problem` 후보 출신) | **직접 수정 금지** — `promote-candidate` 경유 |
+| `30_Projects/<P>/Decisions/` | 의사결정 이력 (DecisionLog) | **직접 수정 금지** — decision 후보(`write_session_process`의 project_decisions 포함)가 2일 조용하면 nightly가 자동 승격 |
+| `30_Projects/<P>/Problems/` | 승격된 트러블슈팅 기록 (`record_problem` 후보 출신) | **직접 수정 금지** — problem 후보가 2일 조용하면 nightly가 자동 승격 |
 | `30_Projects/<P>/Plans/` | 기능 단위 구현 계획 | 사람과 협의 후 작성 |
 | `30_Projects/<P>/Design/` | IA · UserScenarios · Personas | 사람과 협의 후 작성 |
 | `30_Projects/<P>/Conversations/` | 중요한 대화 발췌 | 사람 요청 시 기록 |
 | `30_Projects/<P>/PromptLog.md` | 중요 프롬프트 원문 | append 허용 |
 | `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈). 단 `05_OpenLoops.md`는 `update_open_loops`(MCP)로 에이전트가 자기 프로젝트 블록을 고친다 — 작업 목록은 낡는 비용이 더 크다 (2026-10-17) |
 | `50_Outputs/` | Digest · WeeklyReview · Blog · Resume · Portfolio · Interview · Todo | 읽기 전용 |
-| `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어·문제 후보 | AI가 생성, 사람이 검토 후 promote |
+| `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어·문제 후보 | AI가 생성. **사람 검토 게이트 없음(2026-10-18)** — memory_patch는 매일 자동 반영, knowledge/decision/problem은 2일 조용하면 자동 승격, career_bullet/blog_idea는 소재로 남는다. 사람은 보기만 한다 |
 | `60_Candidates/SessionHandoffs/<P>/` | 세션별 Plan/Process | `write_work_plan`/`write_session_process` 전용. promote 대상 아님 |
 | `60_Candidates/_Archive/` | 검토 목록에서 뺀 보관 후보 (TTL 만료 decision·memory_patch, 통합본으로 대체된 중복) | 이동·삭제는 사용자 승인 후. `list-candidates`에는 안 나오고 경로를 직접 주면 preview·promote 가능 |
 | `70_Tasks/` | 태스크 (`Active.md` + `Done/`) | task 커맨드 경유 — 직접 편집 금지 |

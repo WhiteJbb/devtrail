@@ -307,13 +307,7 @@ def _update_worklog_note(vault_dir: Path, session_id: str, project: str, body: s
         post.metadata["needs_distill"] = True
         post.metadata["career_distilled"] = False
         post.metadata.setdefault("distill_kinds", ["knowledge", "blog_idea"])
-        # 본문 교체 시 Context Questions/Recovery는 이 함수 밖(질문 파이프라인·사람 답변)에서
-        # 쌓인 기록이므로 떼어뒀다가 다시 붙인다 — 안 그러면 재기록이 답변을 지운다.
-        from app.services.context_question import extract_context_sections
-
-        preserved = extract_context_sections(post.content)
-        tail = f"\n{preserved}\n" if preserved else ""
-        post.content = f"{title_line}\n\n{body.strip()}\n{tail}"
+        post.content = f"{title_line}\n\n{body.strip()}\n"
         atomic_write_text(md_path, frontmatter.dumps(post))
         return str(md_path.relative_to(vault_dir)).replace("\\", "/")
     return None
@@ -408,7 +402,7 @@ def _load_project_config(repo_dir: Path) -> str:
 
 
 def _list_decisions(vault_dir: Path, project: str, include_archived: bool = False) -> list[dict]:
-    """프로젝트의 결정을 최신순으로 반환한다 — 검토 대기 후보 + 승격된 정본 (+ 보관).
+    """프로젝트의 결정을 최신순으로 반환한다 — 승격 전 후보 + 승격된 정본 (+ 보관).
 
     후보만 읽으면 promote하는 순간 결정이 사라져, 검토를 성실히 할수록 컨텍스트를 잃는다.
     """
@@ -513,7 +507,7 @@ def get_recent_sessions(project: str, limit: int = 5, settings: Settings | None 
 def get_decisions(
     project: str, limit: int = 20, include_archived: bool = False, settings: Settings | None = None
 ) -> list[dict]:
-    """프로젝트의 결정 이력을 최신순으로 반환한다. status: candidate(검토 대기) / promoted / archived."""
+    """프로젝트의 결정 이력을 최신순으로 반환한다. status: candidate(승격 전) / promoted / archived."""
     vault_dir = _vault_dir(settings)
     decisions = _list_decisions(vault_dir, _canonicalize_project(vault_dir, project), include_archived)
     return decisions[: max(limit, 0)]
@@ -702,17 +696,6 @@ def update_open_loops(
     return OpenLoopsUpdate(rel_path=_OPEN_LOOPS_REL, added=[l[2:] for l in new], resolved=resolved, not_found=not_found)
 
 
-def _repo_enforces_plan(repo_dir: Path) -> bool:
-    """repo의 Claude Code 설정에 plan-check 훅이 걸려 있는지 본다."""
-    for name in ("settings.json", "settings.local.json"):
-        try:
-            if "plan-check" in (repo_dir / ".claude" / name).read_text(encoding="utf-8"):
-                return True
-        except OSError:
-            continue
-    return False
-
-
 def get_project_briefing(project_or_repo: str, settings: Settings | None = None) -> ProjectBriefing:
     """세션 시작 시 프로젝트 컨텍스트/최근 handoff/decision/open loops를 반환한다.
 
@@ -724,12 +707,8 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
 
     candidate_path = Path(project_or_repo)
     explicit_project = ""
-    # repo를 모르면(프로젝트명 호출) 기존대로 리마인더를 낸다. repo를 알면 plan-check
-    # 훅이 걸린 곳에서만 낸다 — 훅 없는 repo에 Plan을 요구하면 매 세션 잡음이다.
-    plan_reminder = True
     if candidate_path.exists() and candidate_path.is_dir():
         explicit_project = _load_project_config(candidate_path)
-        plan_reminder = _repo_enforces_plan(candidate_path)
 
     resolved_project = explicit_project
     if not resolved_project:
@@ -816,29 +795,10 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     source_refs.extend(d["rel_path"] for d in recent_decisions)
     if recent_decisions:
         decision_lines = [
-            f"- {d['title']} ({d['rel_path']})" + (" — 검토 대기" if d["status"] == "candidate" else "")
+            f"- {d['title']} ({d['rel_path']})"
             for d in recent_decisions
         ]
         sections.append("## Recent Decisions\n\n" + _truncate("\n".join(decision_lines)))
-
-    # 미해결 학습 질문 — Learning Recovery 루프를 세션 시작 시점에 노출한다.
-    # AI가 답을 대신 말해버리면 학습 회수가 안 되므로 지시문을 함께 넣는다.
-    try:
-        from app.services.review_question import list_questions
-
-        unanswered = [q for q in list_questions(vault_dir) if not q.answered]
-        # 다른 프로젝트의 질문으로 폴백하지 않는다 — 무관한 주제가 매 세션 주입된다.
-        scoped = [q for q in unanswered if q.project.lower() == resolved_project.lower()]
-        if scoped:
-            question_lines = "\n".join(f"- {q.question} ({q.source_rel_path})" for q in scoped[:3])
-            sections.append(
-                "## 미해결 학습 질문 (Learning Recovery)\n\n"
-                "작업 중 아래 주제를 다루게 되면 답을 대신 설명하지 말고, 사용자가 직접 "
-                "설명해보도록 권한다. 사용자가 설명하면 맞는지 확인해주고, 세션 기록의 "
-                "해당 질문에 답변이 기록되도록 안내한다.\n\n" + question_lines
-            )
-    except Exception:
-        pass
 
     plans = [h for h in handoffs if h["handoff_type"] == "plan"]
     processes = sorted(
@@ -906,17 +866,11 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
 
     # 생명주기 안내는 항상 넣는다 — Devtrail 외 repo는 CLAUDE.md에 이 지시가 없어
     # briefing이 유일한 통로다 (2026-10-14 nightshift 세션이 기록 0건으로 끝난 원인).
-    # 오늘 Plan이 아직 없으면 Plan 리마인더도 — 사후 "미짝 Plan 경고"의 대칭.
-    today = datetime.now().strftime("%Y-%m-%d")
-    has_todays_plan = any(p["created_at"][:10] == today for p in plans)
-    reminders = []
-    if plan_reminder and not has_todays_plan:
-        reminders.append("구현을 시작하기 전에 `write_work_plan`으로 이 세션의 Plan을 먼저 기록하세요.")
-    reminders.append(
-        "세션을 마치기 전(컴팩팅 전 포함)에 `write_session_process`로 이 세션의 Process를 기록하세요. "
-        "커밋이나 변경이 생긴 세션은 기록 없이 끝낼 수 없습니다."
+    # Plan 리마인더는 없다 — 어느 세션도 쓰지 않아 2026-10-18에 요구를 뺐다.
+    sections.append(
+        "## 리마인더\n\n- 세션을 마치기 전(컴팩팅 전 포함)에 `write_session_process`로 이 세션의 "
+        "Process를 기록하세요. 커밋이나 변경이 생긴 세션은 기록 없이 끝낼 수 없습니다."
     )
-    sections.append("## 리마인더\n\n" + "\n".join(f"- {r}" for r in reminders))
 
     # 인덱스 우선: 주입하지 않은 전문은 필요할 때 read_note로 조회
     unique_refs = list(dict.fromkeys(source_refs))
@@ -1466,7 +1420,9 @@ def _write_session_process_unlocked(
                 body="\n".join(lesson_lines) + "\n",
                 project=project,
                 evidence=str(notes.get("evidence", "")),
-                scope=str(notes.get("scope", "project")),
+                # 에이전트가 scope에 작업 범위 문장을 넣는 일이 잦다("README 문서만") —
+                # 정확히 global이라고 한 것만 global, 나머지는 전부 project로 본다.
+                scope="global" if str(notes.get("scope", "")).strip().lower() == "global" else "project",
                 confidence=str(notes.get("confidence", "unspecified")),
                 requires_user_review=bool(notes.get("requires_user_review", True)),
                 source_refs=[process_result.rel_path],

@@ -317,13 +317,13 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 | `search_vault` | read_scope 안 노트 검색 (status=stable/candidate 포함) |
 | `read_note` | scope 안 노트 전문 읽기 |
 | `get_recent_sessions` | 프로젝트의 최근 세션 목록 (세션당 한 항목: goal · what_changed · next_session 발췌) |
-| `get_decisions` | 프로젝트의 결정 이력 (검토 대기 · 승격 · `include_archived`로 보관분까지) |
+| `get_decisions` | 프로젝트의 결정 이력 (승격 전 후보 · 승격 · `include_archived`로 보관분까지) |
 | `get_known_problems` | 겪은 문제 조회 — `record_problem` 기록(분류 있음) + 세션 Process의 막힌 점 · 실수. `component`로 필터 |
 | `record_note` | 결정/지식/아이디어를 `60_Candidates/`에 후보로 기록 (knowledge/decision/blog_idea/career_bullet) |
 | `record_problem` | 겪은 문제와 해결을 problem 후보로 기록 (증상·원인·시도·해결·예방, `component`·`cause_class` 분류) → promote 시 `30_Projects/<P>/Problems/` |
 | `record_agent_improvement` | 반복 실수 · 개선할 작업 방식 · 프로젝트 주의사항을 MemoryPatch 후보로 기록 |
 | `update_open_loops` | `40_AgentMemory/05_OpenLoops.md`의 프로젝트 블록에 다음 세션에도 남는 할 일을 넣고(add) 끝난 줄을 지운다(resolve) — 40_AgentMemory 중 유일하게 에이전트가 직접 쓰는 파일 |
-| `write_work_plan` | 작업 시작 전, 실제 수정 전에 Plan 기록 |
+| `write_work_plan` | (선택) 긴 작업의 Plan 기록 — 다음 세션 briefing에 Latest Plan으로 보인다. 필수 아님 |
 | `write_session_process` | 세션 종료/컴팩팅 전 Process 기록 → `SessionHandoffs` candidate + `10_Worklog/Sessions/` 세션 기록 동시 생성 |
 
 세션 시작 시 `get_project_briefing`을 먼저 호출하고, 세션 종료/컴팩팅 직전에는
@@ -394,7 +394,7 @@ OBSIDIAN_VAULT_PATH: D:/personal-vault
 
 ## Vault 수정 규칙
 - 20_Knowledge/, 30_Projects/, 40_AgentMemory/ 는 직접 수정하지 않는다.
-- 모든 제안·초안은 60_Candidates/ 에 파일로 생성하고 사람이 검토 후 promote 한다.
+- 모든 제안·초안은 60_Candidates/ 에 파일로 생성한다. 사람 검토 게이트는 없다 — memory_patch는 nightly가 바로 반영하고, knowledge/decision/problem은 2일 조용하면 자동 승격한다. 사람은 보기만 한다.
 ```
 
 ### 2단계 — 세션 시작 시 컨텍스트 로딩
@@ -425,7 +425,7 @@ devtrail capture-session --project <name> --from-repo --from-agent --summary-fil
 [세션 종료]  MCP: write_session_process (fallback: capture-session --from-agent) → 10_Worklog/Sessions/ 저장
 [야간]       nightly-distill → 60_Candidates/ 후보 생성
 [매주 일요일] weekly-distill → 50_Outputs/WeeklyReview/ 주간 회고
-[다음 날]    list-candidates → promote-candidate → 20_Knowledge/ 누적
+[2일 뒤 야간] nightly-distill이 조용한 후보를 자동 승격 → 20_Knowledge/ · 30_Projects/<P>/Decisions/ 누적
 ```
 
 ---
@@ -507,15 +507,10 @@ devtrail serve-bot
 /capture <메모>     /distill           /candidates
 /search <검색어>    /context <주제>    /promote <path>
 /worklog            /todo              /briefing
-/answer [설명]      /sync
+/sync
 ```
 
 `/briefing`은 `40_AgentMemory/`를 요약해 보여줍니다. `/sync`는 Vault git 동기화를 수동 트리거합니다 (Windows 서버 전용, `scripts/windows/sync-vault.ps1` 실행).
-
-`/answer`는 오늘의 복습 질문(Learning Recovery)에 답을 남깁니다 — 인자 없이 보내면
-현재 질문을 확인하고, `/answer <설명>`으로 보내면 질문이 기록된 세션 노트의 해당 질문
-아래에 답변이 기록됩니다. 미답 질문은 다음 Claude Code 세션 briefing과 weekly digest에
-집계됩니다.
 
 **`/review`** — 후보를 한 건씩 인라인 버튼 카드로 검토합니다.
 

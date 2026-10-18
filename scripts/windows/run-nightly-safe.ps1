@@ -1,5 +1,5 @@
 ﻿# nightly 안전 실행 wrapper
-# update-devtrail → sync-vault(pull) → nightly-distill → push-digest → sync-vault(push)
+# update-devtrail → sync-vault(pull) → nightly-distill → sync-vault(push)
 # 충돌/오류 발생 시 중단 + Telegram 알림
 
 $RepoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -119,12 +119,7 @@ try {
         & $wa nightly-distill
     }
 
-    # 4. push-digest
-    Invoke-Step "push-digest" {
-        & $wa push-digest --daily
-    }
-
-    # 5. 결과 vault에 push
+    # 4. 결과 vault에 push
     Invoke-Step "sync-vault (push)" {
         & "$RepoRoot\scripts\windows\sync-vault.ps1" -Internal -CommitMsg "auto: nightly distill $(Get-Date -Format 'yyyy-MM-dd')"
     }

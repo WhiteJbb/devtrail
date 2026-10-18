@@ -397,3 +397,20 @@ def test_other_kinds_have_no_host_agent(tmp_path, monkeypatch):
     post = frontmatter.loads((tmp_path / result.rel_path).read_text(encoding="utf-8"))
     assert "host" not in post.metadata
     assert "agent" not in post.metadata
+
+
+def test_upsert_exact_refreshes_memory_patch_metadata(tmp_path):
+    import frontmatter
+    from app.services.candidate_writer import CandidateSpec, CandidateWriter
+
+    writer = CandidateWriter(tmp_path)
+    spec = CandidateSpec(kind="memory_patch", title="P — Notes — s1", body="- a", project="P",
+                         scope="global", requires_user_review=False, evidence="x", confidence="low")
+    first = writer.upsert_exact(spec)
+    spec2 = CandidateSpec(kind="memory_patch", title="P — Notes — s1", body="- b", project="P",
+                          scope="project", requires_user_review=True, evidence="y", confidence="high")
+    writer.upsert_exact(spec2)
+    meta = frontmatter.loads(first.path.read_text(encoding="utf-8")).metadata
+    assert meta["scope"] == "project"
+    assert meta["requires_user_review"] is True
+    assert meta["evidence"] == "y" and meta["confidence"] == "high"

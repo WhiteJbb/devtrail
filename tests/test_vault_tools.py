@@ -340,40 +340,6 @@ def test_write_session_process_rerecord_revives_needs_distill(tmp_path):
     assert post.metadata["distill_kinds"] == ["knowledge", "blog_idea"]
 
 
-def test_write_session_process_rerecord_preserves_context_sections(tmp_path):
-    """재기록이 본문을 교체해도 Context Questions/Recovery 섹션은 보존돼야 한다.
-
-    Recovery에는 사람이 Telegram으로 직접 답한 맥락이 들어 있다 — 재기록으로
-    지워지면 복구 불가능한 데이터 손실이다.
-    """
-    settings = _settings(tmp_path)
-    first = vault_tools.write_session_process(
-        project="Devtrail", what_changed="1차", files_touched="x", project_decisions={},
-        implementation_trace="x", agent_execution_notes={}, docs_update_candidates="",
-        next_session="", learning_recovery={}, session_id="sess-ctx", settings=settings,
-    )
-    # nightly 질문 생성 + 사람 답변이 쌓인 상태를 재현
-    note_path = tmp_path / first.worklog_rel_path
-    post = frontmatter.loads(note_path.read_text(encoding="utf-8"))
-    post.content += (
-        "\n\n## Context Questions\n\n- [x] [WHY] pi-metrics를 재시작한 이유는?\n"
-        "\n## Context Recovery\n\n- **[WHY] pi-metrics를 재시작한 이유는?** (2026-08-25) — 포트 충돌 해소\n"
-    )
-    note_path.write_text(frontmatter.dumps(post), encoding="utf-8")
-
-    vault_tools.write_session_process(
-        project="Devtrail", what_changed="2차 — 커밋 추가", files_touched="x",
-        project_decisions={}, implementation_trace="x", agent_execution_notes={},
-        docs_update_candidates="", next_session="", learning_recovery={},
-        session_id="sess-ctx", settings=settings,
-    )
-    content = frontmatter.loads(note_path.read_text(encoding="utf-8")).content
-    assert "2차 — 커밋 추가" in content
-    assert "## Context Questions" in content
-    assert "## Context Recovery" in content
-    assert "포트 충돌 해소" in content
-
-
 def test_write_session_process_memory_patch_updated_for_same_session(tmp_path):
     """같은 세션(같은 날·같은 프로젝트)의 재기록은 patch를 갱신해야 한다.
 
@@ -967,40 +933,12 @@ def test_briefing_no_warning_without_updated_at(tmp_path):
     assert "Context 신선도 경고" not in briefing.text
 
 
-def test_briefing_reminds_plan_when_none_today(tmp_path):
+def test_briefing_has_no_plan_reminder(tmp_path):
+    """Plan 요구는 뺐다(2026-10-18) — Process 생명주기 안내만 남는다."""
     _write_project_context(tmp_path, "Devtrail", "배경")
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
-    assert "write_work_plan" in briefing.text
-
-
-def test_briefing_plan_reminder_follows_repo_plan_check_hook(tmp_path):
-    vault = tmp_path / "vault"
-    _write_project_context(vault, "Devtrail", "배경")
-    repo = tmp_path / "repo"
-    (repo / ".claude").mkdir(parents=True)
-    (repo / ".claude" / "vault.json").write_text('{"project": "Devtrail"}', encoding="utf-8")
-
-    briefing = vault_tools.get_project_briefing(str(repo), settings=_settings(vault))
     assert "write_work_plan" not in briefing.text
-    # 생명주기 안내는 훅 유무와 무관하게 항상 들어간다
     assert "write_session_process" in briefing.text
-
-    (repo / ".claude" / "settings.json").write_text(
-        '{"hooks": {"PreToolUse": [{"hooks": [{"command": "sh run-hook.sh plan-check"}]}]}}', encoding="utf-8"
-    )
-    briefing = vault_tools.get_project_briefing(str(repo), settings=_settings(vault))
-    assert "write_work_plan" in briefing.text
-
-
-def test_briefing_no_plan_reminder_when_todays_plan_exists(tmp_path):
-    from datetime import datetime
-    _write_project_context(tmp_path, "Devtrail", "배경")
-    vault_tools.write_work_plan(
-        project="Devtrail", goal="g", context_read="c", scope="s",
-        approach="a", risks="r", session_id="sess-1", settings=_settings(tmp_path),
-    )
-    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
-    assert "write_work_plan" not in briefing.text
 
 
 # ── briefing AgentMemory 우선순위 (사용 흐름 개선) ───────────────────────────
@@ -1077,13 +1015,14 @@ def test_briefing_includes_promoted_decisions(tmp_path):
     assert "30_Projects/Devtrail/Decisions/캐시-전략-결정.md" in briefing.source_refs
 
 
-def test_briefing_tags_candidate_decisions_as_pending(tmp_path):
+def test_briefing_lists_candidate_decisions_without_review_label(tmp_path):
+    """후보 결정도 briefing에 들어가되 '검토 대기' 꼬리표는 없다 — 검토하는 사람이 없다(2026-10-18)."""
     _write_project_context(tmp_path, "Devtrail", "배경")
     _write(tmp_path, "60_Candidates/Decisions/미검토-결정.md", body="후보 본문", title="미검토 결정", project="Devtrail")
 
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
     assert "미검토 결정" in briefing.text
-    assert "검토 대기" in briefing.text
+    assert "검토 대기" not in briefing.text
 
 
 # ── 같은 세션 재기록 = 갱신 (산출물 품질 개선) ───────────────────────────────

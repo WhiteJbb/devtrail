@@ -1143,13 +1143,6 @@ def push_digest(
                 lines.append(f"  · ... +{len(items) - 3}개")
             lines.append("")
 
-        if daily:
-            from app.services.review_question import format_review_block
-
-            review_block = format_review_block(Path(settings.obsidian_vault_root))
-            if review_block:
-                lines.append(review_block)
-                lines.append("")
     else:
         # 기본 동작: BlogIdea 목록
         blog_ideas = [c for c in all_candidates if c.kind == "blog_idea"]

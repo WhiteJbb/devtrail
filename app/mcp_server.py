@@ -43,8 +43,8 @@ def _write_session_marker(
 ) -> None:
     """이 프로세스 전용 마커를 갱신한다. None인 필드는 기존 값을 보존한다.
 
-    process_written은 Stop 훅(stop-process-check)이, plan_written은 PreToolUse
-    훅(plan-check)이 같은 repo의 live MCP 프로세스가 하나일 때만 읽는다.
+    process_written은 Stop 훅(stop-process-check)이 같은 repo의 live MCP 프로세스가
+    하나일 때만 읽는다. plan_written은 write_work_plan 호출 여부 기록(훅은 더 안 읽는다).
     """
     with _MARKER_LOCK:
         marker = _session_marker_path()
@@ -72,10 +72,9 @@ def _touch_session_marker() -> None:
     """tool이 실제로 호출됐을 때 마커를 만든다 — "이 세션에 MCP가 살아 있다"의 증거.
 
     서버 기동만으로 쓰면 안 되는 이유: `claude mcp list`(devtrail doctor가 내부에서
-    부른다)의 헬스체크는 서버를 띄웠다 **즉시 닫는다**. 그 탐침이 남긴
-    plan_written=false 마커를 plan-check 훅이 "이번 세션에 MCP가 연결됐다"로 읽으면,
-    MCP tool이 없는 세션이 12시간 동안 코드 수정을 차단당한다 — write_work_plan을
-    호출할 수단이 없으므로 빠져나갈 방법이 없는 교착이다(2026-09-07 실제 발생).
+    부른다)의 헬스체크는 서버를 띄웠다 **즉시 닫는다**. 그 탐침이 남긴 마커를 훅이
+    "이번 세션에 MCP가 연결됐다"로 읽으면 MCP tool이 없는 세션이 훅 판정에 갇힌다
+    (2026-09-07 plan-check에서 실제 발생 — 그 훅은 뺐지만 Stop 훅도 같은 마커를 읽는다).
 
     탐침은 tool을 호출하지 않으므로, 호출 시점으로 미루면 라이브 세션만 마커를 남긴다.
     마커는 MCP 프로세스별 파일이다. 훅은 repo 안에 최근 갱신된 live MCP marker가
@@ -285,6 +284,8 @@ def write_session_process(
     project_decisions: {decision, reason, alternatives, final_judge}
     agent_execution_notes: {blocked, mistakes, next_checks, better_approach,
         evidence, scope, confidence, requires_user_review}
+        scope는 교훈의 적용 범위 — "project"(기본) 또는 "global"(모든 프로젝트에 통할 때만).
+        작업 범위 설명을 넣는 칸이 아니다.
     learning_recovery: {ai_led, unclear_concepts, questions, related_candidates}
 
     여러 항목이 있는 필드는 한 문단으로 잇지 말고 markdown 불릿/번호 리스트로
@@ -336,15 +337,14 @@ def write_session_process(
     if learning_recovery is not None and vault_tools.learning_recovery_is_blank(learning_recovery):
         payload = {**payload, "warnings": [*payload.get("warnings", []),
             "learning_recovery가 비어 있습니다. AI가 주도한 부분·이해 못 한 개념·직접 설명해볼 질문을 "
-            "채우면 digest 복습 질문으로 돌아옵니다."]}
+            "채우면 세션 기록에 남습니다."]}
     return payload
 
 
 def main() -> None:
     # 마커는 여기서 쓰지 않는다. 기동만으로 쓰면 `claude mcp list`의 헬스체크(서버를
-    # 띄웠다 즉시 닫는다)까지 라이브 세션으로 기록돼, MCP tool이 없는 세션이 plan-check
-    # 훅에 갇힌다 — 자세한 이유는 _touch_session_marker() 참고. 마커는 첫 tool 호출이
-    # 만든다.
+    # 띄웠다 즉시 닫는다)까지 라이브 세션으로 기록돼, MCP tool이 없는 세션이 훅 판정에
+    # 갇힌다 — 자세한 이유는 _touch_session_marker() 참고. 마커는 첫 tool 호출이 만든다.
     mcp.run(transport="stdio")
 
 
