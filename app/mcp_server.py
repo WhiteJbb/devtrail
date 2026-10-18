@@ -285,6 +285,8 @@ def write_session_process(
     project_decisions: {decision, reason, alternatives, final_judge}
     agent_execution_notes: {blocked, mistakes, next_checks, better_approach,
         evidence, scope, confidence, requires_user_review}
+        scope는 교훈의 적용 범위 — "project"(기본) 또는 "global"(모든 프로젝트에 통할 때만).
+        작업 범위 설명을 넣는 칸이 아니다.
     learning_recovery: {ai_led, unclear_concepts, questions, related_candidates}
 
     여러 항목이 있는 필드는 한 문단으로 잇지 말고 markdown 불릿/번호 리스트로

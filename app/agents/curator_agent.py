@@ -241,13 +241,16 @@ class CuratorAgent:
             remainder = "\n".join(body_lines[1:]).strip()
             if remainder:
                 patch_body = remainder
-        scope = str(metadata.get("scope") or "global").strip().lower()
+        scope = str(metadata.get("scope") or "").strip().lower()
         project = str(metadata.get("project") or "").strip()
         if scope == "project" and not project:
             raise ValueError("project scope memory patch requires project metadata")
-        patch_scope = {"scope": "project", "project": project} if scope == "project" else {
-            "scope": "global", "project": ""
-        }
+        # 프로젝트가 있으면 project가 기본이다. 자유 문장 scope("README 문서만")가
+        # global로 흘러 다른 프로젝트 briefing을 오염시킨 일(2026-10-18)의 재발 방지.
+        if scope == "global" or not project:
+            patch_scope = {"scope": "global", "project": ""}
+        else:
+            patch_scope = {"scope": "project", "project": project}
         marker = json.dumps(patch_scope, ensure_ascii=False)
         append_text = (
             f"\n\n<!-- devtrail-memory-patch: {marker} -->\n"
