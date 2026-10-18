@@ -20,6 +20,10 @@ from app.services.task_service import DONE_DIR
 from app.services.wiki_service import WikiNote, WikiService
 
 _WEEKLY_LOOKBACK_DAYS = 7
+# 후보가 이 일수만큼 조용하면(마지막 갱신 기준) nightly가 공식 영역으로 승격한다.
+# ponytail: 20_Knowledge에 같은 주제가 날짜만 다르게 쌓이면 이 값을 늘린다.
+_PROMOTE_AFTER_DAYS = 2
+_AUTO_PROMOTE_KINDS = ("knowledge", "decision", "problem")
 # 번호 목록(1. / 1))과 불릿(-) 항목 — 내용이 있는 것만
 _LIST_ITEM_RE = re.compile(r"^(?:\d+[.)]|-)\s+(.*\S)")
 
@@ -34,7 +38,7 @@ class NightlyDistillResult:
     sent_telegram: bool
     expired_candidates: list[str] = field(default_factory=list)  # TTL 삭제
     archived_candidates: list[str] = field(default_factory=list)  # TTL 아카이브
-    auto_applied_patches: list[str] = field(default_factory=list)  # 저위험 패치 자동 반영
+    auto_applied_patches: list[str] = field(default_factory=list)  # 자동 반영(교훈 패치) + 자동 승격
 
 
 class NightlyDistillAgent:
@@ -72,9 +76,9 @@ class NightlyDistillAgent:
 
         expired, archived = cleanup_candidates(self.vault_dir, now=self.now)
 
-        # 저위험 패치 자동 반영 — requires_user_review=False로 명시된 것만.
-        # Lessons/OpenLoops는 append 전용이라 오염 반경이 작아 검토 게이트를 생략한다.
-        auto_applied = self._auto_apply_low_risk_patches()
+        # 사람 검토 게이트는 없다(2026-10-18 결정: 사람은 보기만 한다). 교훈 패치는 바로
+        # 반영하고, 지식·결정·문제 후보는 며칠 조용하면 공식 영역으로 올린다.
+        auto_applied = self._auto_apply_patches() + self._auto_promote()
 
         digest_text = self._build_digest(
             distill_result,
@@ -111,8 +115,11 @@ class NightlyDistillAgent:
             auto_applied_patches=auto_applied,
         )
 
-    def _auto_apply_low_risk_patches(self) -> list[str]:
-        """requires_user_review=False인 MemoryPatch 후보를 대상 파일에 자동 반영한다."""
+    def _auto_apply_patches(self) -> list[str]:
+        """status=candidate인 MemoryPatch 후보를 전부 대상 파일에 자동 반영한다.
+
+        requires_user_review는 기록으로만 남는다 — 검토할 사람이 없는 게이트는 적체만 만들었다.
+        """
         patches_dir = self.vault_dir / "60_Candidates" / "MemoryPatches"
         if not patches_dir.exists():
             return []
@@ -129,8 +136,6 @@ class NightlyDistillAgent:
             meta = post.metadata
             if str(meta.get("status", "") or "").strip().lower() != "candidate":
                 continue
-            if meta.get("requires_user_review", True):
-                continue
             rel = str(md_path.relative_to(self.vault_dir)).replace("\\", "/")
             try:
                 result = curator.apply_memory_patch(rel)
@@ -138,6 +143,35 @@ class NightlyDistillAgent:
             except Exception:
                 continue  # 개별 패치 실패가 nightly 전체를 막지 않는다
         return applied
+
+    def _auto_promote(self) -> list[str]:
+        """지식·결정·문제 후보를 공식 영역(20_Knowledge/, 30_Projects/<P>/)으로 승격한다.
+
+        마지막 갱신 뒤 _PROMOTE_AFTER_DAYS가 지난 후보만 — 그 안에는 distill dedup이 같은 주제를
+        기존 후보에 합치므로, 바로 올리면 같은 지식이 날짜만 다르게 두 번 승격된다.
+        """
+        from datetime import timedelta
+        from app.agents.curator_agent import CuratorAgent
+
+        curator = CuratorAgent(settings=self.settings, now=self.now)
+        cutoff = ((self.now or datetime.now()) - timedelta(days=_PROMOTE_AFTER_DAYS)).strftime("%Y-%m-%d")
+        promoted: list[str] = []
+        for item in curator.list_candidates():
+            if item.kind not in _AUTO_PROMOTE_KINDS:
+                continue
+            try:
+                meta = frontmatter.loads((self.vault_dir / item.rel_path).read_text(encoding="utf-8")).metadata
+            except Exception:
+                continue
+            last = str(meta.get("updated_at") or item.created_at or "")[:10]
+            if not last or last > cutoff:
+                continue
+            try:
+                result = curator.promote_candidate(item.rel_path)
+                promoted.append(f"{item.rel_path} → {result.promoted_path}")
+            except Exception:
+                continue  # 개별 승격 실패가 nightly 전체를 막지 않는다
+        return promoted
 
     # ── Digest 빌더 ──────────────────────────────────────────────────────────
 
@@ -265,7 +299,7 @@ class NightlyDistillAgent:
             lines.append("")
 
         if auto_applied:
-            lines += ["## 자동 반영된 교훈 (검토 불필요 패치)", ""]
+            lines += ["## 자동 반영 (교훈 패치 · 후보 승격)", ""]
             for entry in auto_applied:
                 lines.append(f"- {entry}")
             lines.append("")

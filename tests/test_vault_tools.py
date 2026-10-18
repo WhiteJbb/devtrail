@@ -1015,13 +1015,14 @@ def test_briefing_includes_promoted_decisions(tmp_path):
     assert "30_Projects/Devtrail/Decisions/캐시-전략-결정.md" in briefing.source_refs
 
 
-def test_briefing_tags_candidate_decisions_as_pending(tmp_path):
+def test_briefing_lists_candidate_decisions_without_review_label(tmp_path):
+    """후보 결정도 briefing에 들어가되 '검토 대기' 꼬리표는 없다 — 검토하는 사람이 없다(2026-10-18)."""
     _write_project_context(tmp_path, "Devtrail", "배경")
     _write(tmp_path, "60_Candidates/Decisions/미검토-결정.md", body="후보 본문", title="미검토 결정", project="Devtrail")
 
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
     assert "미검토 결정" in briefing.text
-    assert "검토 대기" in briefing.text
+    assert "검토 대기" not in briefing.text
 
 
 # ── 같은 세션 재기록 = 갱신 (산출물 품질 개선) ───────────────────────────────
