@@ -217,7 +217,7 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `30_Projects/<P>/Design/` | IA · UserScenarios · Personas | 사람과 협의 후 작성 |
 | `30_Projects/<P>/Conversations/` | 중요한 대화 발췌 | 사람 요청 시 기록 |
 | `30_Projects/<P>/PromptLog.md` | 중요 프롬프트 원문 | append 허용 |
-| `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈). 단 `05_OpenLoops.md`는 `update_open_loops`(MCP)로 에이전트가 자기 프로젝트 블록을 고친다 — 작업 목록은 낡는 비용이 더 크다 (2026-10-17) |
+| `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈). 단 `05_OpenLoops.md`는 `update_open_loops`(MCP)로 에이전트가 자기 프로젝트 블록을 고친다 — 작업 목록은 낡는 비용이 더 크다 (2026-10-17). `01_CurrentFocus`·`05_OpenLoops`·`06_Lessons`는 `<!-- devtrail-memory-patch: {"scope": "project", "project": "<P>"} -->` 마커 아래 블록이 그 프로젝트 briefing에만 들어간다 — 마커 앞은 전역 (2026-10-18) |
 | `50_Outputs/` | Digest · WeeklyReview · Blog · Resume · Portfolio · Interview · Todo | 읽기 전용 |
 | `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어·문제 후보 | AI가 생성. **사람 검토 게이트 없음(2026-10-18)** — memory_patch는 매일 자동 반영, knowledge/decision/problem은 2일 조용하면 자동 승격, career_bullet/blog_idea는 소재로 남는다. 사람은 보기만 한다 |
 | `60_Candidates/SessionHandoffs/<P>/` | 세션별 Plan/Process | `write_work_plan`/`write_session_process` 전용. promote 대상 아님 |

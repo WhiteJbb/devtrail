@@ -22,6 +22,13 @@ _AGENT_MEMORY_FILES = [
 ]
 
 _MAX_FILE_CHARS = 2000
+# 마커 아래 블록을 프로젝트별로 거르는 파일. 마커 앞부분은 전역. CurrentFocus는 사람이 쓰지만
+# 한 프로젝트 얘기(Devtrail 완성)가 다른 repo 세션에 최우선 관심사로 들어가 잡음이었다(2026-10-18).
+_PROJECT_SCOPED_FILES = (
+    "40_AgentMemory/01_CurrentFocus.md",
+    "40_AgentMemory/05_OpenLoops.md",
+    "40_AgentMemory/06_Lessons.md",
+)
 _PROJECT_PATCH_MARKER = re.compile(r"(?m)^<!-- devtrail-memory-patch: (.+) -->\s*$")
 
 
@@ -89,7 +96,7 @@ class AgentMemoryLoader:
         if not body:
             return None
 
-        if rel in ("40_AgentMemory/05_OpenLoops.md", "40_AgentMemory/06_Lessons.md"):
+        if rel in _PROJECT_SCOPED_FILES:
             body = self._filter_project_patches(body, project)
             if not body.strip():
                 return None

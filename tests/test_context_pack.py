@@ -268,3 +268,19 @@ def test_context_pack_excludes_scoped_agent_memory_from_related_notes(tmp_path):
 
     assert "SECRET_A_PROJECT_FACT" not in pack.agent_memory_section
     assert "SECRET_A_PROJECT_FACT" not in pack.relevant_notes_section
+
+
+def test_current_focus_project_block_only_loads_for_matching_project(tmp_path):
+    """CurrentFocus도 마커 아래 프로젝트 블록은 그 프로젝트 세션에만 들어간다. 마커 앞은 전역."""
+    mem = tmp_path / "40_AgentMemory"
+    mem.mkdir(parents=True)
+    (mem / "01_CurrentFocus.md").write_text(
+        "# CurrentFocus\n\n## 공통\n- 전역 원칙\n\n"
+        '<!-- devtrail-memory-patch: {"scope":"project","project":"Alpha"} -->\n### Alpha 완성\n- alpha-only\n',
+        encoding="utf-8",
+    )
+    loader = AgentMemoryLoader(tmp_path)
+    alpha = loader.load(project="Alpha").render()
+    beta = loader.load(project="Beta").render()
+    assert "alpha-only" in alpha and "전역 원칙" in alpha
+    assert "alpha-only" not in beta and "전역 원칙" in beta
