@@ -1,78 +1,9 @@
-"""학습 회수 루프 통합 — /answer 커맨드 · 세션 노트 렌더 정규화."""
+"""세션 노트 Learning Recovery 렌더 정규화 · /topics 라우터."""
 
 from pathlib import Path
 
 from app.messaging.router import CommandRouter
 from app.vault_tools import _render_process_body
-
-
-# ── /answer 커맨드 ───────────────────────────────────────────────────────────
-
-
-_LR_BODY = (
-    "## Learning Recovery\n\n"
-    "### 내가 아직 완전히 이해하지 못한 개념\n- 개념 X\n\n"
-    "### 다음에 직접 설명해봐야 할 질문\n"
-    "1. 라우터가 답을 기록하는가?\n"
-)
-
-
-def _setup_vault(tmp_path, monkeypatch):
-    session = tmp_path / "10_Worklog" / "Sessions" / "2026-07-05-s.md"
-    session.parent.mkdir(parents=True, exist_ok=True)
-    session.write_text(
-        f"---\nproject: Devtrail\ncreated_at: 2026-07-05T09:00:00\n---\n\n{_LR_BODY}\n",
-        encoding="utf-8",
-    )
-    from app.config import get_settings
-
-    monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
-    monkeypatch.setenv("LLM_PROVIDER", "")
-    monkeypatch.setenv("MESSENGER_PROVIDER", "")
-    get_settings.cache_clear()
-    return session
-
-
-def test_answer_without_arg_shows_current_question(tmp_path, monkeypatch):
-    _setup_vault(tmp_path, monkeypatch)
-    reply = CommandRouter().handle("/answer")
-    assert "라우터가 답을 기록하는가?" in reply
-    assert "/answer" in reply
-
-
-def test_answer_records_and_reports_done(tmp_path, monkeypatch):
-    session = _setup_vault(tmp_path, monkeypatch)
-    reply = CommandRouter().handle("/answer 라우터는 mark_answered로 세션 노트에 기록한다")
-    assert "기록해뒀어요" in reply
-    assert "모두 정리했어요" in reply  # 질문이 1개뿐이라 다음 질문 없음
-
-    content = session.read_text(encoding="utf-8")
-    assert "답변(" in content
-    assert "mark_answered로 세션 노트에 기록한다" in content
-
-
-def test_briefing_shows_learning_questions_only_for_own_project(tmp_path, monkeypatch):
-    from app.vault_tools import get_project_briefing
-
-    _setup_vault(tmp_path, monkeypatch)
-    for project in ("Devtrail", "Other"):
-        ctx = tmp_path / "30_Projects" / project / "Context.md"
-        ctx.parent.mkdir(parents=True)
-        ctx.write_text(f"# {project}\n\n배경\n", encoding="utf-8")
-
-    assert "라우터가 답을 기록하는가?" in get_project_briefing("Devtrail").text
-    assert "라우터가 답을 기록하는가?" not in get_project_briefing("Other").text
-
-
-def test_answer_with_no_questions(tmp_path, monkeypatch):
-    from app.config import get_settings
-
-    monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
-    monkeypatch.setenv("LLM_PROVIDER", "")
-    monkeypatch.setenv("MESSENGER_PROVIDER", "")
-    get_settings.cache_clear()
-    reply = CommandRouter().handle("/answer 아무말")
-    assert "답할 학습 질문이 없어요" in reply
 
 
 # ── 세션 노트 Learning Recovery 렌더 정규화 ──────────────────────────────────

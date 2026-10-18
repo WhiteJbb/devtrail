@@ -307,13 +307,7 @@ def _update_worklog_note(vault_dir: Path, session_id: str, project: str, body: s
         post.metadata["needs_distill"] = True
         post.metadata["career_distilled"] = False
         post.metadata.setdefault("distill_kinds", ["knowledge", "blog_idea"])
-        # 본문 교체 시 Context Questions/Recovery는 이 함수 밖(질문 파이프라인·사람 답변)에서
-        # 쌓인 기록이므로 떼어뒀다가 다시 붙인다 — 안 그러면 재기록이 답변을 지운다.
-        from app.services.context_question import extract_context_sections
-
-        preserved = extract_context_sections(post.content)
-        tail = f"\n{preserved}\n" if preserved else ""
-        post.content = f"{title_line}\n\n{body.strip()}\n{tail}"
+        post.content = f"{title_line}\n\n{body.strip()}\n"
         atomic_write_text(md_path, frontmatter.dumps(post))
         return str(md_path.relative_to(vault_dir)).replace("\\", "/")
     return None
@@ -820,25 +814,6 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
             for d in recent_decisions
         ]
         sections.append("## Recent Decisions\n\n" + _truncate("\n".join(decision_lines)))
-
-    # 미해결 학습 질문 — Learning Recovery 루프를 세션 시작 시점에 노출한다.
-    # AI가 답을 대신 말해버리면 학습 회수가 안 되므로 지시문을 함께 넣는다.
-    try:
-        from app.services.review_question import list_questions
-
-        unanswered = [q for q in list_questions(vault_dir) if not q.answered]
-        # 다른 프로젝트의 질문으로 폴백하지 않는다 — 무관한 주제가 매 세션 주입된다.
-        scoped = [q for q in unanswered if q.project.lower() == resolved_project.lower()]
-        if scoped:
-            question_lines = "\n".join(f"- {q.question} ({q.source_rel_path})" for q in scoped[:3])
-            sections.append(
-                "## 미해결 학습 질문 (Learning Recovery)\n\n"
-                "작업 중 아래 주제를 다루게 되면 답을 대신 설명하지 말고, 사용자가 직접 "
-                "설명해보도록 권한다. 사용자가 설명하면 맞는지 확인해주고, 세션 기록의 "
-                "해당 질문에 답변이 기록되도록 안내한다.\n\n" + question_lines
-            )
-    except Exception:
-        pass
 
     plans = [h for h in handoffs if h["handoff_type"] == "plan"]
     processes = sorted(
