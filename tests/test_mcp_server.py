@@ -270,3 +270,11 @@ def test_update_open_loops_tool_edits_vault_file(vault_env, monkeypatch):
     result = update_open_loops(project="Devtrail", add=["Stop 훅 fallback 실효 확인 (#78)"], section="실효 확인")
     assert result["added"] and result["resolved"] == [] and "warnings" not in result
     assert "Stop 훅 fallback" in (vault_env / "40_AgentMemory" / "05_OpenLoops.md").read_text(encoding="utf-8")
+
+
+def test_server_instructions_name_read_tools(vault_env, monkeypatch):
+    """서버 instructions는 클라이언트 시스템 프롬프트에 주입된다 — 읽기 도구 트리거가 들어 있어야 한다."""
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    text = mod.mcp.instructions or ""
+    for name in ("get_known_problems", "get_decisions", "search_vault", "get_recent_sessions"):
+        assert name in text
