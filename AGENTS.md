@@ -21,6 +21,20 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 - 제품 방향: `docs/final.md`, 구현 실측 대비 검토: `docs/final-review.md`
 - 진행 중 개선 항목: `docs/devtrail-improvement-roadmap.md`
 
+## 개발 트리와 런타임 트리 (이 Mac)
+
+| 트리 | 경로 | 역할 |
+|------|------|------|
+| 개발 | `/Users/user/devtrail` | 브랜치 작업·테스트. 여기서 브랜치를 바꿔도 운영에 영향 없다 |
+| 런타임 | `/Users/user/devtrail-runtime` | `main` 전용 클론 + 자체 `.venv`·`.env`·`logs/`. launchd 7개 잡, 모든 repo의 MCP `devtrail-vault` command, nightshift·rpg 훅이 이걸 쓴다 |
+
+2026-10-18에 분리했다. 전에는 한 트리였고, 살아 있는 MCP 서버가 작업 트리의 브랜치 전환·모듈 삭제를
+그대로 읽어 세션 중 깨졌다(`60_Candidates/Problems/살아 있는 MCP 서버가…`). 런타임은
+`com.devtrail.update`(10분)가 `main`을 ff-only pull하므로 `main`에 머지하면 10분 안에 반영된다.
+launchd 재등록은 `bash /Users/user/devtrail-runtime/scripts/mac/register-schedules.sh`(템플릿의
+`__REPO_ROOT__`가 스크립트 위치로 채워진다). 런타임 트리에서 직접 편집하지 않는다.
+이 repo 자체의 `.claude/settings.json` 훅은 상대 경로라 개발 트리의 훅 코드를 실행한다 — 훅 개발용.
+
 ## 아키텍처 지도
 
 | 경로 | 역할 |
