@@ -1466,7 +1466,9 @@ def _write_session_process_unlocked(
                 body="\n".join(lesson_lines) + "\n",
                 project=project,
                 evidence=str(notes.get("evidence", "")),
-                scope=str(notes.get("scope", "project")),
+                # 에이전트가 scope에 작업 범위 문장을 넣는 일이 잦다("README 문서만") —
+                # 정확히 global이라고 한 것만 global, 나머지는 전부 project로 본다.
+                scope="global" if str(notes.get("scope", "")).strip().lower() == "global" else "project",
                 confidence=str(notes.get("confidence", "unspecified")),
                 requires_user_review=bool(notes.get("requires_user_review", True)),
                 source_refs=[process_result.rel_path],

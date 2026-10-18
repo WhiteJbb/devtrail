@@ -376,3 +376,20 @@ def test_promote_career_bullet_goes_to_career_outputs_not_knowledge(tmp_path):
     assert result.promoted_path == "50_Outputs/Career/이력서 불릿 후보.md"
     assert (tmp_path / result.promoted_path).exists()
     assert not (tmp_path / "20_Knowledge" / "이력서 불릿 후보.md").exists()
+
+
+def test_apply_memory_patch_free_text_scope_is_project(tmp_path):
+    """scope에 작업 범위 문장이 들어와도 project가 있으면 project 블록으로 간다."""
+    target = "40_AgentMemory/06_Lessons.md"
+    (tmp_path / "40_AgentMemory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / target).write_text("# Lessons\n", encoding="utf-8")
+    cand = tmp_path / "60_Candidates" / "MemoryPatches" / "p.md"
+    cand.parent.mkdir(parents=True, exist_ok=True)
+    cand.write_text(
+        "---\ncandidate_type: memory_patch\nproject: nightshift\nscope: README 문서만, 코드 변경 없음\n"
+        f"target_file: {target}\nstatus: candidate\n---\n- 교훈\n",
+        encoding="utf-8",
+    )
+    CuratorAgent(settings=_settings(tmp_path)).apply_memory_patch("60_Candidates/MemoryPatches/p.md")
+    text = (tmp_path / target).read_text(encoding="utf-8")
+    assert '{"scope": "project", "project": "nightshift"}' in text

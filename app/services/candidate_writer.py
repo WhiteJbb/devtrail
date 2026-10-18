@@ -379,6 +379,13 @@ class CandidateWriter:
         new_summary = spec.summary or self._derive_summary(spec.body)
         if new_summary:
             existing.metadata["summary"] = new_summary
+        if spec.kind == "memory_patch":
+            # 판정에 쓰이는 메타는 첫 기록 값이 아니라 마지막 기록 값이어야 한다 —
+            # 세션이 scope/requires_user_review를 고쳐 다시 기록해도 반영되지 않던 구멍.
+            existing.metadata["evidence"] = spec.evidence
+            existing.metadata["scope"] = spec.scope
+            existing.metadata["confidence"] = spec.confidence
+            existing.metadata["requires_user_review"] = spec.requires_user_review
         existing.content = self._render_body(spec)
         atomic_write_text(path, frontmatter.dumps(existing))
 
