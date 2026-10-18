@@ -933,40 +933,12 @@ def test_briefing_no_warning_without_updated_at(tmp_path):
     assert "Context 신선도 경고" not in briefing.text
 
 
-def test_briefing_reminds_plan_when_none_today(tmp_path):
+def test_briefing_has_no_plan_reminder(tmp_path):
+    """Plan 요구는 뺐다(2026-10-18) — Process 생명주기 안내만 남는다."""
     _write_project_context(tmp_path, "Devtrail", "배경")
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
-    assert "write_work_plan" in briefing.text
-
-
-def test_briefing_plan_reminder_follows_repo_plan_check_hook(tmp_path):
-    vault = tmp_path / "vault"
-    _write_project_context(vault, "Devtrail", "배경")
-    repo = tmp_path / "repo"
-    (repo / ".claude").mkdir(parents=True)
-    (repo / ".claude" / "vault.json").write_text('{"project": "Devtrail"}', encoding="utf-8")
-
-    briefing = vault_tools.get_project_briefing(str(repo), settings=_settings(vault))
     assert "write_work_plan" not in briefing.text
-    # 생명주기 안내는 훅 유무와 무관하게 항상 들어간다
     assert "write_session_process" in briefing.text
-
-    (repo / ".claude" / "settings.json").write_text(
-        '{"hooks": {"PreToolUse": [{"hooks": [{"command": "sh run-hook.sh plan-check"}]}]}}', encoding="utf-8"
-    )
-    briefing = vault_tools.get_project_briefing(str(repo), settings=_settings(vault))
-    assert "write_work_plan" in briefing.text
-
-
-def test_briefing_no_plan_reminder_when_todays_plan_exists(tmp_path):
-    from datetime import datetime
-    _write_project_context(tmp_path, "Devtrail", "배경")
-    vault_tools.write_work_plan(
-        project="Devtrail", goal="g", context_read="c", scope="s",
-        approach="a", risks="r", session_id="sess-1", settings=_settings(tmp_path),
-    )
-    briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
-    assert "write_work_plan" not in briefing.text
 
 
 # ── briefing AgentMemory 우선순위 (사용 흐름 개선) ───────────────────────────

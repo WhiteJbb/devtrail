@@ -696,17 +696,6 @@ def update_open_loops(
     return OpenLoopsUpdate(rel_path=_OPEN_LOOPS_REL, added=[l[2:] for l in new], resolved=resolved, not_found=not_found)
 
 
-def _repo_enforces_plan(repo_dir: Path) -> bool:
-    """repo의 Claude Code 설정에 plan-check 훅이 걸려 있는지 본다."""
-    for name in ("settings.json", "settings.local.json"):
-        try:
-            if "plan-check" in (repo_dir / ".claude" / name).read_text(encoding="utf-8"):
-                return True
-        except OSError:
-            continue
-    return False
-
-
 def get_project_briefing(project_or_repo: str, settings: Settings | None = None) -> ProjectBriefing:
     """세션 시작 시 프로젝트 컨텍스트/최근 handoff/decision/open loops를 반환한다.
 
@@ -718,12 +707,8 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
 
     candidate_path = Path(project_or_repo)
     explicit_project = ""
-    # repo를 모르면(프로젝트명 호출) 기존대로 리마인더를 낸다. repo를 알면 plan-check
-    # 훅이 걸린 곳에서만 낸다 — 훅 없는 repo에 Plan을 요구하면 매 세션 잡음이다.
-    plan_reminder = True
     if candidate_path.exists() and candidate_path.is_dir():
         explicit_project = _load_project_config(candidate_path)
-        plan_reminder = _repo_enforces_plan(candidate_path)
 
     resolved_project = explicit_project
     if not resolved_project:
@@ -881,17 +866,11 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
 
     # 생명주기 안내는 항상 넣는다 — Devtrail 외 repo는 CLAUDE.md에 이 지시가 없어
     # briefing이 유일한 통로다 (2026-10-14 nightshift 세션이 기록 0건으로 끝난 원인).
-    # 오늘 Plan이 아직 없으면 Plan 리마인더도 — 사후 "미짝 Plan 경고"의 대칭.
-    today = datetime.now().strftime("%Y-%m-%d")
-    has_todays_plan = any(p["created_at"][:10] == today for p in plans)
-    reminders = []
-    if plan_reminder and not has_todays_plan:
-        reminders.append("구현을 시작하기 전에 `write_work_plan`으로 이 세션의 Plan을 먼저 기록하세요.")
-    reminders.append(
-        "세션을 마치기 전(컴팩팅 전 포함)에 `write_session_process`로 이 세션의 Process를 기록하세요. "
-        "커밋이나 변경이 생긴 세션은 기록 없이 끝낼 수 없습니다."
+    # Plan 리마인더는 없다 — 어느 세션도 쓰지 않아 2026-10-18에 요구를 뺐다.
+    sections.append(
+        "## 리마인더\n\n- 세션을 마치기 전(컴팩팅 전 포함)에 `write_session_process`로 이 세션의 "
+        "Process를 기록하세요. 커밋이나 변경이 생긴 세션은 기록 없이 끝낼 수 없습니다."
     )
-    sections.append("## 리마인더\n\n" + "\n".join(f"- {r}" for r in reminders))
 
     # 인덱스 우선: 주입하지 않은 전문은 필요할 때 read_note로 조회
     unique_refs = list(dict.fromkeys(source_refs))
