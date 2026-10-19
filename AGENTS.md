@@ -165,11 +165,12 @@ Claude `session_id`별 시작 시각을 남기고(재시작·컴팩팅에도 처
 없는 세션(훅 설치 전부터 살아 있던 세션)만 통과한다. `.claude/` 아래 변경은 세션의 변경으로
 세지 않는다.
 
-Claude hook payload의 `session_id`와 MCP 서버 내부 session ID는 서로 다른 값이고,
-현재 MCP 설정에는 둘을 명시적으로 연결하는 경로가 없다. 따라서 같은 repo에서 Claude
-세션 여러 개가 각각 MCP 서버를 실행하면 live 마커가 여러 개가 되어 plan/stop enforcement가
-fail-open 된다. 동시 세션별 enforcement가 필요하면 MCP 설정에 명시적 session binding을
-추가해야 한다.
+Claude hook payload의 `session_id`와 MCP 서버 내부 session ID는 서로 다른 값이다. 둘을 잇는 열쇠는
+프로세스 트리다 — claude가 MCP 서버를 직접 spawn하므로 마커의 `parent_pid`가 claude pid고, 훅은
+claude → sh → python으로 내려오므로 자기 조상 pid에 그 값이 있다. Stop 훅은 live 마커 중 자기
+조상과 `parent_pid`가 맞는 것을 고른다(`live_mcp_marker_for_current_session`, 2026-10-19). 그래서
+같은 repo에서 세션 여러 개가 동시에 돌아도 자기 세션 기록만 본다. 매칭이 없으면(구 마커·조상 조회
+실패) 예전의 '정확히 하나일 때만' 판정으로 돈다.
 
 ### capture-session fallback (MCP 미연결 시)
 
