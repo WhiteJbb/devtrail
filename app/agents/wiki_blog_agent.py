@@ -96,7 +96,7 @@ class WikiBlogAgent:
         needle = sel.lower()
         matches = sorted(p.name for p in ideas_dir.glob("*.md") if needle in p.name.lower()) if ideas_dir.exists() else []
         if not matches:
-            raise ValueError(f"BlogIdea 후보를 찾지 못했습니다: {selector} (list-candidates로 확인하세요)")
+            raise ValueError(f"BlogIdea 후보를 찾지 못했습니다: {selector} (60_Candidates/BlogIdeas/에서 확인하세요)")
         if len(matches) > 1:
             listed = "\n".join(f"  - {_IDEAS_REL}/{name}" for name in matches)
             raise ValueError(f"'{selector}'에 해당하는 후보가 {len(matches)}개입니다. 하나를 지정하세요:\n{listed}")

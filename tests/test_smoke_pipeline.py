@@ -10,7 +10,7 @@ from datetime import datetime
 
 import pytest
 
-from app.agents.capture_agent import CaptureAgent
+from tests.conftest import MemoCapture
 from app.agents.curator_agent import CuratorAgent
 from app.agents.distill_agent import DistillAgent
 from app.config import Settings
@@ -64,7 +64,7 @@ def test_full_pipeline_capture_to_promote(tmp_path):
     now = datetime(2026, 6, 23, 9, 0, 0)
 
     # Step 1: capture — raw 메모 저장
-    capture_agent = CaptureAgent(settings=settings, now=now)
+    capture_agent = MemoCapture(settings=settings, now=now)
     cap_result = capture_agent.capture(
         text="LLM 라우터 task_type 기반 설계 완료. light/writer/long_writer/polish/local 분류.",
         project="devtrail",
@@ -110,7 +110,7 @@ def test_build_context_after_promote(tmp_path):
     now = datetime(2026, 6, 23, 9, 0, 0)
 
     # capture + distill + promote
-    CaptureAgent(settings=settings, now=now).capture(
+    MemoCapture(settings=settings, now=now).capture(
         text="LLM 라우터 설계 결정: task_type별 fallback chain 구성",
         project="devtrail",
     )
@@ -144,7 +144,7 @@ def test_duplicate_candidate_not_rewritten(tmp_path):
     settings = _settings(tmp_path)
     now = datetime(2026, 6, 23, 9, 0, 0)
 
-    CaptureAgent(settings=settings, now=now).capture(text="LLM 라우터 작업", project="devtrail")
+    MemoCapture(settings=settings, now=now).capture(text="LLM 라우터 작업", project="devtrail")
 
     llm = FakeLLM(_distill_response())
     agent = DistillAgent(settings=settings, llm=llm, now=now)
@@ -167,7 +167,7 @@ def test_raw_notes_preserved_on_llm_error(tmp_path):
     now = datetime(2026, 6, 23, 9, 0, 0)
 
     # raw 노트 생성
-    capture_result = CaptureAgent(settings=settings, now=now).capture(
+    capture_result = MemoCapture(settings=settings, now=now).capture(
         text="중요한 메모 — 절대 유실되면 안 됨", project="test"
     )
     raw_path = capture_result.path
@@ -195,7 +195,7 @@ def test_raw_notes_preserved_on_json_parse_error(tmp_path):
     settings = _settings(tmp_path)
     now = datetime(2026, 6, 23, 9, 0, 0)
 
-    capture_result = CaptureAgent(settings=settings, now=now).capture(
+    capture_result = MemoCapture(settings=settings, now=now).capture(
         text="JSON 파싱 실패 테스트 메모", project="test"
     )
     raw_path = capture_result.path
@@ -220,7 +220,7 @@ def test_candidate_frontmatter_has_required_fields(tmp_path):
     settings = _settings(tmp_path)
     now = datetime(2026, 6, 23, 9, 0, 0)
 
-    CaptureAgent(settings=settings, now=now).capture(text="테스트 메모", project="test-proj")
+    MemoCapture(settings=settings, now=now).capture(text="테스트 메모", project="test-proj")
     llm = FakeLLM(_distill_response())
     result = DistillAgent(settings=settings, llm=llm, now=now).distill_today()
 
@@ -272,7 +272,7 @@ def test_fabricated_source_refs_are_filtered(tmp_path):
     settings = _settings(tmp_path)
     now = datetime(2026, 6, 23, 9, 0, 0)
 
-    cap = CaptureAgent(settings=settings, now=now).capture(text="source grounding 테스트", project="test")
+    cap = MemoCapture(settings=settings, now=now).capture(text="source grounding 테스트", project="test")
     real_path = cap.rel_path  # 실제로 존재하는 경로 (예: 00_Inbox/Captures/...)
 
     llm = FakeLLM(_distill_response_with_fabricated_refs(real_path))
@@ -295,7 +295,7 @@ def test_all_fabricated_refs_fall_back_to_actual_notes(tmp_path):
     settings = _settings(tmp_path)
     now = datetime(2026, 6, 23, 9, 0, 0)
 
-    CaptureAgent(settings=settings, now=now).capture(text="폴백 테스트 메모", project="test")
+    MemoCapture(settings=settings, now=now).capture(text="폴백 테스트 메모", project="test")
 
     fabricated_only = json.dumps(
         {
@@ -375,7 +375,7 @@ def test_related_links_injected_when_llm_omits_section(tmp_path):
         encoding="utf-8",
     )
 
-    CaptureAgent(settings=settings, now=now).capture(
+    MemoCapture(settings=settings, now=now).capture(
         text="llm architecture router task_type provider 설계", project="devtrail"
     )
     result = DistillAgent(
@@ -428,7 +428,7 @@ def test_related_links_replaces_placeholder(tmp_path):
         ensure_ascii=False,
     )
 
-    CaptureAgent(settings=settings, now=now).capture(
+    MemoCapture(settings=settings, now=now).capture(
         text="llm architecture router task_type provider 설계", project="devtrail"
     )
     result = DistillAgent(
@@ -451,7 +451,7 @@ def test_related_links_not_injected_when_no_related(tmp_path):
     now = datetime(2026, 6, 23, 9, 0, 0)
 
     # 20_Knowledge 없이 capture만
-    CaptureAgent(settings=settings, now=now).capture(
+    MemoCapture(settings=settings, now=now).capture(
         text="완전히 새로운 주제 테스트", project="new-project"
     )
     result = DistillAgent(

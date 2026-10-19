@@ -303,43 +303,6 @@ def test_cli_capture_session_summary_file(tmp_path, monkeypatch):
 
 # ── Messaging Router ──────────────────────────────────────────────────────────
 
-def test_router_session_no_arg(tmp_path):
-    from unittest.mock import MagicMock, patch
-    from app.messaging.router import CommandRouter
-
-    router = CommandRouter()
-    fake_result = SimpleNamespace(
-        rel_path="10_Worklog/Sessions/2026-06-23-session.md",
-        created=True,
-        kind="session",
-    )
-    mock_agent = MagicMock()
-    mock_agent.return_value.capture_session.return_value = fake_result
-
-    with patch("app.agents.CaptureAgent", mock_agent):
-        out = router.handle("/session")
-    assert "세션 노트" in out
-    assert fake_result.rel_path in out
-
-
-def test_router_session_with_project(tmp_path):
-    from unittest.mock import MagicMock, patch
-    from app.messaging.router import CommandRouter
-
-    router = CommandRouter()
-    fake_result = SimpleNamespace(
-        rel_path="10_Worklog/Sessions/2026-06-23-devtrail-session.md",
-        created=True,
-        kind="session",
-    )
-    mock_agent = MagicMock()
-    mock_agent.return_value.capture_session.return_value = fake_result
-
-    with patch("app.agents.CaptureAgent", mock_agent):
-        out = router.handle("/session Devtrail")
-    assert "Devtrail" in out or "세션" in out
-
-
 # ── Distill 우선순위 ─────────────────────────────────────────────────────────
 
 def test_distill_session_notes_priority(tmp_path):

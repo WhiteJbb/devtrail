@@ -17,6 +17,7 @@ def _make_repo(tmp_path: Path, *, settings: bool = False, vault_json: dict | Non
                example: bool = True, dispatcher: bool = True, venv_python: bool = True) -> Path:
     repo = tmp_path / "repo"
     (repo / ".claude").mkdir(parents=True, exist_ok=True)
+    (repo / "pyproject.toml").write_text('[project]\nname = "devtrail"\n', encoding="utf-8")
     if example:
         (repo / ".claude" / "settings.example.json").write_text('{"hooks": {}}', encoding="utf-8")
     if settings:
@@ -443,3 +444,26 @@ def test_candidate_projects_requires_context_md(tmp_path):
 
 def test_candidate_projects_without_projects_dir(tmp_path):
     assert doctor.candidate_projects(tmp_path / "vault") == []
+
+
+# ── 외부 repo (devtrail 코드 없음, 훅은 런타임 트리의 디스패처를 절대 경로로) ─────
+
+
+def test_external_repo_wired_to_runtime_tree_is_healthy(tmp_path):
+    runtime = tmp_path / "runtime"
+    (runtime / "scripts" / "hooks").mkdir(parents=True)
+    (runtime / "scripts" / "hooks" / "run-hook.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (runtime / ".venv" / "bin").mkdir(parents=True)
+    (runtime / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+
+    repo = tmp_path / "orbit"
+    (repo / ".claude").mkdir(parents=True)
+    hooks = {"hooks": {"Stop": [{"hooks": [{"type": "command",
+             "command": f"sh {runtime}/scripts/hooks/run-hook.sh stop-process-check"}]}]}}
+    (repo / ".claude" / "settings.local.json").write_text(json.dumps(hooks), encoding="utf-8")
+
+    assert doctor.check_hook_settings(repo).severity == doctor.OK
+    runtime_check = doctor.check_hook_runtime(repo)
+    assert runtime_check.severity == doctor.OK, runtime_check.detail
+    assert str(runtime / ".venv") in runtime_check.detail
+    assert doctor.check_console_script(repo).severity == doctor.OK

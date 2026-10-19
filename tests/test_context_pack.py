@@ -199,12 +199,12 @@ def test_agent_memory_loader_includes_lessons(tmp_path):
 
 
 def test_agent_memory_loader_keeps_latest_tail_when_file_is_long(tmp_path):
-    _write_agent_memory(tmp_path, "06_Lessons.md", "Lessons", "- 오래된 교훈\n" * 600 + "- LATEST_LESSON_3200_MARKER")
+    _write_agent_memory(tmp_path, "06_Lessons.md", "Lessons", "- 오래된 교훈\n" * 1200 + "- LATEST_LESSON_3200_MARKER")
 
     memory = AgentMemoryLoader(tmp_path).load()
 
     assert "LATEST_LESSON_3200_MARKER" in memory.render()
-    assert len(memory.blocks[0].body) <= 2020
+    assert len(memory.blocks[0].body) <= 8020  # Lessons는 8000자 — 다른 파일(2000자)보다 넉넉
 
 
 def test_agent_memory_loader_keeps_current_focus_head_when_file_is_long(tmp_path):

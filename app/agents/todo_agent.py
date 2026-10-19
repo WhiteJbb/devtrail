@@ -49,7 +49,7 @@ class TodoAgent:
         if notes:
             context = self._render_context(notes)
         else:
-            context = "(최근 raw 기록 없음 — capture 또는 capture-commit을 먼저 실행하세요)"
+            context = "(최근 raw 기록 없음 — 세션 기록(write_session_process)이 먼저 쌓여야 한다)"
 
         prompt = render_prompt("todo_suggest", CONTEXT_PACK=context)
         text = self._llm().complete(prompt)

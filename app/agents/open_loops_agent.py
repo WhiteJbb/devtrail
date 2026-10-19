@@ -23,7 +23,7 @@ from app.services.wiki_service import WikiNote, WikiService
 
 
 _TARGET_FILE = "40_AgentMemory/05_OpenLoops.md"
-_SOURCE_PREFIXES = ("10_Worklog/Sessions/", "10_Worklog/Daily/", "00_Inbox/URLs/", "00_Inbox/Memos/", "50_Outputs/Todo/")
+_SOURCE_PREFIXES = ("10_Worklog/Sessions/", "00_Inbox/URLs/", "50_Outputs/Todo/")
 _MAX_NOTE_CHARS = 3000
 # 다음 할 일은 Process 노트 뒤쪽(Next Session)에 있다 — 앞에서 자르면 통째로 빠진다.
 _PRIORITY_SECTIONS = ("Next Session", "Docs Update Candidates", "What Changed")

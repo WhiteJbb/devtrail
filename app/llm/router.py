@@ -39,14 +39,11 @@ TASK_CHAINS: dict[str, list[str]] = {
 
 # CLI 커맨드 → task_type 매핑
 COMMAND_TASK_MAP: dict[str, str] = {
-    "capture":              "light",
     "distill-today":        "distill",
     "suggest-knowledge":    "light",
     "suggest-blog-topics":  "light",
     "suggest-memory-patch": "light",
-    "ask":                  "light",
     "write-blog":           "writer",
-    "worklog":              "writer",
     "resume":               "writer",
     "portfolio":            "writer",
     "portfolio-draft":      "writer",
@@ -55,7 +52,6 @@ COMMAND_TASK_MAP: dict[str, str] = {
     "summarize-project":    "long_writer",
     "revise-blog":          "polish",
     "suggest-career-bullets": "writer",
-    "capture-commit":       "light",
     "update-open-loops":    "light",
     "todo":                 "writer",
 }

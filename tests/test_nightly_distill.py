@@ -69,9 +69,10 @@ def _seed_session(vault):
 
 
 def test_run_creates_all_candidate_types(tmp_path):
-    _seed_session(tmp_path)
+    # 2026-06-21은 일요일 — career bullet은 일요일에만 돈다
+    CaptureAgent(settings=_settings(tmp_path), now=datetime(2026, 6, 21, 9, 0, 0)).capture_session(project="Devtrail")
     llm = _MultiCallLLM([_distill_response(), _career_response()])
-    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23))
+    agent = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 21))
 
     result = agent.run()
 
@@ -334,3 +335,13 @@ def test_digest_session_line_skips_empty_label_bullets(tmp_path):
 
     assert "Devtrail 작업 세션 — xterm.js 도입" in result.digest_text
     assert "— 결정:" not in result.digest_text
+
+
+def test_career_bullets_skipped_on_weekdays(tmp_path, monkeypatch):
+    from app.agents import nightly_distill_agent as mod
+
+    _seed_session(tmp_path)
+    monkeypatch.setattr(mod, "CareerBulletAgent", lambda *a, **k: (_ for _ in ()).throw(AssertionError("평일엔 안 부른다")))
+    llm = _MultiCallLLM([_distill_response()])
+    result = NightlyDistillAgent(settings=_settings(tmp_path), llm=llm, now=datetime(2026, 6, 23)).run()
+    assert result.career.written == []
