@@ -67,8 +67,12 @@ class NightlyDistillAgent:
         else:
             distill_result = distill_agent.distill_today()
 
-        career_agent = CareerBulletAgent(settings=self.settings, llm=self.llm, now=self.now)
-        career_result = career_agent.suggest()
+        # 이력서 소재는 매일 뽑을 만큼 쌓이지 않는다(후보 21건/소비 0, 2026-10-19). 일요일에만 한 주치를 본다.
+        if (self.now or datetime.now()).weekday() == 6:
+            career_agent = CareerBulletAgent(settings=self.settings, llm=self.llm, now=self.now)
+            career_result = career_agent.suggest()
+        else:
+            career_result = CareerBulletResult(written=[], source_refs=[])
 
         # TTL 지난 후보 정리 — 재생성 가능 kind는 삭제, decision/memory_patch는 _Archive/.
         # 검토 안 된 후보가 무한 누적되는 것을 막는다 (2026-07 대청소 44개의 재발 방지).

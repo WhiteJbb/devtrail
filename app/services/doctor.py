@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -113,6 +114,9 @@ def check_hook_settings(repo_dir: Path) -> CheckResult:
     example = repo_dir / ".claude" / "settings.example.json"
     if settings.exists():
         return CheckResult("Claude Code 훅", OK, str(settings))
+    local = repo_dir / ".claude" / "settings.local.json"
+    if _hook_dispatcher(repo_dir) is not None:
+        return CheckResult("Claude Code 훅", OK, str(local))
     if not example.exists():
         return CheckResult(
             "Claude Code 훅",
@@ -325,6 +329,8 @@ def check_console_script(repo_dir: Path) -> CheckResult:
     나타난다. Windows 콘솔 스크립트는 셔뱅이 가리키는 python이 없으면 **오류 메시지
     없이** exit 1하므로, 사람이 원인을 찾기 가장 어려운 실패다.
     """
+    if not _is_devtrail_repo(repo_dir):
+        return CheckResult("콘솔 스크립트", OK, "외부 repo — 훅이 가리키는 트리의 devtrail을 쓴다")
     candidates = [repo_dir / ".venv" / "bin" / "devtrail", repo_dir / ".venv" / "Scripts" / "devtrail.exe"]
     script = next((p for p in candidates if p.exists()), None)
     if script is None:
@@ -350,17 +356,45 @@ def check_console_script(repo_dir: Path) -> CheckResult:
     return CheckResult("콘솔 스크립트", OK, str(script))
 
 
+def _hook_dispatcher(repo_dir: Path) -> Path | None:
+    """settings(.local).json의 훅 command가 가리키는 run-hook.sh 경로. 없으면 None.
+
+    외부 repo는 devtrail 코드가 없고 훅이 런타임 트리의 디스패처를 절대 경로로 부른다.
+    """
+    for name in ("settings.json", "settings.local.json"):
+        try:
+            data = json.loads((repo_dir / ".claude" / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for entries in (data.get("hooks") or {}).values():
+            for entry in entries or []:
+                for hook in entry.get("hooks") or []:
+                    m = re.search(r"(\S*run-hook\.sh)", str(hook.get("command", "")))
+                    if m:
+                        found = Path(m.group(1))
+                        return found if found.is_absolute() else repo_dir / found
+    return None
+
+
+def _is_devtrail_repo(repo_dir: Path) -> bool:
+    try:
+        return 'name = "devtrail"' in (repo_dir / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 def check_hook_runtime(repo_dir: Path) -> CheckResult:
     """훅 디스패처와 python 해석기 존재 확인.
 
     `run-hook.sh`는 python을 못 찾으면 조용히 exit 0한다(훅 실패가 세션을 막지 않게).
     그 설계 때문에 python이 없어도 아무 증상이 없으므로 여기서 대신 본다.
     """
-    dispatcher = repo_dir / "scripts" / "hooks" / "run-hook.sh"
+    dispatcher = _hook_dispatcher(repo_dir) or repo_dir / "scripts" / "hooks" / "run-hook.sh"
     if not dispatcher.exists():
         return CheckResult("훅 실행 전제", FAIL, f"디스패처가 없습니다: {dispatcher}", hint="repo가 온전한지 확인 (git status)")
 
-    candidates = [repo_dir / ".venv" / "bin" / "python", repo_dir / ".venv" / "Scripts" / "python.exe"]
+    tree = dispatcher.parents[2] if len(dispatcher.parents) > 2 else repo_dir  # <tree>/scripts/hooks/run-hook.sh
+    candidates = [tree / ".venv" / "bin" / "python", tree / ".venv" / "Scripts" / "python.exe"]
     found = next((p for p in candidates if p.exists()), None)
     if found is None and not (shutil.which("python3") or shutil.which("python")):
         return CheckResult(
