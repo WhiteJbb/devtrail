@@ -23,7 +23,7 @@
 3. `docs/final.md`
 4. `docs/final-review.md`
 5. `docs/devtrail-improvement-roadmap.md`
-6. `docs/activity-collector-design.md`
+6. ~~`docs/activity-collector-design.md`~~ (2026-10-19 Activity Collector 제거, git history에만 남음)
 7. `docs/ai-team-pm-design.md`
 8. `README.md`
 
@@ -564,6 +564,8 @@ Activity Collector PR A
 ---
 
 # 9. 현재 가장 자연스러운 다음 작업 — Activity Collector 완성
+
+> **[2026-10-19] 이 절과 §10·§11의 Activity Collector는 제거됐다.** 근거는 `final-review.md` NEXT. 아래는 당시 판단 기록으로만 남긴다.
 
 현재 `docs/activity-collector-design.md` 기준으로 Phase 4는:
 

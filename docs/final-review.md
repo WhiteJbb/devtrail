@@ -400,7 +400,7 @@ final.md가 던진 질문:
 | M1 | 이 문서의 환경 오측 정정 | 머신별 실측이 분리돼 있다 | ✅ 이 커밋 |
 | M2 | 후보 TTL 임시 해제(14 → 3650) | `test_default_ttl_keeps_old_candidate_alive` 통과 | ✅ |
 | M3 | `dev` → `main` 일반 머지 | Mac이 `main`을 추적하므로 M1·M2 반영의 선행 조건 | ✅ |
-| M4 | `devtrail activity install` | `activity status`에 pwsh·bash 설치됨 | 대기 |
+| M4 | `devtrail activity install` | `activity status`에 pwsh·bash 설치됨 | ~~대기~~ 2026-10-19 기능 제거 |
 | M5 | 부트스트랩 커맨드(`devtrail doctor`) | 새 머신에서 1 커맨드로 `settings.json`·`vault.json`·MCP 등록 점검 | 대기 (§9-③) |
 
 **M3이 왜 선행 조건인가**: Mac nightly는 `scripts/mac/update-devtrail.sh`의
@@ -436,9 +436,12 @@ N5의 `component` / `cause_class` frontmatter가 있어야 final.md §10의 집�
 - **Task 1급화**: `70_Tasks/Active.md`(개인 todo) → project·status·agent·
   related_decision. 단 §11-7("Git과 역할 중복 금지")의 사촌 문제 — GitHub
   Issues와 중복될 수 있으므로 경계를 먼저 정한다.
-- **Activity Collector PR B/C**: sessionizer + nightly 통합. 설계 확정됨
-  (`docs/activity-collector-design.md` §9). 커밋 없는 작업 캡처 = §3 Raw 계층을
-  실제로 채우는 부분.
+- ~~**Activity Collector PR B/C**~~ → **[2026-10-19] 제거.** zsh 훅 5일치
+  실측(명령 167건)은 nightshift repo 안의 `node` 호출이 126건, SSH·Docker·홈랩
+  조작 0건 — 설계가 노린 "커밋 없는 작업"이 없고 실제 작업은 Claude 세션 안에서
+  일어나 MCP가 이미 기록한다. PR A(셸 훅·`activity` CLI)와 설계 문서까지 걷어냈다.
+  홈랩을 셸로 운영하기 시작하면 git history의 `docs/activity-collector-design.md`를
+  기준으로 다시 꺼낸다.
 - **pm-repo**: `docs/pm-repo-design.md`대로 코드 0줄로 시작. MCP API의 첫 외부
   고객이 되어 품질을 dogfooding으로 검증한다.
 
