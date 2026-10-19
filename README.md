@@ -32,8 +32,6 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 powershell -ExecutionPolicy Bypass -File install.ps1 -Repo C:\path\to\repo -Project myproject
 ```
 
-> **참고**: post-commit hook은 현재 비활성화 상태입니다(`exit 0` 처리). 커밋마다 LLM 호출로 커밋 속도가 저하되고 diff가 800자로 잘려 실질적 가치가 낮았기 때문입니다. `capture-commit` 명령 자체는 보존돼 있어 수동 실행은 가능합니다. 재활성화하려면 `scripts/hooks/post-commit`에서 `exit 0` 줄을 제거하세요.
-
 ---
 
 ## 대시보드 실행
@@ -56,7 +54,7 @@ python start.py     # 현재 터미널에서 직접 실행
 | task_type | 용도 | 기본 chain |
 |-----------|------|-----------|
 | **light** | 분류·태깅·짧은 요약 (`distill-today`, `suggest-*`, `capture`) | Gemini Flash-Lite → GPT-4.1-mini → Ollama |
-| **writer** | 블로그·이력서·포트폴리오 초안 (`blog write`, `resume`, `worklog`) | Gemini Flash → GPT-4.1-mini → Kimi |
+| **writer** | 블로그·이력서·포트폴리오 초안 (`blog write`, `resume`, `suggest-career-bullets`) | Gemini Flash → GPT-4.1-mini → Kimi |
 | **long_writer** | 긴 ContextPack 기반 글쓰기 (`weekly-distill`, `summarize-project`) | Kimi → Gemini Flash → GPT-4.1-mini |
 | **polish** | 최종 문장 다듬기 (`blog revise`) | GPT-4.1-mini → Gemini Flash |
 | **local** | 인터넷 장애 시 최소 동작 | Ollama |
@@ -117,15 +115,10 @@ OPENAI_MODEL=Qwen/Qwen2.5-14B-Instruct
 ```
 <vault>/
 ├─ 00_Inbox/
-│  ├─ URLs/          # URL 캡처 (Telegram URL 전송, capture-url)
-│  ├─ Memos/         # 텍스트·음성·이미지 캡처
-│  └─ Raw/           # 첨부 바이너리 파일
+│  └─ URLs/          # URL 북마크 (사람이 넣음, 읽기 전용)
 ├─ 10_Worklog/
-│  ├─ Sessions/      # capture-session / write_session_process 출력 (AI 세션 요약)
-│  ├─ Daily/         # daily-log (사람이 채우는 일지)
-│  ├─ GitSummaries/  # capture-commit 출력 (커밋별 git 요약)
-│  └─ Summaries/     # worklog 출력
-├─ 20_Knowledge/     # 확정된 지식 ← promote-candidate 목적지 (프로젝트별 하위 폴더)
+│  └─ Sessions/      # write_session_process / capture-session 출력 (AI 세션 요약)
+├─ 20_Knowledge/     # 확정된 지식 ← nightly 자동 승격 목적지 (프로젝트별 하위 폴더)
 ├─ 30_Projects/      # 프로젝트 정본 문서 — Context.md · Decisions/ · Plans/ · Design/ · Conversations/
 ├─ 40_AgentMemory/   # 전역 AI 메모리 (00_Profile.md ~ 06_Lessons.md)
 ├─ 50_Outputs/
@@ -164,25 +157,19 @@ Obsidian 템플릿은 [docs/vault-templates/](docs/vault-templates/)을 Vault의
 ```bash
 devtrail doctor [--fix] [--project <이름>]       # 머신별 설치·연동 상태 진단·수리
 devtrail init-vault                             # 볼트 폴더 구조 생성
-devtrail install-hooks <repo> [-p project]      # git post-commit hook 설치
 devtrail index-vault                            # index.md 갱신
 ```
 
-### Capture — raw 기록 저장
+### Capture — 세션 기록 (MCP 미연결 시 fallback)
 
 ```bash
-devtrail capture "메모"                                         # → 00_Inbox/Memos/
-devtrail capture-commit --repo <path> [--from-agent]           # → 10_Worklog/GitSummaries/ (수동 실행, hook은 기본 비활성)
 devtrail capture-session [-p project] [--from-repo]            # → 10_Worklog/Sessions/
 devtrail capture-session [-p project] --from-agent             # AI 세션 요약 포함
 devtrail capture-session [-p project] --summary-file <md>      # AI 요약 파일 삽입
-devtrail daily-log [-p project]                                # 오늘 데일리 로그 → 10_Worklog/Daily/
-devtrail daily-log [-p project] --from-agent                   # LLM이 오늘 컨텍스트 미리 채움
 ```
 
-`--from-agent` 플래그: daily-log는 오늘 캡처·OpenLoops를 읽어 Done/Next 등 미리 채움.
-
-> **참고**: post-commit hook은 기본적으로 비활성화(`exit 0`) 상태로 설치됩니다. 커밋마다 LLM 호출로 커밋 속도가 저하되고 diff가 800자로 잘려 실질적 가치가 낮았기 때문입니다. `capture-commit` 명령 자체는 남아 있어 수동 실행은 가능하며, `nightly-distill`이 세션 노트 기반으로 하루치를 종합 처리하는 것으로 대체됐습니다.
+1차 경로는 MCP `write_session_process`다. 메모·커밋·데일리 로그 캡처(`capture`,
+`capture-commit`, `daily-log`)와 git post-commit hook은 입력이 없어 2026-10-19에 제거했다.
 
 ### Distill — 정제 후보 생성 (LLM 필요)
 
@@ -196,20 +183,11 @@ devtrail update-open-loops           # OpenLoops 패치 후보
 devtrail build-context "주제"        # ContextPack 구성
 ```
 
-### Candidates 관리
+### Candidates
 
-```bash
-devtrail list-candidates                      # 60_Candidates/ 번호 목록 (stale 표시 포함)
-devtrail review                               # 한 건씩 미리보며 승격/건너뛰기/삭제 (Telegram /review의 CLI 판)
-devtrail preview-candidate <번호|path>        # 후보 미리보기
-devtrail promote-candidate <번호|path>        # 공식 영역으로 승격
-devtrail promote-all [--kind knowledge|decision|blog_idea]   # 타입별 일괄 승격
-devtrail apply-memory-patch [path] [-i]       # → 40_AgentMemory/ 반영
-```
-
-`list-candidates`가 비어 있거나 `notify morning` 전송 시 마지막 nightly-distill 실행이
-이틀 넘게 밀려 있으면 정지 경고를 함께 표시한다 — "다 검토한 상태"와 "파이프라인이
-조용히 멈춘 상태"를 구분하기 위함.
+사람 검토 CLI(`list-candidates` · `review` · `promote-*` · `apply-memory-patch`)는 2026-10-19에
+제거했다. 후보는 nightly가 자동 반영·승격한다(memory_patch 매일, knowledge/decision/problem은
+2일 조용하면). 상태는 digest와 `60_Candidates/`를 Obsidian에서 본다.
 
 ### 탐색
 
@@ -221,8 +199,7 @@ devtrail related <path>           # 관련 노트 탐색 (태그·wikilink 기�
 ### Generate — 결과물 생성 (LLM 필요)
 
 ```bash
-# 작업 회고 / 할 일
-devtrail worklog                             # 작업 회고 → 10_Worklog/Summaries/
+# 할 일
 devtrail todo                                # 다음 할 일 분석 → 50_Outputs/Todo/
 
 # 블로그 (blog 서브커맨드)
@@ -247,7 +224,7 @@ devtrail interview-questions <name>          # 예상 면접 질문
 ```bash
 devtrail nightly-distill                     # 하루 종합 정제 + daily digest + Telegram 전송
 devtrail weekly-distill                      # 7일치 daily digest 종합 + weekly 회고 + Telegram 전송
-devtrail push-digest [--daily|--weekly|--worklog]   # 후보 요약 Telegram 수동 전송
+devtrail push-digest [--daily|--weekly]             # 후보 요약 Telegram 수동 전송
 devtrail notify morning|evening              # 아침/저녁 알림 Telegram 전송 (OS 스케줄러가 호출)
 devtrail print-schedule [--windows|--cron]   # OS 스케줄러 등록 명령 출력 (최소 구성)
 ```
@@ -501,7 +478,6 @@ launch.bat             # 새 터미널 창으로 대시보드 실행 (Windows)
 install.ps1            # 최초 설치 스크립트 (Python + venv + PATH + hook, Windows)
 
 scripts/
-├─ hooks/post-commit       # git post-commit hook 스크립트 (기본 비활성)
 ├─ hooks/run-hook.sh       # Claude Code 훅 디스패처 — OS에 맞는 python 선택 (win/mac 공용)
 ├─ hooks/*.py              # Claude Code 훅 구현 (SessionStart briefing 주입 · Stop 기록 체크)
 ├─ windows/                # Task Scheduler 등록/실행 스크립트 (register-schedules.ps1 등)

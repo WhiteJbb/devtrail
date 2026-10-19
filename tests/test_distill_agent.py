@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from app import cli
 from app.agents.capture_agent import CaptureAgent
+from tests.conftest import MemoCapture
 from app.agents.distill_agent import DistillAgent
 from app.config import Settings
 from app.services.candidate_writer import CandidateSpec, CandidateWriteResult
@@ -20,7 +21,7 @@ def _settings(vault):
 
 
 def _seed_capture(vault, text="오늘 RAG 검색 정리", project="Devtrail"):
-    CaptureAgent(
+    MemoCapture(
         settings=_settings(vault),
         now=datetime(2026, 6, 23, 9, 10, 11),
     ).capture(text, project=project)

@@ -442,6 +442,12 @@ N5의 `component` / `cause_class` frontmatter가 있어야 final.md §10의 집�
   일어나 MCP가 이미 기록한다. PR A(셸 훅·`activity` CLI)와 설계 문서까지 걷어냈다.
   홈랩을 셸로 운영하기 시작하면 git history의 `docs/activity-collector-design.md`를
   기준으로 다시 꺼낸다.
+- **[2026-10-19] 전체 검토 후 정리**: Telegram 수신 봇(`serve-bot`·라우터·미디어·assistant/`ask`)
+  제거 — 승격 자동화 뒤 실질 명령이 /review뿐, 00_Inbox 입력 7/09 이후 0건. 사람 검토 CLI
+  (`list-candidates`·`review`·`promote-*`·`apply-memory-patch`)와 죽은 입력 경로(`capture`·
+  `capture-commit`·`install-hooks`·`daily-log`·`worklog`, Memos/Raw/Daily/GitSummaries/Summaries)
+  제거. briefing Lessons 상한 2000→8000자(가시 37%→전부), doctor가 외부 repo의
+  settings.local.json 훅을 인식, career bullet은 일요일에만. 블로그·이력서 CLI는 유지.
 - **pm-repo**: `docs/pm-repo-design.md`대로 코드 0줄로 시작. MCP API의 첫 외부
   고객이 되어 품질을 dogfooding으로 검증한다.
 

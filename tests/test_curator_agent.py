@@ -248,48 +248,6 @@ def test_apply_memory_patch_rejects_session_handoff(tmp_path):
         agent.apply_memory_patch(rel)
 
 
-# ── CLI 테스트 ───────────────────────────────────────────────────────
-
-
-def test_cli_list_candidates_shows_items(monkeypatch, tmp_path):
-    items = [
-        CandidateItem(kind="knowledge", title="RAG 지식", rel_path="60_Candidates/Knowledge/abc.md",
-                      created_at="2026-06-23", project="Devtrail"),
-    ]
-
-    class _FakeCurator:
-        def list_candidates(self, include_session_handoffs=False):
-            return items
-
-    monkeypatch.setattr(cli, "_curator_agent", lambda: _FakeCurator())
-
-    out = runner.invoke(cli.app, ["list-candidates"])
-
-    assert out.exit_code == 0
-    assert "후보 1개" in out.output
-    assert "RAG 지식" in out.output
-
-
-def test_cli_promote_candidate_shows_result(monkeypatch, tmp_path):
-    result = PromoteResult(
-        candidate_path="60_Candidates/Knowledge/abc.md",
-        promoted_path="20_Knowledge/abc.md",
-        kind="knowledge",
-    )
-
-    class _FakeCurator:
-        def promote_candidate(self, rel_path):
-            return result
-
-    monkeypatch.setattr(cli, "_curator_agent", lambda: _FakeCurator())
-
-    out = runner.invoke(cli.app, ["promote-candidate", "60_Candidates/Knowledge/abc.md"])
-
-    assert out.exit_code == 0
-    assert "승격 완료" in out.output
-    assert "20_Knowledge/abc.md" in out.output
-
-
 # ── apply_memory_patch --target / Lessons ─────────────────────────────
 
 

@@ -50,7 +50,7 @@ launchd 재등록은 `bash /Users/user/devtrail-runtime/scripts/mac/register-sch
 | `app/messaging/` | Telegram 송신 provider (digest·주간 회고·알림. 수신 봇은 2026-10-19 제거) |
 | `app/vault_tools.py` | MCP 도구 구현 (get_project_briefing, write_work_plan, write_session_process 등) |
 | `app/mcp_server.py` | MCP 서버 진입점 (`devtrail mcp-serve`) |
-| `scripts/hooks/` | Claude Code 훅 (session-start-briefing, stop-process-check) + git post-commit |
+| `scripts/hooks/` | Claude Code 훅 (session-start-briefing, stop-process-check) |
 | `scripts/mac/`, `scripts/windows/` | 머신별 스케줄러 설치 스크립트 |
 | `tests/` | pytest 테스트 (`testpaths = ["tests"]`) |
 | `docs/` | 설계·계획 문서 |
@@ -67,7 +67,7 @@ launchd 재등록은 `bash /Users/user/devtrail-runtime/scripts/mac/register-sch
 - 프롬프트는 `app/prompts/*.md`에 두고 `render_prompt`로 렌더링한다.
 - Vault의 `60_Candidates/` 쓰기는 `candidate_writer` 경유. 공식 영역
   (`20_Knowledge/`, `30_Projects/`, `40_AgentMemory/`)에 코드가 직접 쓰는
-  경로를 만들지 않는다 — 승격은 항상 `promote-candidate`/`apply-memory-patch`.
+  경로를 만들지 않는다 — 승격은 항상 nightly의 자동 반영·승격(curator) 경유.
 
 ### 스타일
 
@@ -202,13 +202,8 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 
 | 폴더 | 역할 | AI 권한 |
 |------|------|---------|
-| `00_Inbox/URLs/` | URL 캡처 노트 | 읽기 전용 |
-| `00_Inbox/Memos/` | 텍스트·음성·이미지 캡처 노트 | 읽기 전용 |
-| `00_Inbox/Raw/` | 첨부 바이너리 파일 | 읽기 전용 |
-| `10_Worklog/Sessions/` | capture-session / write_session_process 출력 | 읽기 전용 |
-| `10_Worklog/Daily/` | daily-log (사람이 직접 채우는 일지) | 읽기 전용 |
-| `10_Worklog/GitSummaries/` | 커밋별 git 요약 | 읽기 전용 |
-| `10_Worklog/Summaries/` | worklog 회고 (`<날짜>-worklog.md`) | 읽기 전용 |
+| `00_Inbox/URLs/` | URL 북마크 (사람이 넣음) | 읽기 전용 |
+| `10_Worklog/Sessions/` | write_session_process / capture-session 출력 | 읽기 전용 |
 | `20_Knowledge/` | 승격된 공식 지식 노트 | **직접 수정 금지** — knowledge 후보가 2일 조용하면 nightly가 자동 승격 (2026-10-18) |
 | `30_Projects/<P>/Context.md` | 프로젝트 배경·목표·제약 | **직접 수정 금지** — 사람이 관리 |
 | `30_Projects/<P>/Decisions/` | 의사결정 이력 (DecisionLog) | **직접 수정 금지** — decision 후보(`write_session_process`의 project_decisions 포함)가 2일 조용하면 nightly가 자동 승격 |
@@ -217,11 +212,11 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `30_Projects/<P>/Design/` | IA · UserScenarios · Personas | 사람과 협의 후 작성 |
 | `30_Projects/<P>/Conversations/` | 중요한 대화 발췌 | 사람 요청 시 기록 |
 | `30_Projects/<P>/PromptLog.md` | 중요 프롬프트 원문 | append 허용 |
-| `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈). 단 `05_OpenLoops.md`는 `update_open_loops`(MCP)로 에이전트가 자기 프로젝트 블록을 고친다 — 작업 목록은 낡는 비용이 더 크다 (2026-10-17). `01_CurrentFocus`·`05_OpenLoops`·`06_Lessons`는 `<!-- devtrail-memory-patch: {"scope": "project", "project": "<P>"} -->` 마커 아래 블록이 그 프로젝트 briefing에만 들어간다 — 마커 앞은 전역 (2026-10-18) |
+| `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — nightly가 MemoryPatch 후보를 자동 반영(`06_Lessons.md`는 일하는 방식 교훈). 단 `05_OpenLoops.md`는 `update_open_loops`(MCP)로 에이전트가 자기 프로젝트 블록을 고친다 — 작업 목록은 낡는 비용이 더 크다 (2026-10-17). `01_CurrentFocus`·`05_OpenLoops`·`06_Lessons`는 `<!-- devtrail-memory-patch: {"scope": "project", "project": "<P>"} -->` 마커 아래 블록이 그 프로젝트 briefing에만 들어간다 — 마커 앞은 전역 (2026-10-18) |
 | `50_Outputs/` | Digest · WeeklyReview · Blog · Resume · Portfolio · Interview · Todo | 읽기 전용 |
 | `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어·문제 후보 | AI가 생성. **사람 검토 게이트 없음(2026-10-18)** — memory_patch는 매일 자동 반영, knowledge/decision/problem은 2일 조용하면 자동 승격, career_bullet/blog_idea는 소재로 남는다. 사람은 보기만 한다 |
 | `60_Candidates/SessionHandoffs/<P>/` | 세션별 Plan/Process | `write_work_plan`/`write_session_process` 전용. promote 대상 아님 |
-| `60_Candidates/_Archive/` | 검토 목록에서 뺀 보관 후보 (TTL 만료 decision·memory_patch, 통합본으로 대체된 중복) | 이동·삭제는 사용자 승인 후. `list-candidates`에는 안 나오고 경로를 직접 주면 preview·promote 가능 |
+| `60_Candidates/_Archive/` | 검토 목록에서 뺀 보관 후보 (TTL 만료 decision·memory_patch, 통합본으로 대체된 중복) | 이동·삭제는 사용자 승인 후 |
 | `70_Tasks/` | 태스크 (`Active.md` + `Done/`) | task 커맨드 경유 — 직접 편집 금지 |
 | `index.md` (루트) | vault 노트 카탈로그 — 인덱싱 커맨드가 갱신 | 직접 편집 금지 |
 | `log.md` (루트) | 파이프라인 작업 로그 — distill·promote·apply 등이 자동 append | 직접 편집 금지 |
@@ -231,12 +226,12 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 
 ### 후보 흐름
 
-모든 AI 출력은 반드시 `60_Candidates/`를 거친다. 사람이 `list-candidates` →
-`promote-candidate` / `apply-memory-patch`로 검토 후 공식 영역에 반영한다.
+모든 AI 출력은 반드시 `60_Candidates/`를 거친다. 사람 검토 CLI는 없다(2026-10-19 제거) —
+nightly가 memory_patch를 매일 반영하고 knowledge/decision/problem 후보는 2일 조용하면
+공식 영역으로 올린다. 사람은 digest와 Obsidian으로 보기만 한다.
 
 `session_handoff`(Plan/Process)만 예외다 — promote 대상이 아니라
-`get_project_briefing`이 다음 세션 시작 시 우선 소비하는 운영 메모리이므로
-`list-candidates` 기본 출력에서도 제외된다.
+`get_project_briefing`이 다음 세션 시작 시 우선 소비하는 운영 메모리다.
 
 ### 새 프로젝트 연결
 

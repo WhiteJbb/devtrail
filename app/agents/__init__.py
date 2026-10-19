@@ -11,7 +11,6 @@ from app.agents.project_agent import ProjectAgent
 from app.agents.resume_agent import ResumeAgent
 from app.agents.todo_agent import TodoAgent
 from app.agents.wiki_blog_agent import WikiBlogAgent
-from app.agents.worklog_agent import WorklogAgent
 
 __all__ = [
     "CaptureAgent",
@@ -25,5 +24,4 @@ __all__ = [
     "ResumeAgent",
     "TodoAgent",
     "WikiBlogAgent",
-    "WorklogAgent",
 ]
