@@ -1548,3 +1548,21 @@ def test_update_open_loops_creates_project_block_and_scopes_briefing(tmp_path):
     ns = vault_tools.get_project_briefing("nightshift", settings=_settings(tmp_path)).text
     dt = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path)).text
     assert "iPhone Safari" in ns and "iPhone Safari" not in dt
+
+
+def test_get_decisions_hides_superseded_and_sorts_by_decision_date(tmp_path):
+    import os, time
+    _write_project_context(tmp_path, "Devtrail", "배경")
+    ddir = tmp_path / "30_Projects" / "Devtrail" / "Decisions"
+    ddir.mkdir(parents=True, exist_ok=True)
+    (ddir / "old.md").write_text("---\ntitle: 옛 결정\ncreated_at: '2026-07-08'\nstatus: accepted\n---\n본문\n", encoding="utf-8")
+    (ddir / "gone.md").write_text("---\ntitle: 뒤집힌 결정\ncreated_at: '2026-07-09'\nstatus: superseded\n---\n본문\n", encoding="utf-8")
+    _write(tmp_path, "60_Candidates/Decisions/new.md", body="본문", title="새 결정", project="Devtrail", created_at="2026-10-18")
+    # 옛 결정 파일을 가장 최근에 건드렸어도(promote 등) 결정 날짜 순이어야 한다
+    time.sleep(0.01); os.utime(ddir / "old.md", None)
+
+    titles = [d["title"] for d in vault_tools.get_decisions("Devtrail", settings=_settings(tmp_path))]
+    assert "뒤집힌 결정" not in titles
+    assert titles[0] == "새 결정" and titles[-1] == "옛 결정"
+    archived = vault_tools.get_decisions("Devtrail", include_archived=True, settings=_settings(tmp_path))
+    assert any(d["title"] == "뒤집힌 결정" and d["status"] == "superseded" for d in archived)

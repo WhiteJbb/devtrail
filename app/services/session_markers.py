@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -133,4 +134,45 @@ def live_mcp_markers(repo_root: Path, now: datetime | None = None) -> list[dict]
 def unique_live_mcp_marker(repo_root: Path) -> dict | None:
     """같은 repo의 live MCP marker가 정확히 하나일 때만 반환한다."""
     markers = live_mcp_markers(repo_root)
+    return markers[0] if len(markers) == 1 else None
+
+
+def _parent_pid(pid: int) -> int:
+    if sys.platform == "win32":
+        cmd = ["powershell", "-NoProfile", "-Command",
+               f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').ParentProcessId"]
+    else:
+        cmd = ["ps", "-o", "ppid=", "-p", str(pid)]
+    try:
+        out = subprocess.run(cmd, capture_output=True, timeout=5).stdout.decode("utf-8", "replace").strip()
+        return int(out)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0
+
+
+def ancestor_pids(pid: int | None = None, limit: int = 8) -> list[int]:
+    """pid 자신부터 조상 순으로. 훅(sh → python)과 MCP 서버는 같은 claude 프로세스의 자손이다."""
+    current = pid or os.getpid()
+    chain = [current]
+    while len(chain) < limit:
+        current = _parent_pid(current)
+        if current <= 1:
+            break
+        chain.append(current)
+    return chain
+
+
+def live_mcp_marker_for_current_session(repo_root: Path) -> dict | None:
+    """이 훅 프로세스와 같은 claude 프로세스가 띄운 MCP 마커를 고른다.
+
+    MCP 서버는 claude가 직접 spawn하므로 마커의 parent_pid가 claude pid다. 훅은 claude →
+    sh → python으로 내려오므로 자기 조상에 그 pid가 있다. 동시 세션이 여러 개여도 자기 것만
+    잡힌다 (2026-10-19, nightshift 두 세션에서 훅이 다른 세션 커밋으로 막힘).
+    매칭이 없으면(parent_pid 없는 구 마커·조상 조회 실패) 기존 '정확히 하나' 판정으로 돈다.
+    """
+    markers = live_mcp_markers(repo_root)
+    ancestors = set(ancestor_pids())
+    mine = [m for m in markers if int(m.get("parent_pid") or 0) in ancestors]
+    if len(mine) == 1:
+        return mine[0]
     return markers[0] if len(markers) == 1 else None

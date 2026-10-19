@@ -278,3 +278,46 @@ def test_server_instructions_name_read_tools(vault_env, monkeypatch):
     text = mod.mcp.instructions or ""
     for name in ("get_known_problems", "get_decisions", "search_vault", "get_recent_sessions"):
         assert name in text
+
+
+def test_tool_calls_import_no_new_app_modules(vault_env, monkeypatch):
+    """MCP tool 경로에 지연 import가 없어야 한다.
+
+    MCP 서버는 세션 내내 살아 있는데 update-devtrail이 10분마다 main을 pull한다. tool이
+    함수 안에서 처음 import하는 모듈은 디스크의 새 코드를 읽으므로, 삭제·개명된 모듈이면
+    "No module named ..."로 터진다(2026-07-09, 2026-10-18 rpg-game-web·devtrail 세션 실제 발생).
+    기동 시 다 import해 두면 구서버도 자기 스냅샷으로 끝까지 동작한다.
+    """
+    import sys
+
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    before = {m for m in sys.modules if m.startswith("app.")}
+    tools = mod.mcp._tool_manager
+    tools.get_tool("get_project_briefing").fn("Devtrail")
+    tools.get_tool("search_vault").fn("x")
+    tools.get_tool("get_recent_sessions").fn("Devtrail")
+    tools.get_tool("get_decisions").fn("Devtrail")
+    tools.get_tool("get_known_problems").fn("Devtrail")
+    tools.get_tool("record_note").fn("knowledge", "t", "b", "Devtrail")
+    tools.get_tool("record_problem").fn(
+        project="Devtrail", title="t", symptoms="s", cause="c", solution="x", prevention="p"
+    )
+    tools.get_tool("record_agent_improvement").fn("Devtrail", "i", "m")
+    tools.get_tool("update_open_loops").fn(project="Devtrail", add=["a"])
+    tools.get_tool("write_work_plan").fn("Devtrail", "g", "c", "s", "a", "r")
+    for _ in range(2):  # 두 번째 호출은 기존 노트 갱신 경로를 탄다
+        tools.get_tool("write_session_process").fn(
+            project="Devtrail",
+            what_changed="변경",
+            files_touched="파일",
+            project_decisions={"decision": "d", "reason": "r"},
+            implementation_trace="흐름",
+            agent_execution_notes={"scope": "project", "better_approach": "b"},
+            docs_update_candidates="",
+            next_session="n",
+            learning_recovery={"ai_led": "a"},
+        )
+    with pytest.raises(ValueError):
+        tools.get_tool("read_note").fn("00_Inbox/x.md")
+    after = {m for m in sys.modules if m.startswith("app.")}
+    assert after - before == set()

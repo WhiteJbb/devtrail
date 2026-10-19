@@ -10,7 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from app.services.session_markers import claude_session_path, read_marker, unique_live_mcp_marker
+from app.services.session_markers import claude_session_path, live_mcp_marker_for_current_session, read_marker
 
 
 def _read_payload():
@@ -43,7 +43,7 @@ def main() -> int:
         return 0
 
     cwd = payload.get("cwd") or os.getcwd()
-    marker = unique_live_mcp_marker(Path(cwd))
+    marker = live_mcp_marker_for_current_session(Path(cwd))
     if marker is not None:
         process_written = bool(marker.get("process_written"))
         started_key = "updated_at"

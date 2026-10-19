@@ -62,6 +62,7 @@ def _write_session_marker(
             "session_id": _SESSION_ID,
             "repo_root": str(Path.cwd().resolve()),
             "pid": os.getpid(),
+            "parent_pid": os.getppid(),  # claude 프로세스 — Stop 훅이 자기 세션 마커를 고르는 열쇠
             "process_started_at": _PROCESS_STARTED_AT,
             "process_written": bool(existing.get("process_written")),
             "plan_written": bool(existing.get("plan_written")),

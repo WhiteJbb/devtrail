@@ -18,7 +18,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "markdown>=3.5",
     "textual>=0.60",
-    "mcp>=1.2",
+    "mcp>=1.2,<2",  # 2.x는 FastMCP가 MCPServer로 개명돼 app/mcp_server.py가 깨진다
 ]
 
 [project.optional-dependencies]

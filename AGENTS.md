@@ -21,6 +21,20 @@ Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정
 - 제품 방향: `docs/final.md`, 구현 실측 대비 검토: `docs/final-review.md`
 - 진행 중 개선 항목: `docs/devtrail-improvement-roadmap.md`
 
+## 개발 트리와 런타임 트리 (이 Mac)
+
+| 트리 | 경로 | 역할 |
+|------|------|------|
+| 개발 | `/Users/user/devtrail` | 브랜치 작업·테스트. 여기서 브랜치를 바꿔도 운영에 영향 없다 |
+| 런타임 | `/Users/user/devtrail-runtime` | `main` 전용 클론 + 자체 `.venv`·`.env`·`logs/`. launchd 7개 잡, 모든 repo의 MCP `devtrail-vault` command, nightshift·rpg 훅이 이걸 쓴다 |
+
+2026-10-18에 분리했다. 전에는 한 트리였고, 살아 있는 MCP 서버가 작업 트리의 브랜치 전환·모듈 삭제를
+그대로 읽어 세션 중 깨졌다(`60_Candidates/Problems/살아 있는 MCP 서버가…`). 런타임은
+`com.devtrail.update`(10분)가 `main`을 ff-only pull하므로 `main`에 머지하면 10분 안에 반영된다.
+launchd 재등록은 `bash /Users/user/devtrail-runtime/scripts/mac/register-schedules.sh`(템플릿의
+`__REPO_ROOT__`가 스크립트 위치로 채워진다). 런타임 트리에서 직접 편집하지 않는다.
+이 repo 자체의 `.claude/settings.json` 훅은 상대 경로라 개발 트리의 훅 코드를 실행한다 — 훅 개발용.
+
 ## 아키텍처 지도
 
 | 경로 | 역할 |
@@ -151,11 +165,12 @@ Claude `session_id`별 시작 시각을 남기고(재시작·컴팩팅에도 처
 없는 세션(훅 설치 전부터 살아 있던 세션)만 통과한다. `.claude/` 아래 변경은 세션의 변경으로
 세지 않는다.
 
-Claude hook payload의 `session_id`와 MCP 서버 내부 session ID는 서로 다른 값이고,
-현재 MCP 설정에는 둘을 명시적으로 연결하는 경로가 없다. 따라서 같은 repo에서 Claude
-세션 여러 개가 각각 MCP 서버를 실행하면 live 마커가 여러 개가 되어 plan/stop enforcement가
-fail-open 된다. 동시 세션별 enforcement가 필요하면 MCP 설정에 명시적 session binding을
-추가해야 한다.
+Claude hook payload의 `session_id`와 MCP 서버 내부 session ID는 서로 다른 값이다. 둘을 잇는 열쇠는
+프로세스 트리다 — claude가 MCP 서버를 직접 spawn하므로 마커의 `parent_pid`가 claude pid고, 훅은
+claude → sh → python으로 내려오므로 자기 조상 pid에 그 값이 있다. Stop 훅은 live 마커 중 자기
+조상과 `parent_pid`가 맞는 것을 고른다(`live_mcp_marker_for_current_session`, 2026-10-19). 그래서
+같은 repo에서 세션 여러 개가 동시에 돌아도 자기 세션 기록만 본다. 매칭이 없으면(구 마커·조상 조회
+실패) 예전의 '정확히 하나일 때만' 판정으로 돈다.
 
 ### capture-session fallback (MCP 미연결 시)
 
@@ -203,7 +218,7 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `30_Projects/<P>/Design/` | IA · UserScenarios · Personas | 사람과 협의 후 작성 |
 | `30_Projects/<P>/Conversations/` | 중요한 대화 발췌 | 사람 요청 시 기록 |
 | `30_Projects/<P>/PromptLog.md` | 중요 프롬프트 원문 | append 허용 |
-| `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈). 단 `05_OpenLoops.md`는 `update_open_loops`(MCP)로 에이전트가 자기 프로젝트 블록을 고친다 — 작업 목록은 낡는 비용이 더 크다 (2026-10-17) |
+| `40_AgentMemory/` | 전역 AI 메모리 | **직접 수정 금지** — `apply-memory-patch` 경유 (`--target lessons`는 일하는 방식 교훈). 단 `05_OpenLoops.md`는 `update_open_loops`(MCP)로 에이전트가 자기 프로젝트 블록을 고친다 — 작업 목록은 낡는 비용이 더 크다 (2026-10-17). `01_CurrentFocus`·`05_OpenLoops`·`06_Lessons`는 `<!-- devtrail-memory-patch: {"scope": "project", "project": "<P>"} -->` 마커 아래 블록이 그 프로젝트 briefing에만 들어간다 — 마커 앞은 전역 (2026-10-18) |
 | `50_Outputs/` | Digest · WeeklyReview · Blog · Resume · Portfolio · Interview · Todo | 읽기 전용 |
 | `60_Candidates/` | 지식·결정·메모리패치·블로그·커리어·문제 후보 | AI가 생성. **사람 검토 게이트 없음(2026-10-18)** — memory_patch는 매일 자동 반영, knowledge/decision/problem은 2일 조용하면 자동 승격, career_bullet/blog_idea는 소재로 남는다. 사람은 보기만 한다 |
 | `60_Candidates/SessionHandoffs/<P>/` | 세션별 Plan/Process | `write_work_plan`/`write_session_process` 전용. promote 대상 아님 |
