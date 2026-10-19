@@ -12,13 +12,14 @@ import pytest
 from app.services import session_markers
 
 
-def _write_marker(root: Path, session_id: str, pid: int | None = None) -> Path:
+def _write_marker(root: Path, session_id: str, pid: int | None = None, parent_pid: int = 0) -> Path:
     now = datetime.now().isoformat()
     path = session_markers.marker_path(root, session_id)
     session_markers.write_json_atomic(path, {
         "session_id": session_id,
         "repo_root": str(root.resolve()),
         "pid": pid or os.getpid(),
+        "parent_pid": parent_pid,
         "process_started_at": now,
         "updated_at": now,
         "process_written": False,
@@ -60,3 +61,26 @@ def test_atomic_write_failure_preserves_old_marker(tmp_path, monkeypatch):
 
     assert json.loads(path.read_text(encoding="utf-8")) == old
     assert list(path.parent.glob("*.tmp")) == []
+
+
+def test_ancestor_pids_starts_with_self_and_includes_parent():
+    chain = session_markers.ancestor_pids()
+    assert chain[0] == os.getpid()
+    assert os.getppid() in chain
+
+
+def test_marker_for_current_session_picks_own_among_concurrent(tmp_path):
+    """동시 세션 둘: 내 조상(여기선 내 ppid)을 parent_pid로 가진 마커만 골라야 한다."""
+    _write_marker(tmp_path, "mine", parent_pid=os.getppid())
+    _write_marker(tmp_path, "other", parent_pid=2147483000)
+    picked = session_markers.live_mcp_marker_for_current_session(tmp_path)
+    assert picked is not None and picked["session_id"] == "mine"
+    assert session_markers.unique_live_mcp_marker(tmp_path) is None  # 기존 판정은 여전히 포기
+
+
+def test_marker_for_current_session_falls_back_to_unique(tmp_path):
+    _write_marker(tmp_path, "legacy")  # parent_pid 없음(구 마커) — 하나뿐이면 그대로 쓴다
+    picked = session_markers.live_mcp_marker_for_current_session(tmp_path)
+    assert picked is not None and picked["session_id"] == "legacy"
+    _write_marker(tmp_path, "legacy-2")
+    assert session_markers.live_mcp_marker_for_current_session(tmp_path) is None
