@@ -103,6 +103,8 @@ class DistillAgent:
             raise LLMError(f"LLM이 유효한 JSON을 반환하지 않았습니다: {e}") from e
         specs = self._parse_specs(data, source_refs=[n.path for n in notes], kind_filter=kind)
         specs, scope_dropped = self._filter_by_note_kinds(specs, notes)
+        specs, bound_dropped = self._filter_project_bound_knowledge(specs)
+        scope_dropped += bound_dropped
         # 기존 thread의 연속인 blog_idea는 critic을 거치지 않는다 — critic은 이런 후보를
         # "기존 아이디어와 중복"으로 탈락시키는데, 중복이 아니라 병합 대상이다.
         # 탈락하면 새 세션 ref가 thread에 누적될 기회를 잃는다.
@@ -163,6 +165,32 @@ class DistillAgent:
                 dropped.append(
                     f"{spec.title} — 소스 노트가 {spec.kind} 추출을 허용하지 않음 (이미 구조화 경로로 기록됨)"
                 )
+        return kept, dropped
+
+    def _filter_project_bound_knowledge(
+        self, specs: list[CandidateSpec]
+    ) -> tuple[list[CandidateSpec], list[str]]:
+        """제목에 프로젝트 이름이 든 knowledge는 버린다.
+
+        knowledge의 3번 기준(이 프로젝트를 넘어 적용 가능)을 결정적으로 강제한다. 프롬프트에
+        기준을 써도 Flash-Lite는 "Devtrail: Plan 요구 사항 제거 및 작업 흐름 간소화"처럼
+        그 세션의 변경 목록을 knowledge로 올린다(2026-10-18 밤 5건 전부). 그런 내용은 이미
+        Process·Decision에 있다. 프로젝트 이름 없이 제목이 안 되는 지식은 지식이 아니다.
+        """
+        names = {str(s.project or "").strip().casefold() for s in specs} - {""}
+        try:
+            names |= {d.name.casefold() for d in (self.vault_dir / "30_Projects").iterdir() if d.is_dir()}
+        except OSError:
+            pass
+        kept: list[CandidateSpec] = []
+        dropped: list[str] = []
+        for spec in specs:
+            title = spec.title.casefold()
+            hit = next((n for n in names if n and n in title), None) if spec.kind == "knowledge" else None
+            if hit:
+                dropped.append(f"{spec.title} — 제목이 프로젝트({hit})에 묶임: 프로젝트를 넘는 지식이 아니라 그 프로젝트의 변경 기록")
+            else:
+                kept.append(spec)
         return kept, dropped
 
     def _critic_filter(
