@@ -682,7 +682,8 @@ def update_open_loops(
             end -= stop - hit
 
         block_text = "\n".join(lines[start:end]).casefold()
-        new = [f"- ({today}) {item.strip()}" for item in add or []
+        # 에이전트가 날짜를 직접 붙여 보내는 일이 잦다 — 두 번 붙이지 않는다
+        new = [f"- {item.strip()}" if item.strip().startswith("(20") else f"- ({today}) {item.strip()}" for item in add or []
                if item.strip() and item.strip().casefold() not in block_text]
         if new:
             at = end

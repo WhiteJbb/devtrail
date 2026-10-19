@@ -1566,3 +1566,16 @@ def test_get_decisions_hides_superseded_and_sorts_by_decision_date(tmp_path):
     assert titles[0] == "새 결정" and titles[-1] == "옛 결정"
     archived = vault_tools.get_decisions("Devtrail", include_archived=True, settings=_settings(tmp_path))
     assert any(d["title"] == "뒤집힌 결정" and d["status"] == "superseded" for d in archived)
+
+
+def test_update_open_loops_does_not_double_date_prefix(tmp_path):
+    settings = _settings(tmp_path)
+    mem = tmp_path / "40_AgentMemory"
+    mem.mkdir(parents=True, exist_ok=True)
+    (mem / "05_OpenLoops.md").write_text("# OpenLoops\n", encoding="utf-8")
+    result = vault_tools.update_open_loops(project="P", add=["(2026-10-19) 이미 날짜 있음", "날짜 없음"], settings=settings)
+    body = (mem / "05_OpenLoops.md").read_text(encoding="utf-8")
+    assert "- (2026-10-19) 이미 날짜 있음" in body
+    assert "(2026-10-19) (2026-10-19)" not in body
+    assert body.count("날짜 없음") == 1 and "- (20" in body
+    assert len(result.added) == 2
