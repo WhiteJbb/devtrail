@@ -61,13 +61,9 @@ class Settings(BaseSettings):
     # --- Messenger ---
     messenger_provider: str = Field(default="", alias="MESSENGER_PROVIDER")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
-    telegram_allowed_chat_ids: str = Field(default="", alias="TELEGRAM_ALLOWED_CHAT_IDS")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
 
     # ----- 파생 프로퍼티 -----
-    @property
-    def allowed_chat_ids(self) -> list[str]:
-        return [c.strip() for c in self.telegram_allowed_chat_ids.split(",") if c.strip()]
 
     @property
     def obsidian_vault_root(self) -> str:

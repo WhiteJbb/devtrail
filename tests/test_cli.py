@@ -45,18 +45,6 @@ def test_suggest_topics_prints(monkeypatch):
     assert "RAG 환경 분리" in result.output
 
 
-def test_ask_requires_llm(monkeypatch):
-    from app.llm import factory as llm_factory
-
-    monkeypatch.setattr(
-        llm_factory, "get_llm_provider",
-        lambda s: (_ for _ in ()).throw(LLMNotConfiguredError("LLM_PROVIDER 미설정"))
-    )
-    result = runner.invoke(cli.app, ["ask", "오늘 회고 정리해줘"])
-    assert result.exit_code == 1
-    assert "LLM이 연결되어 있지 않습니다" in result.output
-
-
 # ── 후보 검토 CLI (번호 선택 · review) ───────────────────────────────────────
 
 

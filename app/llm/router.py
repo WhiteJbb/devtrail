@@ -44,7 +44,6 @@ COMMAND_TASK_MAP: dict[str, str] = {
     "suggest-knowledge":    "light",
     "suggest-blog-topics":  "light",
     "suggest-memory-patch": "light",
-    "ask":                  "light",
     "write-blog":           "writer",
     "worklog":              "writer",
     "resume":               "writer",

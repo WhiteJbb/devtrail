@@ -7,7 +7,7 @@ Cursor 등)의 **유일한 정본 규칙**이다. 도구별 파일(`CLAUDE.md` �
 ## 프로젝트 개요
 
 Obsidian Vault를 단일 지식 저장소로 삼아 작업 흔적을 캡처·정제하고
-블로그·포트폴리오·이력서 초안까지 만드는 개인 지식 OS CLI/봇.
+블로그·포트폴리오·이력서 초안까지 만드는 개인 지식 OS CLI.
 
 ```
 [ Capture ] → [ Distill ] → [ Curate ] → [ Generate ] → [ Deliver ]
@@ -47,8 +47,7 @@ launchd 재등록은 `bash /Users/user/devtrail-runtime/scripts/mac/register-sch
 | `app/memory/` | ContextPackBuilder, AgentMemory/ProjectMemory 로더 |
 | `app/prompts/` | LLM 프롬프트 템플릿(`*.md`) — 프롬프트를 코드에 하드코딩하지 않는다 |
 | `app/llm/` | provider 추상화 + task_type 라우팅(`router.py`), 폴백 체인(`fallback.py`) |
-| `app/messaging/` | Telegram 봇 라우터·미디어 핸들러 |
-| `app/assistant/` | 자연어 의도 분류(`intent.py`)와 어시스턴트 응답 조립 |
+| `app/messaging/` | Telegram 송신 provider (digest·주간 회고·알림. 수신 봇은 2026-10-19 제거) |
 | `app/vault_tools.py` | MCP 도구 구현 (get_project_briefing, write_work_plan, write_session_process 등) |
 | `app/mcp_server.py` | MCP 서버 진입점 (`devtrail mcp-serve`) |
 | `scripts/hooks/` | Claude Code 훅 (session-start-briefing, stop-process-check) + git post-commit |

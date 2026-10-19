@@ -34,7 +34,6 @@ echo ""
 echo "launchd 작업 등록 중..."
 echo ""
 
-install_plist "$TEMPLATE_DIR/com.devtrail.bot.plist.template"            "com.devtrail.bot"
 install_plist "$TEMPLATE_DIR/com.devtrail.update.plist.template"         "com.devtrail.update"
 install_plist "$TEMPLATE_DIR/com.devtrail.vault-sync.plist.template"     "com.devtrail.vault-sync"
 install_plist "$TEMPLATE_DIR/com.devtrail.nightly.plist.template"        "com.devtrail.nightly"
@@ -48,6 +47,6 @@ launchctl list | grep devtrail || echo "  (없음)"
 
 echo ""
 echo "삭제하려면:"
-for label in com.devtrail.bot com.devtrail.update com.devtrail.vault-sync com.devtrail.nightly com.devtrail.weekly com.devtrail.notify-morning com.devtrail.notify-evening; do
+for label in com.devtrail.update com.devtrail.vault-sync com.devtrail.nightly com.devtrail.weekly com.devtrail.notify-morning com.devtrail.notify-evening; do
     echo "  launchctl unload \"$TARGET_DIR/${label}.plist\" && rm \"$TARGET_DIR/${label}.plist\""
 done

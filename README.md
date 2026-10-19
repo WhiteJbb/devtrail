@@ -250,11 +250,9 @@ devtrail weekly-distill                      # 7일치 daily digest 종합 + wee
 devtrail push-digest [--daily|--weekly|--worklog]   # 후보 요약 Telegram 수동 전송
 devtrail notify morning|evening              # 아침/저녁 알림 Telegram 전송 (OS 스케줄러가 호출)
 devtrail print-schedule [--windows|--cron]   # OS 스케줄러 등록 명령 출력 (최소 구성)
-devtrail ask "자연어"                        # 의도 분류 후 커맨드 실행
-devtrail serve-bot                           # Telegram 봇 실행
 ```
 
-전체 자동화(봇 상시 실행 · 코드/Vault 자동 동기화 · nightly · weekly · 아침/저녁 알림)를 한 번에 등록하려면
+전체 자동화(코드/Vault 자동 동기화 · nightly · weekly · 아침/저녁 알림)를 한 번에 등록하려면
 아래 [야간 자동화](#야간-자동화) 섹션의 `register-schedules` 스크립트를 사용하세요.
 
 ### 유지보수 (사람 전용, MCP 미노출)
@@ -422,7 +420,6 @@ devtrail capture-session --project <name> --from-repo --from-agent --summary-fil
 ## 야간 자동화
 
 ```
-[시작 시]        devtrail-bot          → Telegram 봇 상시 실행 (SYSTEM, 로그인 없이 동작)
 [10분마다]        devtrail-update       → 코드 업데이트 (git pull)
 [10분마다]        devtrail-vault-sync   → Vault git 동기화
 [08:00]          notify morning        → Telegram 아침 알림 (할 일 + 후보 개수)
@@ -460,75 +457,17 @@ devtrail print-schedule --cron      # Linux / Mac crontab 등록 명령 출력
 
 ---
 
-## Telegram 봇
+## Telegram 전송
 
 ```env
 MESSENGER_PROVIDER=telegram
 TELEGRAM_BOT_TOKEN=<BotFather에서 발급>
-TELEGRAM_ALLOWED_CHAT_IDS=<본인 chat id>
 TELEGRAM_CHAT_ID=<알림 받을 chat id>
 ```
 
-```bash
-devtrail serve-bot
-```
-
-### 할 일 관리
-
-```
-/task <내용>              할 일 추가  (예: /task 코드리뷰 내일까지)
-/tasks                    목록 보기 + 완료·삭제 인라인 버튼  (별칭: /할일, /할_일)
-/done <번호>              완료 처리
-/del <번호>               삭제  (별칭: /delete, /rm)
-/edit <번호> <새내용>     내용·날짜·섹션 수정
-```
-
-날짜 키워드 자동 인식: `오늘` · `내일` · `이번 주` · `월~일요일` · `2026-07-01`  
-날짜 기준으로 섹션(오늘 / 이번 주 / 언제든지) 자동 배정.
-
-`/tasks` 응답에는 태스크마다 **완료(✅)·삭제(🗑) 버튼**이 붙습니다. 버튼은 내부적으로 안정 ID(`^hex6`)를 사용해 목록이 바뀐 뒤에도 오동작하지 않습니다.
-
-태스크는 Obsidian Vault `70_Tasks/Active.md`에 저장되며, 완료 시 `70_Tasks/Done/<날짜>.md`에 기록됩니다.
-
-### 기록 → 지식화
-
-```
-/capture <메모>     /distill           /candidates
-/search <검색어>    /context <주제>    /promote <path>
-/worklog            /todo              /briefing
-/sync
-```
-
-`/briefing`은 `40_AgentMemory/`를 요약해 보여줍니다. `/sync`는 Vault git 동기화를 수동 트리거합니다 (Windows 서버 전용, `scripts/windows/sync-vault.ps1` 실행).
-
-**`/review`** — 후보를 한 건씩 인라인 버튼 카드로 검토합니다.
-
-```
-/review          검토 시작 (60_Candidates/ 전체를 큐에 담아 첫 카드 전송)
-✅ 승격 / ⏭ 건너뛰기 / 🗑 삭제 / ⛔ 종료   ← 버튼 탭으로 진행
-```
-
-### 블로그
-
-```
-/topics             /write <주제>      /list
-/preview [경로]     /revise [경로]     /export [경로]
-/publish <URL>
-```
-
-`/topics`는 쌓인 기록에서 블로그 주제 후보를 뽑아 제안합니다. `/preview`, `/revise`, `/export`는 인자를 생략하면 최신 초안(latest)을 대상으로 합니다.
-
-### 개인 문서 · 기타
-
-```
-/portfolio          /resume            /restart
-```
-
-`/restart`는 봇 프로세스를 재시작합니다(코드 배포 후 반영용).
-
-URL 전송 시 자동으로 캡처 + LLM 요약 실행. 음성·이미지도 자동 처리.
-
-전체 명령 목록은 봇에게 `/help`(또는 빈 메시지)를 보내면 확인할 수 있습니다.
+송신 전용이다 — nightly digest·주간 회고·아침/저녁 알림이 이 채널로 간다. 메시지를 받아
+처리하는 봇(`serve-bot`, `/review`·`/task`·메모 캡처)은 2026-10-19에 제거했다: 승격이 자동이
+된 뒤 사람이 봇으로 할 일이 없었고, 기록 입력은 전부 Claude Code 세션의 MCP가 담당한다.
 
 ---
 
@@ -552,8 +491,7 @@ app/
 ├─ llm/                # router(task_type→chain), FallbackChain
 │                      # GeminiProvider, KimiProvider, OllamaProvider, OpenAICompatibleProvider
 ├─ content_sources/    # ObsidianSource, GitSource
-├─ messaging/          # Telegram provider, router, media_handler, bot
-├─ assistant/          # 자연어 의도 라우팅
+├─ messaging/          # Telegram 송신 provider (digest·알림)
 ├─ models/             # ContextPack, SourceChunk
 └─ prompts/*.md        # LLM 프롬프트 (코드와 분리)
 
