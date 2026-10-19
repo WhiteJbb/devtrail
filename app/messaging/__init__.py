@@ -1,18 +1,6 @@
-"""메신저 연동 계층 — 또 하나의 '입구'.
+"""메신저 연동 계층 — 송신 전용(digest·주간 회고·알림). 수신 봇은 2026-10-19 제거."""
 
-CLI처럼 얇은 어댑터다. 들어온 메시지를 명령으로 해석해
-WikiBlogAgent 등 각 Agent를 호출하고 결과를 답장한다.
-"""
-
-from app.messaging.base import IncomingMessage, MessengerProvider
-from app.messaging.bot import MessengerBot
+from app.messaging.base import MessengerProvider
 from app.messaging.factory import get_messenger_provider
-from app.messaging.router import CommandRouter
 
-__all__ = [
-    "IncomingMessage",
-    "MessengerProvider",
-    "MessengerBot",
-    "CommandRouter",
-    "get_messenger_provider",
-]
+__all__ = ["MessengerProvider", "get_messenger_provider"]

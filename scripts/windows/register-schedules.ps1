@@ -32,9 +32,6 @@ function Set-PowerPolicy($name) {
 
 Write-Host "`nTask Scheduler 등록 중...`n" -ForegroundColor White
 
-# 시작 시: Telegram 봇 (SYSTEM으로 실행 — 로그인 없이도 동작)
-Register "devtrail-bot" "/SC ONSTART" "$RepoRoot\scripts\windows\run-bot-service.ps1" @("/RU", "SYSTEM")
-
 # 10분마다: devtrail 코드 업데이트
 Register "devtrail-update" "/SC MINUTE /MO 10" "$RepoRoot\scripts\windows\update-devtrail.ps1"
 
@@ -60,13 +57,13 @@ else { Write-Host "  [!!] devtrail-notify-evening - $($result -join ' ')" -Foreg
 
 Write-Host ""
 Write-Host "전원 설정 해제 중 (배터리/절전 제한 제거)..." -ForegroundColor White
-foreach ($tn in @("devtrail-bot", "devtrail-update", "devtrail-vault-sync", "devtrail-nightly", "devtrail-weekly", "devtrail-notify-morning", "devtrail-notify-evening")) {
+foreach ($tn in @("devtrail-update", "devtrail-vault-sync", "devtrail-nightly", "devtrail-weekly", "devtrail-notify-morning", "devtrail-notify-evening")) {
     Set-PowerPolicy $tn
 }
 
 Write-Host ""
 Write-Host "등록 결과 확인:" -ForegroundColor White
-foreach ($tn in @("devtrail-bot", "devtrail-update", "devtrail-vault-sync", "devtrail-nightly", "devtrail-weekly", "devtrail-notify-morning", "devtrail-notify-evening")) {
+foreach ($tn in @("devtrail-update", "devtrail-vault-sync", "devtrail-nightly", "devtrail-weekly", "devtrail-notify-morning", "devtrail-notify-evening")) {
     schtasks /Query /TN $tn 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [OK] $tn" -ForegroundColor Green
@@ -77,7 +74,6 @@ foreach ($tn in @("devtrail-bot", "devtrail-update", "devtrail-vault-sync", "dev
 
 Write-Host ""
 Write-Host "삭제하려면:" -ForegroundColor DarkGray
-Write-Host "  schtasks /Delete /TN devtrail-bot             /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN devtrail-update          /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN devtrail-vault-sync      /F" -ForegroundColor DarkGray
 Write-Host "  schtasks /Delete /TN devtrail-nightly         /F" -ForegroundColor DarkGray

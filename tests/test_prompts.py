@@ -2,7 +2,7 @@ from app.prompts import load_prompt, render_prompt
 
 
 def test_load_known_prompts():
-    for name in ("distill_candidates", "worklog_summary", "todo_suggest", "write_wiki_blog"):
+    for name in ("distill_candidates", "candidate_critic", "todo_suggest", "write_wiki_blog"):
         assert load_prompt(name).strip()
 
 

@@ -19,10 +19,7 @@ from app.services.wiki_service import WikiNote, WikiService
 
 _SOURCE_PREFIXES = (
     "10_Worklog/Sessions/",
-    "10_Worklog/Daily/",
     "00_Inbox/URLs/",
-    "00_Inbox/Memos/",
-    "10_Worklog/Summaries/",
 )
 _KNOWLEDGE_PREFIXES = ("20_Knowledge/", "30_Projects/")
 # 이력서 소재는 "왜 그렇게 판단했는가"에 있다 — Files Touched 대신 판단 근거 섹션을 먼저 담는다.

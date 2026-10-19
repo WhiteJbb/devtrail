@@ -297,7 +297,7 @@ def test_long_writer_provider_env_deduplicates_chain():
 
 def test_command_to_task_type_light():
     assert get_task_type_for_command("suggest-knowledge") == "light"
-    assert get_task_type_for_command("capture") == "light"
+    assert get_task_type_for_command("suggest-blog-topics") == "light"
 
 
 def test_command_to_task_type_distill():

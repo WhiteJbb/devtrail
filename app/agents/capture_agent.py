@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,8 +11,6 @@ from typing import Any
 import frontmatter
 
 from app.config import Settings, get_settings
-from app.llm.base import LLMProvider
-from app.prompts import render_prompt
 from app.services.candidate_writer import atomic_write_text
 from app.services.identity import resolve_agent, resolve_host
 from app.services.repo_snapshot import RepoSnapshot, capture_repo_snapshot
@@ -30,7 +27,7 @@ class CaptureResult:
 
 
 class CaptureAgent:
-    """Store memo, chat, commit, and daily-log captures in safe vault areas."""
+    """세션 노트(10_Worklog/Sessions)를 쓴다 — MCP 미연결 시 capture-session fallback."""
 
     def __init__(self, settings: Settings | None = None, now: datetime | None = None) -> None:
         self.settings = settings or get_settings()
@@ -39,97 +36,6 @@ class CaptureAgent:
             raise RuntimeError("OBSIDIAN_VAULT_PATH is not configured.")
         self.vault_dir = Path(self.settings.obsidian_vault_root)
         self.wiki_service = WikiService(self.vault_dir)
-
-    def capture(self, text: str, project: str = "", source: str = "manual") -> CaptureResult:
-        if not text.strip():
-            raise ValueError("capture text is empty.")
-
-        stamp = self._timestamp()
-        rel_path = f"00_Inbox/Memos/{stamp}-{self._slug(project or 'memo')}.md"
-        title = f"Capture - {project}" if project else "Capture"
-        metadata = {
-            "type": "capture",
-            "date": self._date(),
-            "project": project,
-            "source": source,
-            "status": "raw",
-            "tags": [],
-        }
-        body = f"# {title}\n\n{text.strip()}\n"
-        result = self._write_note(rel_path, metadata, body, kind="capture")
-        self._log("capture", project or "manual memo", result.rel_path)
-        return result
-
-    def capture_commit(
-        self,
-        repo_dir: Path,
-        project: str = "",
-        ref: str = "HEAD",
-        from_agent: bool = False,
-        llm: LLMProvider | None = None,
-    ) -> CaptureResult:
-        repo_dir = repo_dir.resolve()
-        if self._git(repo_dir, ["rev-parse", "--is-inside-work-tree"]) is None:
-            raise ValueError(f"not a git repository: {repo_dir}")
-
-        meta_raw = self._git(repo_dir, ["show", ref, "-s", "--date=iso", "--format=%H%n%an%n%ad%n%s%n%b"])
-        if not meta_raw:
-            raise ValueError(f"git commit not found: {ref}")
-        lines = meta_raw.splitlines()
-        sha = lines[0].strip() if len(lines) > 0 else ""
-        author = lines[1].strip() if len(lines) > 1 else ""
-        date = lines[2].strip() if len(lines) > 2 else ""
-        subject = lines[3].strip() if len(lines) > 3 else sha[:10]
-        message_body = "\n".join(lines[4:]).strip()
-
-        stat = (self._git(repo_dir, ["show", ref, "--stat", "--format="]) or "").strip()
-        diff = (self._git(repo_dir, ["show", ref, "--format=", "--unified=2"]) or "").strip()
-        if diff and len(diff) > self.settings.git_diff_max_chars:
-            diff = diff[: self.settings.git_diff_max_chars].rstrip() + "\n...(diff 일부 생략)"
-
-        stamp = self._timestamp()
-        rel_path = f"10_Worklog/GitSummaries/{stamp}-{self._slug(project or repo_dir.name)}-{sha[:10]}.md"
-        metadata = {
-            "type": "git_summary",
-            "date": self._date(),
-            "project": project,
-            "source": "git",
-            "repo": str(repo_dir),
-            "commit": sha,
-            "status": "raw",
-            "tags": [],
-        }
-        body = (
-            f"# Git Summary - {subject}\n\n"
-            f"- commit: `{sha}`\n"
-            f"- author: {author}\n"
-            f"- date: {date}\n"
-            f"- project: {project or repo_dir.name}\n\n"
-        )
-        if message_body:
-            body += f"## Message\n\n{message_body}\n\n"
-        body += f"## Changed Files\n\n{stat or '(no stat)'}\n\n"
-
-        if from_agent:
-            _llm = llm
-            if _llm is None:
-                from app.llm.factory import get_task_llm_provider
-                _llm = get_task_llm_provider("light", self.settings)
-            commit_context = f"메시지: {subject}\n\n변경 파일:\n{stat}\n\ndiff:\n{diff}"
-            try:
-                summary = _llm.complete(
-                    render_prompt("commit_summary", COMMIT_CONTEXT=commit_context)
-                )
-                body += f"## AI 요약\n\n{summary}\n"
-            except Exception:
-                if diff:
-                    body += f"## Diff\n\n```diff\n{diff}\n```\n"
-        elif diff:
-            body += f"## Diff\n\n```diff\n{diff}\n```\n"
-
-        result = self._write_note(rel_path, metadata, body, kind="git_summary")
-        self._log("capture", f"git {sha[:10]}", result.rel_path)
-        return result
 
     def capture_session(
         self,
@@ -331,242 +237,6 @@ class CaptureAgent:
 
         return "\n".join(lines) + "\n"
 
-    def capture_attachment(
-        self,
-        file_path: Path,
-        source: str = "telegram",
-        caption: str = "",
-    ) -> CaptureResult:
-        """voice/image attachment를 00_Inbox/Memos/에 노트로 저장한다.
-
-        파일 자체는 이미 00_Inbox/Raw/Attachments/에 저장돼 있어야 한다.
-        """
-        stamp = self._timestamp()
-        try:
-            rel_attachment = str(file_path.relative_to(self.vault_dir)).replace("\\", "/")
-        except ValueError:
-            rel_attachment = file_path.name
-        is_voice = "voice" in source.lower()
-        kind_str = "voice" if is_voice else "image"
-        note_slug = self._slug(f"{kind_str}-{file_path.stem[:30]}")
-        rel_path = f"00_Inbox/Memos/{stamp}-{note_slug}.md"
-        title = "음성 Capture" if is_voice else "이미지 Capture"
-
-        metadata: dict[str, Any] = {
-            "type": "capture",
-            "date": self._date(),
-            "source": source,
-            "status": "raw",
-            "needs_distill": True,
-            "attachments": [rel_attachment],
-            "tags": ["capture", kind_str],
-        }
-
-        if is_voice:
-            body = (
-                f"# {title}\n\n"
-                "## Attachment\n\n"
-                f"- `{rel_attachment}`\n\n"
-                "## Notes\n\n"
-                "- STT/caption provider is not configured.\n"
-            )
-        else:
-            body = (
-                f"# {title}\n\n"
-                "## Attachment\n\n"
-                f"![[{rel_attachment}]]\n\n"
-                "## Notes\n\n"
-            )
-            if caption:
-                body += f"{caption}\n"
-            else:
-                body += "- OCR/caption provider is not configured.\n"
-
-        result = self._write_note(rel_path, metadata, body, kind="attachment_capture")
-        self._log(f"capture-{kind_str}", source, result.rel_path)
-        return result
-
-    def capture_url(
-        self,
-        url: str,
-        title: str = "",
-        source: str = "telegram_url",
-        llm: LLMProvider | None = None,
-    ) -> CaptureResult:
-        """URL을 00_Inbox/URLs/에 노트로 저장한다."""
-        import json
-        import urllib.parse
-
-        stamp = self._timestamp()
-        domain = urllib.parse.urlparse(url).netloc or "url"
-        rel_path = f"00_Inbox/URLs/{stamp}-{self._slug(domain)}.md"
-
-        fetched_title, page_text = self._fetch_url_content(url)
-        if title:
-            fetched_title = title
-
-        summary = ""
-        tags: list[str] = ["capture", "url"]
-
-        if llm and page_text:
-            try:
-                raw = llm.complete(
-                    render_prompt(
-                        "url_summary",
-                        URL=url,
-                        TITLE=fetched_title or "(없음)",
-                        CONTENT=page_text,
-                    )
-                ).strip()
-                parsed = json.loads(raw)
-                summary = parsed.get("summary", "")
-                extra = parsed.get("tags", [])
-                if extra:
-                    tags = list(dict.fromkeys(tags + [str(t) for t in extra]))
-            except Exception:
-                pass
-
-        metadata: dict[str, Any] = {
-            "type": "capture",
-            "date": self._date(),
-            "source": source,
-            "url": url,
-            "title": fetched_title,
-            "status": "raw",
-            "needs_distill": True,
-            "tags": tags,
-        }
-        body = (
-            "# URL Capture\n\n"
-            f"- url: {url}\n"
-            f"- title: {fetched_title or '(없음)'}\n"
-            f"- captured_from: {source.replace('_', ' ')}\n"
-        )
-        if summary:
-            body += f"\n## Summary\n\n{summary}\n"
-
-        result = self._write_note(rel_path, metadata, body, kind="url_capture")
-        self._log("capture-url", url[:60], result.rel_path)
-        return result
-
-    @staticmethod
-    def _fetch_url_content(url: str) -> tuple[str, str]:
-        """URL에서 title과 본문 텍스트를 추출한다. (title, text) 반환. 실패하면 ('', '').
-
-        Jina Reader API(r.jina.ai)를 우선 시도해 JS 렌더링 페이지(Notion, Twitter 등)도 처리한다.
-        Jina 실패 시 직접 fetch로 폴백한다.
-        """
-        import re as _re
-        import httpx
-
-        def _via_jina(u: str) -> tuple[str, str]:
-            resp = httpx.get(
-                f"https://r.jina.ai/{u}",
-                headers={"Accept": "text/plain"},
-                timeout=20.0,
-                follow_redirects=True,
-            )
-            resp.raise_for_status()
-            text = resp.text.strip()
-            # Jina 응답 첫 줄: "Title: <제목>"
-            title = ""
-            if text.startswith("Title:"):
-                first_line = text.splitlines()[0]
-                title = first_line.removeprefix("Title:").strip()
-                text = text[len(first_line):].strip()
-            return title, text[:4000]
-
-        def _via_direct(u: str) -> tuple[str, str]:
-            resp = httpx.get(u, timeout=15.0, follow_redirects=True)
-            html = resp.text
-            m = _re.search(r"<title[^>]*>(.*?)</title>", html, _re.IGNORECASE | _re.DOTALL)
-            fetched_title = m.group(1).strip() if m else ""
-            text = _re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=_re.IGNORECASE | _re.DOTALL)
-            text = _re.sub(r"<[^>]+>", " ", text)
-            text = _re.sub(r"\s+", " ", text).strip()
-            return fetched_title, text[:4000]
-
-        try:
-            return _via_jina(url)
-        except Exception:
-            pass
-        try:
-            return _via_direct(url)
-        except Exception:
-            return "", ""
-
-    def daily_log(self, project: str = "", llm: LLMProvider | None = None) -> CaptureResult:
-        date = self._date()
-        name = f"{date}-{self._slug(project)}.md" if project else f"{date}.md"
-        rel_path = f"10_Worklog/Daily/{name}"
-        path = self.vault_dir / rel_path
-        if path.exists():
-            self._log("daily-log", project or date, rel_path)
-            return CaptureResult(path=path, rel_path=rel_path, created=False, kind="daily_log")
-
-        sections = ""
-        if llm:
-            context = self._gather_daily_context(date, project)
-            if context:
-                try:
-                    sections = llm.complete(
-                        render_prompt("daily_log_suggest", CONTEXT=context)
-                    ).strip()
-                except Exception:
-                    sections = ""
-
-        if not sections:
-            sections = (
-                "## Done\n\n- \n\n"
-                "## Blockers\n\n- \n\n"
-                "## Next\n\n- \n\n"
-                "## Blog Seeds\n\n- \n"
-            )
-
-        metadata = {
-            "type": "worklog",
-            "date": date,
-            "project": project,
-            "tags": [],
-            "source": "daily-log",
-            "status": "raw",
-            "needs_distill": True,
-        }
-        body = f"# Daily Log - {date}\n\n{sections}\n"
-        result = self._write_note(rel_path, metadata, body, kind="daily_log")
-        self._log("daily-log", project or date, result.rel_path)
-        return result
-
-    def _gather_daily_context(self, date: str, project: str = "") -> str:
-        """오늘의 작업 컨텍스트를 수집한다: 캡처, git 요약, open loops."""
-        parts: list[str] = []
-
-        for inbox_sub in ("URLs", "Memos"):
-            sub_dir = self.vault_dir / "00_Inbox" / inbox_sub
-            if sub_dir.exists():
-                for f in sorted(sub_dir.glob(f"{date}*.md"))[:5]:
-                    try:
-                        parts.append(f"[캡처/{inbox_sub}] {f.stem}\n{f.read_text(encoding='utf-8')[:300]}")
-                    except Exception:
-                        pass
-
-        git_dir = self.vault_dir / "10_Worklog" / "GitSummaries"
-        if git_dir.exists():
-            for f in sorted(git_dir.glob(f"{date}*.md"))[:5]:
-                try:
-                    parts.append(f"[Git] {f.stem}\n{f.read_text(encoding='utf-8')[:600]}")
-                except Exception:
-                    pass
-
-        open_loops = self.vault_dir / "40_AgentMemory" / "05_OpenLoops.md"
-        if open_loops.exists():
-            try:
-                parts.append(f"[OpenLoops]\n{open_loops.read_text(encoding='utf-8')[:600]}")
-            except Exception:
-                pass
-
-        return "\n\n---\n\n".join(parts)
-
     def _write_note(self, rel_path: str, metadata: dict[str, Any], body: str, kind: str) -> CaptureResult:
         path = self.vault_dir / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -576,23 +246,6 @@ class CaptureAgent:
 
     def _log(self, action: str, label: str, rel_path: str) -> None:
         self.wiki_service.append_vault_log(action, label, [rel_path])
-
-    def _git(self, repo_dir: Path, args: list[str]) -> str | None:
-        try:
-            result = subprocess.run(
-                ["git", *args],
-                cwd=str(repo_dir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except (FileNotFoundError, OSError):
-            return None
-        if result.returncode != 0:
-            return None
-        return result.stdout
 
     def _now(self) -> datetime:
         return self.now or datetime.now()

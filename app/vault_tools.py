@@ -208,7 +208,7 @@ def _memory_staleness_warning(agent_memory) -> str:
     return (
         "## ⚠ AgentMemory 신선도 경고\n\n"
         + "\n".join(stale_lines)
-        + "\n\n내용이 여전히 유효한지 확인하고 필요하면 apply-memory-patch로 갱신을 제안하세요."
+        + "\n\n내용이 여전히 유효한지 확인하고 낡았으면 record_agent_improvement로 갱신 후보를 남기세요."
     )
 
 

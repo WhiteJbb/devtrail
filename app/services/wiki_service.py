@@ -23,12 +23,7 @@ _TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣_+-]+")
 
 VAULT_DIRS = [
     "00_Inbox/URLs",
-    "00_Inbox/Memos",
-    "00_Inbox/Raw/Attachments",  # media_handler가 Telegram 첨부를 저장
     "10_Worklog/Sessions",
-    "10_Worklog/Daily",
-    "10_Worklog/Summaries",  # worklog_agent 출력
-    "10_Worklog/GitSummaries",  # capture_agent.capture_commit 출력
     "20_Knowledge",  # 승격 지식 — curator가 20_Knowledge/{project}/ 하위를 동적 생성
     # 프로젝트 정본 문서 구조 (기본 프로젝트 Devtrail 예시).
     # Context.md는 get_project_briefing이 읽고, Decisions/는 promote-candidate 대상.
@@ -465,7 +460,7 @@ class WikiService:
             "- 30_Projects/\n"
             "- 40_AgentMemory/\n\n"
             "Protected areas should be changed through candidates or patches "
-            "(promote-candidate / apply-memory-patch), then reviewed.\n"
+            "(nightly auto-promotion / memory patches).\n"
         )
 
     def _default_project_context(self, project: str) -> str:
@@ -488,7 +483,7 @@ class WikiService:
             "- 사용자의 결정이 필요한 부분은 진행하지 말고 질문한다\n\n"
             "## 관련 문서\n\n"
             "- 구현 계획: [[Plans/]]\n"
-            "- 의사결정 이력: [[Decisions/]] (promote-candidate가 쌓음)\n"
+            "- 의사결정 이력: [[Decisions/]] (nightly 자동 승격이 쌓음)\n"
             "- 제품 설계: [[Design/IA]], [[Design/UserScenarios]], [[Design/Personas]]\n"
             "- 프롬프트 원문: [[PromptLog]]\n"
         )

@@ -168,11 +168,10 @@ macOS에는 Task Scheduler가 없고 대신 **launchd**를 쓴다. 이 레포의
 bash scripts/mac/register-schedules.sh
 ```
 
-7개 작업이 등록된다:
+6개 작업이 등록된다:
 
 | 작업 | 주기 |
 |---|---|
-| `com.devtrail.bot` | 로그인 시 시작, 죽으면 자동 재시작 |
 | `com.devtrail.update` | 10분마다 |
 | `com.devtrail.vault-sync` | 10분마다 |
 | `com.devtrail.nightly` | 매일 23:30 |
@@ -200,7 +199,6 @@ StartInterval/StartCalendarInterval 대기 중), `0`은 정상 종료, 그 외 �
 ### 삭제
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.devtrail.bot.plist             && rm ~/Library/LaunchAgents/com.devtrail.bot.plist
 launchctl unload ~/Library/LaunchAgents/com.devtrail.update.plist          && rm ~/Library/LaunchAgents/com.devtrail.update.plist
 launchctl unload ~/Library/LaunchAgents/com.devtrail.vault-sync.plist      && rm ~/Library/LaunchAgents/com.devtrail.vault-sync.plist
 launchctl unload ~/Library/LaunchAgents/com.devtrail.nightly.plist         && rm ~/Library/LaunchAgents/com.devtrail.nightly.plist
@@ -266,25 +264,14 @@ pmset -g log | grep -E "Entering Sleep|due to" | tail -20
 | `Clamshell Sleep` | 뚜껑 닫힘 | 뚜껑 열기 또는 클램셸 모드 |
 | `Maintenance Sleep` / `DarkWake` | 정상 동작 (곧 다시 깸) | 조치 불필요 |
 
-참고로 `run-bot-service.sh`는 봇을 `caffeinate -i`로 감싸 실행하므로, 봇이 살아있는
-동안은 pmset이 리셋돼도 idle sleep에 들어가지 않는다(안전망). 뚜껑 닫힘은 못 막는다.
 
 ---
 
-## 7. Telegram 봇 테스트
-
-```bash
-/start          — help 출력
-/capture 테스트  — 메모 저장
-/sync           — 수동 vault 동기화
-URL 붙여넣기     — URL 캡처 + LLM 요약
-```
-
-봇을 수동으로 먼저 확인하고 싶으면:
+## 7. Telegram 전송 확인
 
 ```bash
 source .venv/bin/activate
-devtrail serve-bot
+devtrail notify morning   # 아침 알림이 chat에 도착하면 토큰·chat id가 맞다
 ```
 
 ---
