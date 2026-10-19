@@ -52,7 +52,7 @@ launchd 재등록은 `bash /Users/user/devtrail-runtime/scripts/mac/register-sch
 | `app/vault_tools.py` | MCP 도구 구현 (get_project_briefing, write_work_plan, write_session_process 등) |
 | `app/mcp_server.py` | MCP 서버 진입점 (`devtrail mcp-serve`) |
 | `scripts/hooks/` | Claude Code 훅 (session-start-briefing, stop-process-check) + git post-commit |
-| `scripts/activity/`, `scripts/mac/`, `scripts/windows/` | 셸 활동 훅, 머신별 스케줄러 설치 스크립트 |
+| `scripts/mac/`, `scripts/windows/` | 머신별 스케줄러 설치 스크립트 |
 | `tests/` | pytest 테스트 (`testpaths = ["tests"]`) |
 | `docs/` | 설계·계획 문서 |
 

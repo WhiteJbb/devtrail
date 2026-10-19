@@ -14,9 +14,6 @@ from __future__ import annotations
 import os
 import socket
 
-# 셸 훅(scripts/activity/*)이 쓰는 host 값과 대조될 값이다. 훅은 pwsh
-# $env:COMPUTERNAME / bash hostname을 쓰는데, 같은 머신에서는 이 함수의
-# socket.gethostname()과 같은 문자열이 나온다(Windows 데스크톱 실측).
 _AGENT_ENV_OVERRIDE = "DEVTRAIL_AGENT"
 
 # Claude Code가 자식 프로세스에 넣는 표식. MCP 서버는 클라이언트가 띄우는
