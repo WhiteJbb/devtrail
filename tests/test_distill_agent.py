@@ -501,3 +501,21 @@ def test_long_process_note_keeps_judgment_sections_in_distill_context(tmp_path):
     assert any("정본으로 돌아간다" in p for p in llm.prompts)
     assert not any("app/file.py" in p for p in llm.prompts)
 
+
+
+def test_project_bound_knowledge_is_dropped(tmp_path):
+    """제목에 프로젝트 이름이 든 knowledge는 버리고, 다른 종류나 범용 제목은 남긴다."""
+    (tmp_path / "30_Projects" / "nightshift").mkdir(parents=True)
+    agent = DistillAgent(settings=_settings(tmp_path), llm=_SeqLLM(["{}"]), now=datetime(2026, 10, 19, 10, 0, 0))
+    specs = [
+        CandidateSpec(kind="knowledge", title="Devtrail: Plan 요구 사항 제거 및 작업 흐름 간소화", body="b", project="Devtrail"),
+        CandidateSpec(kind="knowledge", title="Nightshift Agent Execution tmux 관련 실수", body="b", project=""),
+        CandidateSpec(kind="knowledge", title="CSS color-mix()를 활용한 상태 색상 파생", body="b", project="nightshift"),
+        CandidateSpec(kind="decision", title="Devtrail — Stop 훅 판정을 완화하지 않는다", body="b", project="Devtrail"),
+    ]
+    kept, dropped = agent._filter_project_bound_knowledge(specs)
+    assert [s.title for s in kept] == [
+        "CSS color-mix()를 활용한 상태 색상 파생",
+        "Devtrail — Stop 훅 판정을 완화하지 않는다",
+    ]
+    assert len(dropped) == 2 and "devtrail" in dropped[0] and "nightshift" in dropped[1]
