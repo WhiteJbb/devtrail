@@ -421,7 +421,11 @@ class CandidateWriter:
         base_dir = _CANDIDATE_DIRS[kind]
         if kind == "session_handoff":
             base_dir = handoff_project_dir(project)
-        name = self._slug(title)
+            # "Process — <project> — <date> — <id>"에서 꼬리(날짜·세션 id)가 잘리면 같은 프로젝트의
+            # 노트가 파일명으로 구분되지 않는다(2026-10-21 cloud-trouble-training-service 실측) — 앞을 줄인다
+            name = self._slug_keep_tail(title, tail_parts=2)
+        else:
+            name = self._slug(title)
         rel = f"{base_dir}/{name}.md"
         if not (self.vault_dir / rel).exists():
             return rel
@@ -480,6 +484,16 @@ class CandidateWriter:
         if " " in truncated:
             truncated = truncated.rsplit(" ", 1)[0]
         return truncated.rstrip(" .-—–,·([") or text[:_FILENAME_MAX_LEN]
+
+    def _slug_keep_tail(self, value: str, tail_parts: int) -> str:
+        """' — '로 이어진 제목의 마지막 tail_parts 조각은 남기고 앞쪽을 상한에 맞춰 자른다."""
+        parts = slug_component(value).split(" — ")
+        if len(parts) <= tail_parts or len(slug_component(value)) <= _FILENAME_MAX_LEN:
+            return self._slug(value)
+        tail = " — ".join(parts[-tail_parts:])
+        head_room = max(_FILENAME_MAX_LEN - len(tail) - 3, 8)
+        head = " — ".join(parts[:-tail_parts])[:head_room].rstrip(" .-—–,·([")
+        return f"{head} — {tail}"
 
     def _now(self) -> datetime:
         return self.now or datetime.now()

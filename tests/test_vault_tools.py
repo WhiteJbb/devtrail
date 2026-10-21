@@ -1601,6 +1601,16 @@ def test_lesson_lines_do_not_double_prefix(tmp_path):
     assert "확인: 휴리스틱은 미리 점검" in content and "방식: lsof로 cwd 확인" in content
 
 
+def test_handoff_filename_keeps_date_and_session_id_for_long_project(tmp_path):
+    """긴 프로젝트명이라도 파일명 꼬리(날짜·세션 id)는 남아야 같은 프로젝트의 노트가 구분된다."""
+    result = vault_tools.write_session_process(
+        project="cloud-trouble-training-service", what_changed="x",
+        session_id="54d61c22-2065-4add-8ce9-b165bdd4ca88", settings=_settings(tmp_path),
+    )
+    name = result.process.rel_path.rsplit("/", 1)[1]
+    assert name.endswith("— 54d61c22.md") and " — 20" in name and len(name) <= 60
+
+
 def test_update_open_loops_does_not_double_date_prefix(tmp_path):
     settings = _settings(tmp_path)
     mem = tmp_path / "40_AgentMemory"
