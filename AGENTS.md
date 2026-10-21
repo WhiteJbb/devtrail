@@ -68,6 +68,9 @@ launchd 재등록은 `bash /Users/user/devtrail-runtime/scripts/mac/register-sch
 - Vault의 `60_Candidates/` 쓰기는 `candidate_writer` 경유. 공식 영역
   (`20_Knowledge/`, `30_Projects/`, `40_AgentMemory/`)에 코드가 직접 쓰는
   경로를 만들지 않는다 — 승격은 항상 nightly의 자동 반영·승격(curator) 경유.
+  예외는 에이전트 운영 메모리 둘뿐: `40_AgentMemory/05_OpenLoops.md`(`update_open_loops`)와
+  `30_Projects/<P>/Context.md`(`update_project_context`, 2026-10-21) — 낡은 채로 briefing에
+  들어가는 비용이 더 크고, 고칠 사람이 없다.
 
 ### 스타일
 
@@ -205,7 +208,7 @@ Obsidian Vault는 모든 Agent가 공유하는 메모리 버스다. 작업 시�
 | `00_Inbox/URLs/` | URL 북마크 (사람이 넣음) | 읽기 전용 |
 | `10_Worklog/Sessions/` | write_session_process / capture-session 출력 | 읽기 전용 |
 | `20_Knowledge/` | 승격된 공식 지식 노트 | **직접 수정 금지** — knowledge 후보가 2일 조용하면 nightly가 자동 승격 (2026-10-18) |
-| `30_Projects/<P>/Context.md` | 프로젝트 배경·목표·제약 | **직접 수정 금지** — 사람이 관리 |
+| `30_Projects/<P>/Context.md` | 프로젝트 배경·목표·제약 | 에이전트가 `update_project_context`(MCP)로 절 단위 교체 (2026-10-21) — 신선도 경고(30일)를 받으면 바로 고친다. 사람은 보기만 한다 |
 | `30_Projects/<P>/Decisions/` | 의사결정 이력 (DecisionLog) | **직접 수정 금지** — decision 후보(`write_session_process`의 project_decisions 포함)가 2일 조용하면 nightly가 자동 승격 |
 | `30_Projects/<P>/Problems/` | 승격된 트러블슈팅 기록 (`record_problem` 후보 출신) | **직접 수정 금지** — problem 후보가 2일 조용하면 nightly가 자동 승격 |
 | `30_Projects/<P>/Plans/` | 기능 단위 구현 계획 | 사람과 협의 후 작성 |
@@ -239,7 +242,7 @@ nightly가 memory_patch를 매일 반영하고 knowledge/decision/problem 후보
 문서 스캐폴드(Context.md, Decisions/, Plans/, Design/, Conversations/,
 PromptLog.md)를 만들고 repo의 `.claude/vault.json`에 매핑을 저장해 세션
 briefing이 바로 붙는다. 생성 직후 Context.md의 배경·목표·제약을 채운다.
-Context.md가 바뀌면 briefing 품질이 바뀐다 — 배경·목표·제약 변경 시 즉시 갱신.
+Context.md가 바뀌면 briefing 품질이 바뀐다 — 배경·목표·제약이 바뀌면 `update_project_context`로 즉시 갱신.
 
 ## 머신 설정 진단
 

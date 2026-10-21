@@ -50,6 +50,7 @@ def test_single_live_marker_enforces_process_record(tmp_path, monkeypatch, capsy
     output = json.loads(capsys.readouterr().out)
     assert output["decision"] == "block"
     assert "write_session_process" in output["reason"]
+    assert "capture-session" not in output["reason"]  # MCP 마커가 있으면 도구가 있는 세션이다
 
 
 def _session_start(tmp_path: Path, session_id: str) -> None:
@@ -71,6 +72,12 @@ def test_session_start_marker_enforces_without_mcp_marker(tmp_path, monkeypatch,
     output = json.loads(capsys.readouterr().out)
     assert output["decision"] == "block"
     assert "write_session_process" in output["reason"]
+    # MCP가 없는 세션일 수 있다 — 기록할 다른 길(capture-session)을 알려 준다
+    assert "capture-session --project <프로젝트>" in output["reason"]
+    (tmp_path / ".claude").mkdir(exist_ok=True)
+    (tmp_path / ".claude" / "vault.json").write_text('{"project": "orbit"}', encoding="utf-8")
+    stop_hook.main()
+    assert "capture-session --project orbit" in json.loads(capsys.readouterr().out)["reason"]
 
 
 def test_session_start_marker_passes_clean_session(tmp_path, monkeypatch, capsys):
