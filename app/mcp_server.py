@@ -36,6 +36,7 @@ _INSTRUCTIONS = """\
 - 설계·구조·규칙을 바꾸거나 "왜 이렇게 돼 있나"가 궁금할 때: get_decisions(project) — 이전 결정과 근거.
 - 모르는 모듈·용어·과거 작업이 나오면: search_vault(query) → read_note(rel_path)로 전문.
 - 이어서 하는 작업이면: get_recent_sessions(project) — 직전 세션의 what_changed·next_session.
+- briefing에 'Context 신선도 경고'가 있거나 배경·목표·제약이 실제와 다르면: update_project_context(project, section, content) — 사람 확인 없이 바로 고친다.
 기록은 커밋·변경이 생긴 세션마다 write_session_process. 문제를 해결했으면 record_problem.
 """
 
@@ -261,11 +262,23 @@ def update_open_loops(
 
 
 @mcp.tool()
+def update_project_context(project: str, section: str, content: str) -> dict:
+    """30_Projects/<P>/Context.md의 `## <section>` 절을 통째로 바꾼다(없으면 추가) — 다음 세션 briefing의 Project Context가 된다.
+    briefing에 'Context 신선도 경고'가 보이거나 배경·목표·제약이 실제와 다르면 바로 고친다. 사람 확인 없음.
+    section: 절 제목(배경 / 목표 / 제약 / 원칙 …). content: 그 절의 전체 본문 — 덧붙임이 아니라 교체다.
+    내용이 그대로 유효하면 같은 내용으로 호출해 updated_at만 갱신한다.
+    """
+    _touch_session_marker()
+    result = vault_tools.update_project_context(project, section, content, settings=get_settings())
+    return _with_text_warning(dataclasses.asdict(result), content)
+
+
+@mcp.tool()
 def write_work_plan(project: str, goal: str, context_read: str, scope: str, approach: str, risks: str) -> dict:
     """작업 시작 전, 실제 수정 전에 Plan을 기록한다. session_id는 서버가 자동 주입한다.
 
     여러 항목이 있는 필드는 한 문단으로 잇지 말고 markdown 불릿/번호 리스트로
-    작성한다 — 기록은 사람이 다시 읽는 문서다. 같은 세션에서 재호출하면 기존
+    작성한다 — 다음 세션 에이전트가 읽는 문서다. 같은 세션에서 재호출하면 기존
     Plan이 갱신된다(새 파일이 생기지 않음).
     """
     _touch_session_marker()

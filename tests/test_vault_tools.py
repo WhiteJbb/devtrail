@@ -973,7 +973,7 @@ def test_briefing_memory_prefers_dynamic_files_over_profile(tmp_path):
 def test_briefing_memory_applies_per_file_budget(tmp_path):
     """한 파일이 길어도 다음 우선순위 파일이 잘려나가면 안 된다."""
     _write_project_context(tmp_path, "Devtrail", "배경")
-    _write_agent_memory(tmp_path, "01_CurrentFocus.md", "포커스 " * 400)  # 700자 초과
+    _write_agent_memory(tmp_path, "01_CurrentFocus.md", "포커스 " * 1000)  # 상한(2000자) 초과
     _write_agent_memory(tmp_path, "05_OpenLoops.md", "오픈루프핵심줄")
 
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
@@ -1566,6 +1566,39 @@ def test_get_decisions_hides_superseded_and_sorts_by_decision_date(tmp_path):
     assert titles[0] == "새 결정" and titles[-1] == "옛 결정"
     archived = vault_tools.get_decisions("Devtrail", include_archived=True, settings=_settings(tmp_path))
     assert any(d["title"] == "뒤집힌 결정" and d["status"] == "superseded" for d in archived)
+
+
+def test_update_project_context_replaces_section_and_bumps_updated_at(tmp_path):
+    """Context.md는 에이전트가 절 단위로 직접 고친다 — 신선도 경고를 받아 고칠 사람이 없다(2026-10-21)."""
+    settings = _settings(tmp_path)
+    _write_project_context(tmp_path, "Devtrail", "## 배경\n\n옛 배경\n\n## 목표\n\n- 목표1\n", updated_at="2026-07-07")
+    result = vault_tools.update_project_context("Devtrail", "배경", "- 새 배경", settings=settings)
+    assert result.replaced and result.rel_path == "30_Projects/Devtrail/Context.md"
+    post = frontmatter.loads((tmp_path / result.rel_path).read_text(encoding="utf-8"))
+    assert "옛 배경" not in post.content and "- 새 배경" in post.content and "- 목표1" in post.content
+    assert post.content.index("- 새 배경") < post.content.index("## 목표")
+    assert str(post.metadata["updated_at"]) == datetime.now().strftime("%Y-%m-%d")
+    added = vault_tools.update_project_context("Devtrail", "## 제약", "- 제약1", settings=settings)
+    assert not added.replaced and "## 제약\n\n- 제약1" in (tmp_path / result.rel_path).read_text(encoding="utf-8")
+    briefing = vault_tools.get_project_briefing("Devtrail", settings=settings)
+    assert "Context 신선도 경고" not in briefing.text and "- 새 배경" in briefing.text
+    with pytest.raises(FileNotFoundError):
+        vault_tools.update_project_context("NoSuch", "배경", "x", settings=settings)
+
+
+def test_lesson_lines_do_not_double_prefix(tmp_path):
+    """에이전트가 Lessons 형식을 그대로 보내도 접두가 한 번만 붙는다(2026-10-19 nightshift 실측)."""
+    settings = _settings(tmp_path)
+    result = vault_tools.write_session_process(
+        project="Devtrail", what_changed="x",
+        agent_execution_notes={"next_checks": "(2026-10-19) 다음부터 먼저 확인: 휴리스틱은 미리 점검",
+                               "better_approach": "- (2026-10-19) 더 나은 방식: (2026-10-19) 더 나은 방식: lsof로 cwd 확인"},
+        session_id="sess-prefix", settings=settings,
+    )
+    # frontmatter summary가 첫 줄을 되풀이하므로 본문만 본다
+    content = frontmatter.loads((tmp_path / result.memory_patch.rel_path).read_text(encoding="utf-8")).content
+    assert content.count("다음부터 먼저 확인:") == 1 and content.count("더 나은 방식:") == 1
+    assert "확인: 휴리스틱은 미리 점검" in content and "방식: lsof로 cwd 확인" in content
 
 
 def test_update_open_loops_does_not_double_date_prefix(tmp_path):

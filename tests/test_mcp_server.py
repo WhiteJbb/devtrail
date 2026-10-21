@@ -44,6 +44,7 @@ def test_registers_canonical_tools(vault_env, monkeypatch):
         "record_problem",
         "record_agent_improvement",
         "update_open_loops",
+        "update_project_context",
         "write_work_plan",
         "write_session_process",
     }
@@ -270,6 +271,17 @@ def test_update_open_loops_tool_edits_vault_file(vault_env, monkeypatch):
     result = update_open_loops(project="Devtrail", add=["Stop 훅 fallback 실효 확인 (#78)"], section="실효 확인")
     assert result["added"] and result["resolved"] == [] and "warnings" not in result
     assert "Stop 훅 fallback" in (vault_env / "40_AgentMemory" / "05_OpenLoops.md").read_text(encoding="utf-8")
+
+
+def test_update_project_context_tool_edits_context(vault_env, monkeypatch):
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    ctx = vault_env / "30_Projects" / "Devtrail" / "Context.md"
+    ctx.parent.mkdir(parents=True, exist_ok=True)
+    ctx.write_text("---\nproject: Devtrail\nupdated_at: '2026-07-07'\n---\n\n## 배경\n\n옛 배경\n", encoding="utf-8")
+    tool = mod.mcp._tool_manager.get_tool("update_project_context").fn
+    result = tool(project="Devtrail", section="배경", content="- 새 배경")
+    assert result["replaced"] and "warnings" not in result
+    assert "옛 배경" not in ctx.read_text(encoding="utf-8")
 
 
 def test_server_instructions_name_read_tools(vault_env, monkeypatch):

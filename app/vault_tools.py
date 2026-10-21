@@ -74,7 +74,10 @@ _MEMORY_APPEND_FILES = (
     "40_AgentMemory/05_OpenLoops.md",
     "40_AgentMemory/06_Lessons.md",
 )
-_MEMORY_FILE_MAX_CHARS = 700
+# 700자 단일 상한은 OpenLoops·Lessons를 패치 1개 꼬리만 남겼다(2026-10-21 실측 Devtrail 2012→665자, 6830→627자).
+# briefing 전체가 7.5천 자라 예산 여유가 크다. ponytail: 고정 상한 — Lessons가 이걸 넘으면 오래된 교훈 정리(요약·만료)로 간다
+_MEMORY_FILE_MAX_CHARS = 2000  # CurrentFocus (head)
+_MEMORY_APPEND_MAX_CHARS = 6000  # OpenLoops·Lessons (tail)
 _MEMORY_STALE_DAYS = 30  # CurrentFocus/OpenLoops가 이보다 오래되면 briefing에 경고
 _DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
@@ -178,8 +181,11 @@ def _render_memory_briefing(agent_memory) -> str:
         block = blocks.get(rel)
         if block is None or not block.body.strip():
             continue
-        cut = _truncate_tail if rel in _MEMORY_APPEND_FILES else _truncate
-        parts.append(f"### {block.title}\n\n{cut(block.body, _MEMORY_FILE_MAX_CHARS)}")
+        if rel in _MEMORY_APPEND_FILES:
+            text = _truncate_tail(block.body, _MEMORY_APPEND_MAX_CHARS)
+        else:
+            text = _truncate(block.body, _MEMORY_FILE_MAX_CHARS)
+        parts.append(f"### {block.title}\n\n{text}")
     return "\n\n".join(parts)
 
 
@@ -600,6 +606,9 @@ def get_known_problems(
 
 _OPEN_LOOPS_REL = "40_AgentMemory/05_OpenLoops.md"
 _OPEN_LOOPS_MARKER = '<!-- devtrail-memory-patch: {"scope": "project", "project": "%s"} -->'
+_CONTEXT_REL = "30_Projects/%s/Context.md"
+# 에이전트가 Lessons 형식("(날짜) 다음부터 먼저 확인: …")을 그대로 보내는 일이 있다 — 접두를 두 번 붙이지 않는다(2026-10-19 nightshift 실측)
+_LESSON_PREFIX_RE = re.compile(r"^(?:\(\d{4}-\d{2}-\d{2}\)\s*(?:다음부터 먼저 확인|더 나은 방식):\s*)+")
 
 
 @dataclass(frozen=True)
@@ -608,6 +617,13 @@ class OpenLoopsUpdate:
     added: list[str]
     resolved: list[str]
     not_found: list[str]
+
+
+@dataclass(frozen=True)
+class ProjectContextUpdate:
+    rel_path: str
+    section: str
+    replaced: bool  # False면 섹션이 없어 끝에 새로 만들었다
 
 
 def _block_end(lines: list[str], start: int) -> int:
@@ -701,6 +717,37 @@ def update_open_loops(
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, frontmatter.dumps(post))
     return OpenLoopsUpdate(rel_path=_OPEN_LOOPS_REL, added=[l[2:] for l in new], resolved=resolved, not_found=not_found)
+
+
+def update_project_context(project: str, section: str, content: str, settings: Settings | None = None) -> ProjectContextUpdate:
+    """30_Projects/<P>/Context.md의 `## <section>` 절 본문을 통째로 바꾼다(없으면 끝에 추가). updated_at도 갱신.
+
+    공식 영역 중 Context.md만 에이전트가 직접 쓴다(2026-10-21 사용자 결정). 신선도 경고(30일)를
+    받아 고칠 사람이 없어 Devtrail Context가 104일째 '갱신 제안' 상태였다 — 사람은 보기만 한다.
+    """
+    vault_dir = _vault_dir(settings)
+    project = _canonicalize_project(vault_dir, project) or project.strip()
+    section = section.strip().lstrip("#").strip()
+    if not project or not section or not content.strip():
+        raise ValueError("project, section, content are all required")
+    rel = _CONTEXT_REL % project
+    path = vault_dir / rel
+    if not path.exists():
+        raise FileNotFoundError(f"{rel} 이 없다 — devtrail init-project {project} 먼저")
+    heading = f"## {section}"
+    with candidate_write_lock(vault_dir):
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        lines = post.content.rstrip().splitlines()
+        start = next((i for i, l in enumerate(lines) if l.strip().casefold() == heading.casefold()), -1)
+        block = [heading, "", content.strip(), ""]
+        if start < 0:
+            lines += ["", *block]
+        else:
+            lines[start:_block_end(lines, start)] = block
+        post.metadata["updated_at"] = datetime.now().strftime("%Y-%m-%d")
+        post.content = "\n".join(lines).rstrip() + "\n"
+        atomic_write_text(path, frontmatter.dumps(post))
+    return ProjectContextUpdate(rel_path=rel, section=section, replaced=start >= 0)
 
 
 def get_project_briefing(project_or_repo: str, settings: Settings | None = None) -> ProjectBriefing:
@@ -915,7 +962,8 @@ def _context_staleness_warning(updated_at: str) -> str:
     return (
         "## ⚠ Context 신선도 경고\n\n"
         f"Context.md가 {age_days}일 전({raw[:10]})에 마지막으로 갱신됐습니다. "
-        "배경·목표·제약이 여전히 유효한지 확인하고 필요하면 갱신을 제안하세요."
+        "배경·목표·제약이 실제와 다르면 update_project_context(project, section, content)로 바로 고치세요 — "
+        "사람 확인 없음. 그대로 유효하면 같은 내용으로 호출해 updated_at만 갱신합니다."
     )
 
 
@@ -1416,9 +1464,9 @@ def _write_session_process_unlocked(
     # 세션 보일러플레이트로 비대해져 briefing 예산을 낭비한다.
     lesson_lines: list[str] = []
     for item in _normalize_bullet_items(notes.get("next_checks")):
-        lesson_lines.append(f"- ({date}) 다음부터 먼저 확인: {item}")
+        lesson_lines.append(f"- ({date}) 다음부터 먼저 확인: {_LESSON_PREFIX_RE.sub('', item)}")
     for item in _normalize_bullet_items(notes.get("better_approach")):
-        lesson_lines.append(f"- ({date}) 더 나은 방식: {item}")
+        lesson_lines.append(f"- ({date}) 더 나은 방식: {_LESSON_PREFIX_RE.sub('', item)}")
     if lesson_lines:
         memory_patch_result = writer.upsert_exact(
             CandidateSpec(

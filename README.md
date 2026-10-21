@@ -287,6 +287,7 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 | `record_problem` | 겪은 문제와 해결을 problem 후보로 기록 (증상·원인·시도·해결·예방, `component`·`cause_class` 분류) → promote 시 `30_Projects/<P>/Problems/` |
 | `record_agent_improvement` | 반복 실수 · 개선할 작업 방식 · 프로젝트 주의사항을 MemoryPatch 후보로 기록 |
 | `update_open_loops` | `40_AgentMemory/05_OpenLoops.md`의 프로젝트 블록에 다음 세션에도 남는 할 일을 넣고(add) 끝난 줄을 지운다(resolve) — 40_AgentMemory 중 유일하게 에이전트가 직접 쓰는 파일 |
+| `update_project_context` | `30_Projects/<P>/Context.md`의 `## 절` 본문을 교체(없으면 추가)하고 updated_at 갱신 — 신선도 경고를 에이전트가 직접 해소한다. 공식 영역 중 유일한 직접 쓰기 |
 | `write_work_plan` | (선택) 긴 작업의 Plan 기록 — 다음 세션 briefing에 Latest Plan으로 보인다. 필수 아님 |
 | `write_session_process` | 세션 종료/컴팩팅 전 Process 기록 → `SessionHandoffs` candidate + `10_Worklog/Sessions/` 세션 기록 동시 생성 |
 
