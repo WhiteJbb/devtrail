@@ -35,6 +35,20 @@ def _git(args, cwd):
         return None
 
 
+def _fallback_hint(cwd: str) -> str:
+    """MCP가 안 붙은 세션에 기록 경로를 알려 준다 — orbit 세션이 사흘간 '도구가 없어 못 한다'로 20커밋을 미기록했다(2026-10-20)."""
+    project = ""
+    try:
+        project = str(json.loads((Path(cwd) / ".claude" / "vault.json").read_text(encoding="utf-8")).get("project", ""))
+    except Exception:
+        pass
+    cli = REPO_ROOT / ".venv" / ("Scripts/devtrail.exe" if os.name == "nt" else "bin/devtrail")
+    return (
+        f" MCP devtrail-vault 도구가 이 세션에 없으면 /mcp로 재연결하거나 "
+        f"`{cli} capture-session --project {project or '<프로젝트>'} --from-repo --summary-file <요약.md>`로 남기세요."
+    )
+
+
 def main() -> int:
     payload = _read_payload()
     if not isinstance(payload, dict):
@@ -91,7 +105,7 @@ def main() -> int:
             "git 작업 디렉터리에 변경이 있는데 이번 세션의 write_session_process가 "
             "호출되지 않았습니다. 세션을 마치기 전에 Process를 남기세요."
         )
-    _emit_block(reason)
+    _emit_block(reason + (_fallback_hint(cwd) if started_key == "started_at" else ""))
     return 0
 
 

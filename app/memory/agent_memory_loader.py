@@ -23,6 +23,7 @@ _AGENT_MEMORY_FILES = [
 
 _MAX_FILE_CHARS = 2000
 # Lessons는 프로젝트 필터 뒤에도 5천 자를 넘어 tail 2000자면 최근 패치 1~2개만 남았다(2026-10-19 실측 37%).
+# OpenLoops도 Devtrail 블록이 2000자를 넘었다(2026-10-21). briefing 쪽 상한은 vault_tools._MEMORY_APPEND_MAX_CHARS.
 # ponytail: 고정 상한. briefing 예산을 누르면 오래된 교훈 정리(요약·만료)로 간다
 _LESSONS_MAX_CHARS = 8000
 # 마커 아래 블록을 프로젝트별로 거르는 파일. 마커 앞부분은 전역. CurrentFocus는 사람이 쓰지만
@@ -103,7 +104,7 @@ class AgentMemoryLoader:
             body = self._filter_project_patches(body, project)
             if not body.strip():
                 return None
-        limit = _LESSONS_MAX_CHARS if rel == "40_AgentMemory/06_Lessons.md" else _MAX_FILE_CHARS
+        limit = _LESSONS_MAX_CHARS if rel in ("40_AgentMemory/05_OpenLoops.md", "40_AgentMemory/06_Lessons.md") else _MAX_FILE_CHARS
         if len(body) > limit:
             if rel in ("40_AgentMemory/05_OpenLoops.md", "40_AgentMemory/06_Lessons.md"):
                 body = "...(앞부분 생략)\n" + body[-limit:].lstrip()
