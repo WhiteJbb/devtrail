@@ -9,7 +9,7 @@ from pathlib import Path
 import frontmatter
 
 
-_MAX_FILE_CHARS = 3000
+_MAX_FILE_CHARS = 5000  # vault_tools._CONTEXT_MAX_CHARS와 같은 값 — 상한은 로더·렌더러 두 겹이라 한쪽만 올리면 효과가 없다 (2026-10-27)
 
 
 @dataclass(frozen=True)
