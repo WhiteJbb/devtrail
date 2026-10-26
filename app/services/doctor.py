@@ -259,8 +259,11 @@ def _mcp_server_line(stdout: str) -> str:
     return ""
 
 
-def check_mcp_registration(timeout: float = 30.0) -> CheckResult:
+def check_mcp_registration(repo_dir: Path | None = None, timeout: float = 30.0) -> CheckResult:
     """`claude mcp list`에서 devtrail-vault의 **연결 결과**까지 본다.
+
+    repo_dir를 cwd로 넘긴다: 등록은 프로젝트 단위(~/.claude.json의 projects[repo])라
+    doctor가 다른 디렉터리에서 돌면 멀쩡히 등록된 서버를 "미등록"으로 보고한다 (2026-10-27 homelab).
 
     등록 여부만 보면 부족하다: 2026-09-07에 등록은 돼 있는데 실행 파일이 죽어
     `✘ Failed to connect`인 상태를 doctor가 OK로 보고했다. 등록은 연결의 필요조건일
@@ -278,7 +281,8 @@ def check_mcp_registration(timeout: float = 30.0) -> CheckResult:
         return CheckResult("MCP 등록", UNKNOWN, "claude CLI가 PATH에 없어 확인하지 않았습니다")
     try:
         proc = subprocess.run(
-            [exe, "mcp", "list"], capture_output=True, timeout=timeout, text=True, encoding="utf-8", errors="replace"
+            [exe, "mcp", "list"], capture_output=True, timeout=timeout, text=True, encoding="utf-8", errors="replace",
+            cwd=str(repo_dir) if repo_dir else None,
         )
     except (OSError, subprocess.SubprocessError) as e:
         return CheckResult("MCP 등록", UNKNOWN, f"claude mcp list 실행 실패: {e}")
@@ -424,7 +428,7 @@ def diagnose(repo_dir: Path, vault_root: str, *, check_mcp: bool = True) -> Doct
         ("vault 구조", lambda: check_vault_structure(vault_dir)),
     ]
     if check_mcp:
-        runners.append(("MCP 등록", check_mcp_registration))
+        runners.append(("MCP 등록", lambda: check_mcp_registration(repo_dir)))
 
     checks: list[CheckResult] = []
     for name, runner in runners:

@@ -211,6 +211,20 @@ def _mcp_list(stdout: str, monkeypatch, returncode: int = 0):
     monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: _Proc())
 
 
+def test_mcp_registration_runs_claude_in_repo_dir(monkeypatch, tmp_path):
+    """등록은 프로젝트 단위라 repo 디렉터리에서 claude mcp list를 실행해야 보인다."""
+    seen = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = "devtrail-vault: devtrail mcp-serve - ✔ Connected\n"
+
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: "/usr/bin/claude")
+    monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: seen.update(k) or _Proc())
+    assert doctor.check_mcp_registration(tmp_path).severity == doctor.OK
+    assert seen["cwd"] == str(tmp_path)
+
+
 def test_mcp_registration_connected_is_ok(monkeypatch):
     _mcp_list("devtrail-vault: /repo/.venv/bin/devtrail mcp-serve - ✔ Connected\n", monkeypatch)
     assert doctor.check_mcp_registration().severity == doctor.OK
