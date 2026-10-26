@@ -56,7 +56,8 @@ _RAW_RESULT_QUOTA = 3  # 정본·후보가 limit을 다 채워도 raw에 남겨�
 _RECORD_NOTE_KINDS = {"knowledge", "decision", "blog_idea", "career_bullet"}
 
 _SECTION_MAX_CHARS = 1200
-_CONTEXT_MAX_CHARS = 600  # 인덱스 우선: 요약만 주입하고 전문은 read_note로 당겨 읽게 한다
+_CONTEXT_MAX_CHARS = 5000  # 2026-10-27: 600자일 때 모든 프로젝트의 "제약/원칙" 절이 잘렸고 read_note 보완 호출은 0건이었다.
+# Context는 briefing에서 가장 밀도 높은 절이라 전부 넣는다 (실측 본문 1.3k~4.7k자)
 _CONTEXT_STALE_DAYS = 30  # Context.md updated_at이 이보다 오래되면 briefing에 경고
 _RECENT_HANDOFF_LIMIT = 3
 _RECENT_DECISION_LIMIT = 5

@@ -890,12 +890,12 @@ def _write_project_context(vault: Path, project: str, body: str, updated_at: str
 
 
 def test_briefing_truncates_long_context_with_read_note_pointer(tmp_path):
-    _write_project_context(tmp_path, "Devtrail", "배경 " * 500)
+    _write_project_context(tmp_path, "Devtrail", "배경 " * 2500)
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
 
     assert 'read_note("30_Projects/Devtrail/Context.md")' in briefing.text
-    # 전문(약 1500자)이 통째로 들어가지 않는다
-    assert briefing.text.count("배경") < 400
+    # 전문(약 7500자)이 통째로 들어가지 않는다 — 상한 5000자
+    assert briefing.text.count("배경") < 2000
 
 
 def test_briefing_short_context_has_no_pointer(tmp_path):
