@@ -144,7 +144,7 @@ OPENAI_MODEL=Qwen/Qwen2.5-14B-Instruct
 ```
 
 **AI 쓰기 가능**: `00_Inbox/`, `10_Worklog/`, `50_Outputs/`, `60_Candidates/`, `70_Tasks/`(task 커맨드 경유)  
-**직접 수정 금지** (candidate/patch 경유): `20_Knowledge/`, `40_AgentMemory/`, `30_Projects/*/Context.md`, `30_Projects/*/Decisions/`
+**직접 수정 금지** (candidate/patch 경유): `20_Knowledge/`, `40_AgentMemory/`(예외: `05_OpenLoops.md`는 `update_open_loops`), `30_Projects/*/Decisions/`. `30_Projects/*/Context.md`는 `update_project_context`로 직접 갱신
 
 Obsidian 템플릿은 [docs/vault-templates/](docs/vault-templates/)을 Vault의 `90_Templates/`에 복사해서 사용 (외부 AI 프롬프트 가이드 포함).
 

@@ -71,7 +71,7 @@ fi
 
 git fetch origin 2>&1 | while IFS= read -r l; do log "fetch: $l"; done
 
-AI_FOLDERS=("00_Inbox" "10_Worklog" "20_Knowledge" "30_Projects" "50_Outputs" "60_Candidates" "70_Tasks")
+AI_FOLDERS=("00_Inbox" "10_Worklog" "20_Knowledge" "30_Projects" "50_Outputs" "60_Candidates" "70_Tasks" "40_AgentMemory")
 has_local=0
 for folder in "${AI_FOLDERS[@]}"; do
     if [ -d "$folder" ] && [ -n "$(git status --porcelain "$folder" 2>&1)" ]; then
@@ -79,9 +79,12 @@ for folder in "${AI_FOLDERS[@]}"; do
         break
     fi
 done
-if [ "$has_local" -eq 0 ] && [ -f "log.md" ] && [ -n "$(git status --porcelain log.md 2>&1)" ]; then
-    has_local=1
-fi
+# log.md(작업 로그)·index.md(nightly가 재생성하는 색인)도 에이전트 산출물
+for f in log.md index.md; do
+    if [ "$has_local" -eq 0 ] && [ -f "$f" ] && [ -n "$(git status --porcelain "$f" 2>&1)" ]; then
+        has_local=1
+    fi
+done
 
 local_rev="$(git rev-parse HEAD)"
 remote_rev="$(git rev-parse '@{u}' 2>&1)"
@@ -99,7 +102,9 @@ if [ "$has_local" -eq 1 ]; then
     for folder in "${AI_FOLDERS[@]}"; do
         [ -d "$folder" ] && git add "$folder" 2>&1 | while IFS= read -r l; do log "add: $l"; done
     done
-    [ -f "log.md" ] && git add "log.md" 2>&1 | while IFS= read -r l; do log "add: $l"; done
+    for f in log.md index.md; do
+        [ -f "$f" ] && git add "$f" 2>&1 | while IFS= read -r l; do log "add: $l"; done
+    done
 
     [ -z "$COMMIT_MSG" ] && COMMIT_MSG="auto: vault sync $(date '+%Y-%m-%d %H:%M')"
     git commit -m "$COMMIT_MSG" 2>&1 | while IFS= read -r l; do log "commit: $l"; done

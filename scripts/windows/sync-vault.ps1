@@ -71,15 +71,17 @@ if ((Test-Path ".git\MERGE_HEAD") -or (Test-Path ".git\rebase-merge")) {
 git fetch origin 2>&1 | ForEach-Object { Log "fetch: $_" }
 
 # ── 로컬 변경 확인 (AI 폴더만) ───────────────────────────────────────
-$aiFolders = @("00_Inbox", "10_Worklog", "20_Knowledge", "30_Projects", "50_Outputs", "60_Candidates", "70_Tasks")
+$aiFolders = @("00_Inbox", "10_Worklog", "20_Knowledge", "30_Projects", "50_Outputs", "60_Candidates", "70_Tasks", "40_AgentMemory")
 $hasLocal = $false
 foreach ($folder in $aiFolders) {
     if ((Test-Path $folder) -and (git status --porcelain $folder 2>&1)) {
         $hasLocal = $true; break
     }
 }
-if (-not $hasLocal -and (Test-Path "log.md") -and (git status --porcelain "log.md" 2>&1)) {
-    $hasLocal = $true
+foreach ($f in @("log.md", "index.md")) {
+    if (-not $hasLocal -and (Test-Path $f) -and (git status --porcelain $f 2>&1)) {
+        $hasLocal = $true
+    }
 }
 
 # ── remote 변경 확인 ──────────────────────────────────────────────────
@@ -102,8 +104,10 @@ if ($hasLocal) {
             git add $folder 2>&1 | ForEach-Object { Log "add: $_" }
         }
     }
-    if (Test-Path "log.md") {
-        git add "log.md" 2>&1 | ForEach-Object { Log "add: $_" }
+    foreach ($f in @("log.md", "index.md")) {
+        if (Test-Path $f) {
+            git add $f 2>&1 | ForEach-Object { Log "add: $_" }
+        }
     }
     if (-not $CommitMsg) {
         $CommitMsg = "auto: vault sync $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
