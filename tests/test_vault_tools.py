@@ -850,22 +850,23 @@ def test_briefing_recent_handoff_window_is_three_sessions_and_uses_updated_at(tm
     assert "NEXT_session-0" in briefing.text
 
 
-def test_briefing_marks_old_suggested_next_actions_as_unverified(tmp_path):
+def test_briefing_shows_latest_next_session_once_and_untruncated(tmp_path):
     _write(tmp_path, "30_Projects/Devtrail/Context.md", body="컨텍스트")
-    body = "# Process\n\n## Next Session\n\n예전 다음 작업\n"
+    body = "# Process\n\n## Next Session\n\n" + "\n".join(f"- 할일{i} " + "상세 " * 20 for i in range(8)) + "\n"
     _write(
         tmp_path,
-        "60_Candidates/SessionHandoffs/Devtrail/process-old.md",
+        "60_Candidates/SessionHandoffs/Devtrail/process-latest.md",
         body,
-        type="candidate", candidate_type="session_handoff", title="과거 Process", project="Devtrail",
-        status="candidate", created_at="2026-01-01T09:00:00", handoff_type="process", session_id="old-session",
+        type="candidate", candidate_type="session_handoff", title="최신 Process", project="Devtrail",
+        status="candidate", created_at="2026-01-01T09:00:00", handoff_type="process", session_id="latest-session",
     )
 
     briefing = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
 
-    assert "현재 상태와 일치하는지 확인한 뒤 진행" in briefing.text
-    assert "과거 Process" in briefing.text or "process-old.md" in briefing.text
-    assert "오래된 기록일 수 있음" in briefing.text
+    # 2026-10-27: Suggested Next Actions 절을 없앴다 — Recent Session Handoff에 같은 Next Session이 이미 있었다.
+    assert "Suggested Next Actions" not in briefing.text
+    assert briefing.text.count("할일0") == 1
+    assert "할일7" in briefing.text  # 400자 상한이면 잘렸을 꼬리
 
 
 def test_get_project_briefing_warns_on_unpaired_plan(tmp_path):

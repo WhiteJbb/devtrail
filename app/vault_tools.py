@@ -875,8 +875,11 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
                 # 세션별로 Plan/Process를 함께 보여 제한 3개가 파일 3개로 소모되지 않게 한다.
                 excerpt = _excerpt_sections(h["body"], ("Next Session", "Goal", "What Changed"))
                 recorded_at = h.get("updated_at") or h.get("created_at") or "기록 시각 없음"
+                # 최신 Process는 Next Session이 다음 세션의 할 일이라 400자에 자르지 않는다.
+                # 예전엔 같은 내용을 'Suggested Next Actions' 절로 한 번 더 넣었다 — 2026-10-27 제거.
+                limit = _SECTION_MAX_CHARS if processes and h is processes[0] else 400
                 excerpt_parts.append(
-                    f"### {h['title']} ({h['handoff_type']}, {recorded_at[:10]})\n\n{_truncate(excerpt, 400)}"
+                    f"### {h['title']} ({h['handoff_type']}, {recorded_at[:10]})\n\n{_truncate(excerpt, limit)}"
                 )
                 source_refs.append(h["rel_path"])
         sections.append("## Recent Session Handoff / Latest Plan-Process\n\n" + "\n\n".join(excerpt_parts))
@@ -889,35 +892,6 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
             f"'{latest_orphan['title']}'에 대응하는 Process가 없습니다. 컴팩팅/종료 전에 "
             "write_session_process를 호출했는지 확인하세요."
         )
-
-    next_actions: list[str] = []
-    if processes:
-        latest_process = processes[0]
-        next_excerpt = _excerpt_sections(latest_process["body"], ("Next Session",))
-        if next_excerpt:
-            next_actions.append(next_excerpt)
-    if next_actions:
-        latest_process = processes[0]
-        recorded_at = latest_process.get("updated_at") or latest_process.get("created_at") or "기록 시각 없음"
-        action_text = (
-            "_세션 Process에 기록된 제안입니다. 현재 상태와 일치하는지 확인한 뒤 진행하세요._\n\n"
-            f"출처: `{latest_process['rel_path']}` · 마지막 기록: {recorded_at}"
-        )
-        try:
-            recorded = datetime.fromisoformat(recorded_at)
-            now = datetime.now(recorded.tzinfo) if recorded.tzinfo else datetime.now()
-            stale_reasons = []
-            if (now - recorded).days > _MEMORY_STALE_DAYS:
-                stale_reasons.append(f"{_MEMORY_STALE_DAYS}일이 지난 기록")
-            if plans and _handoff_timestamp(max(plans, key=_handoff_timestamp)) > _handoff_timestamp(latest_process):
-                stale_reasons.append("이후 작성된 Plan이 있음")
-            if stale_reasons:
-                action_text += "\n\n⚠ 오래된 기록일 수 있음: " + ", ".join(stale_reasons) + "."
-        except ValueError:
-            action_text += "\n\n⚠ 기록 시각을 확인할 수 없으므로 현재 상태를 먼저 검증하세요."
-        action_text += "\n\n" + "\n\n".join(next_actions)
-        sections.append("## Suggested Next Actions\n\n" + _truncate(action_text))
-        source_refs.append(latest_process["rel_path"])
 
     # 생명주기 안내는 항상 넣는다 — Devtrail 외 repo는 CLAUDE.md에 이 지시가 없어
     # briefing이 유일한 통로다 (2026-10-14 nightshift 세션이 기록 0건으로 끝난 원인).
