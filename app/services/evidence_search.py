@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import frontmatter
+import yaml
 
 from app.services.project_identity import ProjectRegistry, ProjectResolution, load_registry, resolve_project
 from app.services.vault_source import (
@@ -91,6 +91,7 @@ _CANDIDATE_SUBKINDS = {
 _MARKER_RE = re.compile(r"^<!-- devtrail-memory-patch: (.+) -->\s*$")
 # 블록 경계는 접두로 감지한다 — 닫는 `-->`가 빠진 marker를 경계로 안 보면 그 아래 블록이 앞 블록 소속에 흡수된다
 _MARKER_PREFIX = "<!-- devtrail-memory-patch:"
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)  # python-frontmatter YAMLHandler와 같은 로더
 _TIME_KEYS = ("updated_at", "created_at", "date", "promoted_at")
 
 
@@ -350,14 +351,16 @@ def load_doc(vault_dir: Path, rel: str, path: Path, reg: ProjectRegistry) -> _Do
     if source.frontmatter_lines:
         # 해석에 실패하거나 결과가 매핑이 아니면 '---' 사이 줄도 본문으로 본다 — 수평선으로 시작하는 노트의 앞줄이
         # 검색에서 사라지지 않게 (legacy WikiService도 해석 실패 시 원문 전체를 본문으로 본다)
+        # python-frontmatter는 YAML이 매핑이 아니면(문자열 한 줄 등) 조용히 빈 dict를 준다 — 그래서 YAML 값 자체로 판정한다.
+        # 비었거나 주석뿐(None)·매핑이면 정상 frontmatter, 문법 오류·스칼라·목록이면 해석 실패다.
+        fm_text = "\n".join(source.lines[1:source.frontmatter_lines[1] - 1])
+        # 한 번만 해석한다(문서마다 YAML 이중 해석은 1000문서 규모에서 1.5배 느렸다). 로더는 python-frontmatter와 같다.
         try:
-            loaded = frontmatter.loads("\n".join(source.lines)).metadata
+            data = yaml.load(fm_text, Loader=_YAML_LOADER)
         except Exception:
-            loaded = None
-        fm_body = source.lines[1:source.frontmatter_lines[1] - 1]
-        # python-frontmatter는 YAML이 매핑이 아니면(문자열 한 줄 등) 조용히 빈 dict를 준다 — 내용이 있는데 비면 해석 실패다
-        if isinstance(loaded, dict) and (loaded or not any(line.strip() for line in fm_body)):
-            meta = dict(loaded)
+            data = False
+        if data is None or isinstance(data, dict):
+            meta = dict(data or {})
         else:
             body_start = 1
             warnings.append("frontmatter를 해석하지 못해 메타데이터 없이 파일 전체를 본문으로 봅니다.")

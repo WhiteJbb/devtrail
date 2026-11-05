@@ -729,13 +729,33 @@ def test_alias_and_folder_names_in_documents_attribute_like_identification(tmp_p
     resp = vault_tools.search_evidence("별칭토큰", project="Devtrail", limit=20,
                                        settings=_settings(tmp_path, str(mapping)))
     by = {r["path"]: r for r in resp["results"]}
-    assert set(by) == {"10_Worklog/Sessions/a.md", "10_Worklog/Sessions/b.md", "30_Projects/devtrail-dir/Plans/p.md",
-                       "40_AgentMemory/06_Lessons.md"}
+    # b.md의 'devtrail-dir'은 식별이 인정하지 않는 이름(폴더명≠선언명)이라 소속을 정하지 않는다
+    assert set(by) == {"10_Worklog/Sessions/a.md", "30_Projects/devtrail-dir/Plans/p.md", "40_AgentMemory/06_Lessons.md"}
     assert by["10_Worklog/Sessions/a.md"]["attribution"]["evidence"] == ["meta:project=dt→Devtrail"]
     assert by["30_Projects/devtrail-dir/Plans/p.md"]["attribution"]["scope"] == "project"  # 충돌 아님
     assert by["40_AgentMemory/06_Lessons.md"]["attribution"]["blocks"][0]["project"] == "Devtrail"
     # 두 프로젝트를 가리키는 별칭은 소속을 정하지 않는다
     assert resp["filtered"]["documents"]["other_project"] >= 1
+
+
+def test_project_keeps_own_documents_when_folder_name_differs_from_declared_name(tmp_path):
+    """식별로 확정한 프로젝트는 소속 판정에서도 같은 이름이어야 한다 — 폴더명≠선언명인 Context.md가 있어도."""
+    _w(tmp_path, "30_Projects/Alpha/Context.md", _fm(project="Beta") + "# ctx\n")
+    _w(tmp_path, "60_Candidates/SessionHandoffs/Alpha/p.md",
+       _fm(project="Alpha", session_id="s1", handoff_type="process") + "폴더토큰 handoff\n")
+    _w(tmp_path, "10_Worklog/Sessions/s.md", _fm(project="Alpha", session_id="s1") + "폴더토큰 session\n")
+    resp = _search(tmp_path, "폴더토큰", project="Alpha")
+    assert resp["scope"]["project"] == "Alpha" and _paths(resp) == ["60_Candidates/SessionHandoffs/Alpha/p.md"]
+    hit = resp["results"][0]
+    assert hit["attribution"]["scope"] == "project" and hit["duplicates"][0]["path"] == "10_Worklog/Sessions/s.md"
+
+
+@pytest.mark.parametrize("fm_block", ["# 초안 주석토큰", "{}", ""])
+def test_valid_empty_or_comment_frontmatter_is_not_a_parse_failure(tmp_path, fm_block):
+    _w(tmp_path, "20_Knowledge/c.md", f"---\n{fm_block}\n---\n주석토큰 본문\n")
+    r = _search(tmp_path, "주석토큰")["results"][0]
+    assert r["title"] == "c" and "warnings" not in r
+    assert [(e["start_line"], e["end_line"]) for e in r["excerpts"]] == [(4, 4)]
 
 
 def test_registry_is_loaded_once_per_search(tmp_path, monkeypatch):

@@ -314,6 +314,7 @@ read_note("60_Candidates/SessionHandoffs/Devtrail/….md", structured=True, star
 - 프로젝트는 등록 이름·`.claude/vault.json`·식별 매핑(`DEVTRAIL_PROJECT_MAP`, 예시 `docs/examples/project-map.example.json`)
   으로만 확정한다. repo 디렉터리 이름만으로는 확정하지 않는다.
 - 기본 분량: 검색 5개(최대 20)·문서당 발췌 2개×800자·응답 12000자, 구간 읽기 120줄(최대 400)·16000자.
+- 발췌와 구간 읽기는 완전한 줄만 준다. 한 줄이 상한보다 길면 줄을 자르지 않고 `line_too_long`으로 알린다(발췌는 `text: null`).
 
 ### 새 머신 점검 — `devtrail doctor`
 

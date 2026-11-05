@@ -122,7 +122,7 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 | `30_Projects/<dir>/…` | `<dir>`의 Context.md가 선언한 프로젝트 (없으면 폴더명) |
 | `60_Candidates/SessionHandoffs/<P>/…` (`_Archive` 아래 포함) | `<P>` |
 | `20_Knowledge/<P>/…` | `<P>`가 등록 프로젝트(Context.md 또는 SessionHandoffs 폴더 — 프로젝트 식별과 같은 기준)일 때만 (curator가 프로젝트 knowledge를 두는 곳). `20_Knowledge/AI/` 같은 주제 폴더는 근거가 아니다 |
-| frontmatter `project:` | 그 프로젝트 |
+| frontmatter `project:` | 그 프로젝트. 값은 식별과 **같은 근거·같은 순서로만** 정규화한다 — 등록 표기 → SessionHandoffs 폴더 → 매핑 별칭(가리키는 프로젝트가 하나일 때만). 식별이 인정하지 않는 이름(예: 선언명과 다른 30_Projects 폴더명)은 바꾸지 않는다 — 식별로 확정한 프로젝트가 자기 문서를 다른 프로젝트로 판정하지 않게. 정규화했으면 evidence가 `meta:project=dt→Devtrail` 꼴이다. marker의 `project`도 같다 |
 | 경로와 frontmatter가 다르다 | `conflict` (`conflict_with`에 둘 다) |
 | frontmatter `scope: global` | 공통 (memory_patch가 쓰는 값. 출신 프로젝트는 evidence에 남긴다) |
 | `40_AgentMemory/…` (위 근거 없음) | 공통 — AGENTS.md가 "전역 AI 메모리"로 정의한 경로 규칙 |
@@ -190,6 +190,9 @@ read_scope 안이면 `read_note`로 어느 프로젝트 문서든 읽을 수 있
 | `active` | Context.md·AgentMemory 기본 템플릿 (`wiki_service`) |
 | `superseded` | `vault_tools._list_decisions`가 이력으로 숨긴다 |
 | `archived` | 코드에서 쓰는 곳 없음. 보관을 선언하는 값이라 이력으로 본다 |
+
+frontmatter: 첫 줄과 닫는 줄이 `---`여도 그 사이가 YAML **매핑**으로 해석되지 않으면(문법 오류, 문자열 한 줄, 목록 등. 비었거나 주석뿐이면 정상) 메타데이터 없이
+파일 전체를 본문으로 본다(경고 "frontmatter를 해석하지 못해…"). 수평선으로 시작하는 노트의 앞줄이 검색에서 사라지지 않게 하려는 것이다.
 
 특수 문서 구조: SessionHandoffs의 `handoff_type`(plan/process)·`session_id`, AgentMemory marker 블록,
 OpenLoops `## <project>` 블록(marker로 감싸짐). 지원하지 않는 형식은 결과의 `warnings`로 드러난다 —
@@ -325,19 +328,24 @@ DEVTRAIL_PROJECT_MAP=/path/to/project-map.json
 사례마다 정답 문서와 줄 범위를 고정했다. legacy는 `search_vault(limit=5)` 후 summary에 근거가 없으면 `read_note` 전문,
 structured는 `search_vault(structured=True, project=…)` 후 발췌가 정답 줄을 덮지 않으면 그 구간만 읽는다고 보고 셌다.
 
-2026-11-05 측정 (Pyodide 0.27.7 / CPython 3.12.7 wasm, Node 26 — 아래 "한계" 참고):
+2026-11-05 재측정 — 긴 줄·cursor·중복·리뷰 반영 뒤 (Pyodide 0.27.7 / CPython 3.12.7 wasm, Node 26 — 아래 "한계" 참고):
 
 | 사례 | 종류 | 정답 | legacy 순위 | 새 순위 | legacy 응답에 근거 | 새 응답에 근거 | 호출 legacy→새 | 문자 legacy→새 | ms legacy→새 | 타 프로젝트(상위5) legacy→새 | superseded(상위5) legacy→새 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| mcp 개명 문제 | regression | `30_Projects/Devtrail/Problems/mcp 2.x 개명.md:16-16` | 2 | 1 | 아니오 | 예 | 2→1 | 595→1914 | 11.5→12.3 | 0→0 | 0→0 |
-| Stop 훅 결정 | regression | `30_Projects/Devtrail/Decisions/2026-10-19 Stop 훅 parent_pid.md:12-12` | 1 | 1 | 예 | 예 | 1→1 | 528→3848 | 7.7→9.1 | 0→0 | 0→0 |
-| 자동 승격 결정 | history | `30_Projects/Devtrail/Decisions/2026-10-18 검토 게이트 제거.md:12-12` | 2 | 1 | 예 | 예 | 1→1 | 655→1932 | 6.4→9.3 | 0→0 | 1→0 |
-| Context 상한 세션 근거 | inversion | `60_Candidates/SessionHandoffs/Devtrail/2026-10-27 Process.md:128-129` | 없음 | 1 | 아니오 | 예 | -→1 | 797→3543 | 5.6→7.6 | 0→0 | 0→0 |
-| 조상 pid 매칭 세션 근거 | late | `10_Worklog/Sessions/2026-10-19-stop-hook.md:79-80` | 3 | 1 | 아니오 | 예 | 2→1 | 3061→2936 | 7.8→8.0 | 0→0 | 0→0 |
-| 다른 프로젝트 격리 | isolation | `60_Candidates/SessionHandoffs/rpg-game-web/2026-10-20 Process.md:14-14` | 없음 | 1 | 아니오 | 예 | -→1 | 797→2890 | 5.7→8.1 | 2→0 | 0→0 |
-| Lessons 프로젝트 블록 | isolation | `40_AgentMemory/06_Lessons.md:12-12` | 1 | 1 | 아니오 | 예 | 2→1 | 473→2048 | 5.5→6.9 | 0→0 | 0→0 |
+| mcp 개명 문제 | regression | `30_Projects/Devtrail/Problems/mcp 2.x 개명.md:16-16` | 2 | 1 | 아니오 | 예 | 2→1 | 595→1913 | 13.1→8.7 | 0→0 | 0→0 |
+| Stop 훅 결정 | regression | `30_Projects/Devtrail/Decisions/2026-10-19 Stop 훅 parent_pid.md:12-12` | 1 | 1 | 예 | 예 | 1→1 | 528→3848 | 5.7→6.9 | 0→0 | 0→0 |
+| 자동 승격 결정 | history | `30_Projects/Devtrail/Decisions/2026-10-18 검토 게이트 제거.md:12-12` | 2 | 1 | 예 | 예 | 1→1 | 655→1932 | 5.6→6.4 | 0→0 | 1→0 |
+| Context 상한 세션 근거 | inversion | `60_Candidates/SessionHandoffs/Devtrail/2026-10-27 Process.md:128-129` | 없음 | 1 | 아니오 | 예 | -→1 | 797→3713 | 5.4→6.6 | 0→0 | 0→0 |
+| 조상 pid 매칭 세션 근거 | late | `10_Worklog/Sessions/2026-10-19-stop-hook.md:79-80` | 3 | 1 | 아니오 | 예 | 2→1 | 3061→2936 | 5.6→6.3 | 0→0 | 0→0 |
+| 다른 프로젝트 격리 | isolation | `60_Candidates/SessionHandoffs/rpg-game-web/2026-10-20 Process.md:14-14` | 없음 | 1 | 아니오 | 예 | -→1 | 797→2890 | 5.3→5.8 | 2→0 | 0→0 |
+| Lessons 프로젝트 블록 | isolation | `40_AgentMemory/06_Lessons.md:12-12` | 1 | 1 | 아니오 | 예 | 2→1 | 473→2048 | 5.9→6.3 | 0→0 | 0→0 |
 
-규모: 같은 Vault에 세션 원문 1000개(각 약 3천 자)를 더했을 때 검색 1회 중앙값 legacy 290.6ms, structured 305.6ms (3회). legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 느려졌다 — 같은 조건 A/B(5회 중앙값)에서 수정 전 256.4ms → 수정 후 286.6ms(약 12%). 대신 금지 prefix·vault 밖 링크 대상과 00_Inbox 등 범위 밖 파일은 더 이상 열지 않는다.
+규모: 같은 Vault에 세션 원문 1000개(각 약 3천 자)를 더했을 때 검색 1회 중앙값 legacy 287.5ms, structured 301.0ms (5회).
+legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 기능 이전보다 느려졌다 — 같은 조건 A/B(5회 중앙값, 이전 측정)에서 256.4ms → 286.6ms(약 12%).
+대신 금지 prefix·vault 밖 링크 대상과 00_Inbox 등 범위 밖 파일은 더 이상 열지 않는다.
+
+이전 측정 대비 바뀐 값: "Context 상한 세션 근거"의 새 응답이 3543자 → 3713자. 묶인 사본(세션 원문)의 근거(등급·상태·소속·발췌 줄)를
+함께 싣기 때문이다. 순위·근거 적중·호출 수는 같다.
 
 읽는 법:
 
@@ -345,40 +353,48 @@ structured는 `search_vault(structured=True, project=…)` 후 발췌가 정답 
 - 관련도 역전: legacy는 stable을 무조건 앞에 둬 단어 하나만 맞는 정본 5개가 정확한 세션 근거(후보·원문)를 밀어냈다. structured는 1위.
 - 후반 근거: legacy summary는 문서 첫 줄이라 128행·80행 근거가 안 보여 전문 읽기가 한 번 더 필요했다. structured는 발췌가 그 줄이다.
 - 격리: legacy는 rpg-game-web 질의 상위 5에 Devtrail 문서 2개가 섞였고 정답은 밖이었다. structured는 0개.
-- 문자 수: 짧은 문서에서는 structured 응답이 더 길다(범위·필터·발췌·버전 메타데이터, 1.9~3.8천 자). 긴 원문을 전문으로 읽어야 하던 사례(80행 세션)에서만 줄었다. 상한 12000자 안이다.
-- 시간: 같은 환경에서 structured가 사례당 1.0~1.5배(사례별 ms는 1회 측정이라 흔들린다), 1000문서 규모에서 약 1.05배 느리다(파일마다 버전 해시·줄 단위 창 계산).
+- 문자 수: 짧은 문서에서는 structured 응답이 더 길다(범위·필터·발췌·버전 메타데이터, 1.9~3.9천 자). 긴 원문을 전문으로 읽어야 하던 사례(80행 세션)에서만 줄었다. 상한 12000자 안이다.
+- 시간: 같은 환경에서 structured가 사례당 0.7~1.2배(사례별 ms는 1회 측정이라 흔들린다 — 앞선 측정에서는 1.0~1.5배), 1000문서 규모에서 약 1.05배 느리다(파일마다 버전 해시·줄 단위 창 계산).
 
 ## 테스트 결과 (2026-11-05)
 
-환경: 이 작업 컨테이너에는 Python과 PyPI 접근이 없어, 공식 Pyodide 0.27.7(CPython 3.12.7 wasm) + mcp 1.30.0 +
-pydantic 2.12.5(공식 emscripten 휠) 위에서 `python -m pytest`를 돌렸다. 프로세스를 띄우는 테스트는 이 환경에서 실패한다.
+환경: 이 작업 컨테이너에는 네이티브 Python과 PyPI 접근이 없어, 공식 Pyodide 0.27.7(CPython 3.12.7 wasm, GitHub 릴리스) +
+mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위에서 `python -m pytest`를 돌렸다. Pyodide에는 `fcntl`이
+없어 아무것도 안 하는 대체 모듈을 넣었다(단일 프로세스·단일 스레드라 잠금이 의미가 없다). 프로세스를 띄우는 테스트는 이 환경에서 실패한다.
+**네이티브 CPython(macOS 개발 트리)에서는 돌리지 않았다.**
 
 | 시점 | 결과 |
 |---|---|
-| 변경 전(baseline, `5d2f4be`) | 511 passed, 6 failed |
-| 변경 후 | 624 passed, 6 failed — 실패 목록이 baseline과 같다(새 실패 0건) |
+| 기능 이전(baseline, `5d2f4be` = main) | 511 passed, 6 failed |
+| 앞선 작업 끝(`a297825`) | 624 passed, 6 failed |
+| 이번 작업 끝 | 657 passed, 6 failed — 실패 목록이 세 시점 모두 같다(새 실패 0건) |
 
-baseline과 같은 실패 6건:
+같은 실패 6건:
 
 - 환경(프로세스 없음) 5건: `test_candidate_writer.py::test_parallel_process_writes_allocate_distinct_candidate_files`,
   `test_session_markers.py`의 `test_dead_process_marker_is_not_live`·`test_ancestor_pids_starts_with_self_and_includes_parent`·
   `test_marker_for_current_session_picks_own_among_concurrent`, `test_vault_tools.py::test_write_session_process_serializes_multiprocess_appends`
-- 기존 실패 1건: `test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process` — 대소문자를 구분하는 파일시스템에서
-  `"devtrail"` 조회가 `Devtrail` 폴더를 못 찾는다. 이번 변경과 무관하다.
+- 기존 실패 1건: `test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process` — `Devtrail`로 쓰고 `"devtrail"`로 조회한다.
+  대소문자를 구분하는 파일시스템에서 실패한다(macOS 기본 파일시스템에서는 통과할 것으로 보이나 확인하지 못했다). 이번 변경과 무관하다.
 
-관련 테스트: `test_evidence_search.py`, `test_source_reader.py`, `test_project_identity.py`, `test_evidence_eval.py`,
-`test_mcp_server.py`(실제 `call_tool` 경로), 그리고 공유 서비스 회귀 확인용 `test_vault_tools.py`·`test_wiki_core.py`.
-리뷰에서 나온 경계 사례마다 회귀 테스트를 붙였고, 그 테스트가 수정 전 코드에서는 실패하는 것을 확인했다.
+관련 테스트: `test_evidence_search.py`, `test_source_reader.py`, `test_project_identity.py`, `test_vault_source.py`, `test_evidence_eval.py`,
+`test_mcp_server.py`(실제 `call_tool` 경로), `test_wiki_core.py`(legacy 검색의 `path_filter`), `test_vault_tools.py`.
+상세 검사·리뷰 근거와 수용 기준별 결과는 [`evidence-search-verification.md`](./evidence-search-verification.md)에 있다.
 
 ## 알려진 한계
 
 - 평가 Vault는 합성이고 사례 7개다. 실제 사용자 vault에서의 순위·분량·시간은 재지 않았다(이 작업은 사용자 vault를 읽지도 바꾸지도 않는다).
   사례는 legacy가 실패하는 유형을 일부러 담았으므로 "개선 비율"로 일반화하면 안 된다.
 - 측정 환경은 Pyodide(wasm) 위 CPython이다 — 이 컨테이너에 네이티브 Python과 PyPI 접근이 없었다. 절대 ms는 네이티브와 다르고, 두 방식의 상대 비교만 의미가 있다.
-- 매 호출마다 read_scope 전체를 읽고 해시한다(legacy도 매번 전체를 읽는다). 색인·캐시는 없다.
+- 매 호출마다 read_scope 전체를 읽고 해시한다(legacy도 매번 전체를 읽는다). 색인·캐시는 없다. 구간 읽기도 페이지마다 파일 전체를 읽고 해시한다
+  (버전 확인 때문). 수십 MB 원문을 페이지로 넘기면 페이지 수 × 파일 크기만큼 든다.
+- 16000자보다 긴 한 줄은 structured 읽기로 받을 수 없다(`line_too_long`, `readable_with_max_chars=false`). 줄을 쪼개 주는 방식은
+  승인된 설계가 아니라 넣지 않았다. 전문은 기존 `read_note`로 읽는다.
+- `project` 없는 vault 전체 검색의 cursor는 허용 prefix 안 어느 문서가 바뀌어도 `cursor_stale`이 된다(스캔 대상 전체를 묶기 때문).
 - 토큰은 부분 문자열 일치라 "검색"이 "검색을"에도 맞고, 한 글자 낱말은 버린다(legacy와 같다). 형태소 분석·동의어·벡터 검색은 범위 밖이다.
-- 근거 창은 줄 기준이다. 문단 한 줄이 아주 긴 문서에서는 "같은 창"이 넓어진다.
+- 근거 창은 줄 기준이다. 문단 한 줄이 아주 긴 문서에서는 "같은 창"이 넓어지고, 800자보다 긴 일치 줄은 발췌 text 없이 위치만 나온다.
 - 소속 근거가 없는 문서(digest, 70_Tasks/Active.md 등)는 `unknown`이라 프로젝트 검색 기본값에서 빠진다. 본문 언급으로 귀속하지 않는 것은 의도다.
 - `20_Knowledge/<P>/` 경로 근거는 `<P>`가 등록 프로젝트일 때만 쓴다. 주제 폴더 이름이 우연히 프로젝트명과 같으면 그 프로젝트로 본다.
-- 중복 출처는 바이트 동일 본문과 session_id 규칙만 묶는다. 거의 같은 내용(승격 시 "관련 노트" 절이 붙은 사본 등)은 따로 나온다.
+- 중복 출처는 "본문 바이트·파일명·소속이 같다"와 session_id 규칙만 묶는다. 거의 같은 내용(승격 시 "관련 노트" 절이 붙은 사본 등)이나
+  파일명을 바꾼 사본은 따로 나온다 — 서로 다른 결정을 숨기는 것보다 사본이 두 번 나오는 쪽을 택했다.
 - `get_project_briefing`, `get_recent_sessions` 등 다른 도구의 프로젝트 판정은 바꾸지 않았다 (briefing은 여전히 basename 매칭을 쓴다).

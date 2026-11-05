@@ -54,7 +54,6 @@ class ProjectRegistry:
     canonical: dict[str, list[str]] = field(default_factory=dict)
     display: dict[str, str] = field(default_factory=dict)  # casefold → 표기
     dir_to_project: dict[str, str] = field(default_factory=dict)  # 30_Projects 폴더명 → 표기
-    dir_display: dict[str, str] = field(default_factory=dict)  # casefold 폴더명 → 그 Context.md가 선언한 표기
     handoff_folders: dict[str, list[str]] = field(default_factory=dict)  # casefold → 폴더명들
     aliases: dict[str, set[str]] = field(default_factory=dict)  # casefold alias → canonical 표기들
     repos: dict[str, set[str]] = field(default_factory=dict)  # casefold owner/repo → canonical 표기들
@@ -73,14 +72,13 @@ class ProjectRegistry:
     def attribution_name(self, name: str) -> str:
         """문서가 선언한 프로젝트 이름(frontmatter·marker)을 소속 비교용 표기로 바꾼다.
 
-        식별(resolve_project)이 인정하는 근거와 맞춘다: 등록 표기 → 30_Projects 폴더명(그 Context.md가 선언한 이름) →
-        SessionHandoffs 폴더 → 매핑 별칭(가리키는 프로젝트가 하나일 때만). 어느 것도 아니면 입력 그대로다.
+        식별(resolve_project)과 같은 근거·같은 순서만 쓴다: 등록 표기 → SessionHandoffs 폴더 → 매핑 별칭(가리키는
+        프로젝트가 하나일 때만). 어느 것도 아니면 입력 그대로다. 식별이 쓰지 않는 규칙(예: 30_Projects 폴더명을 그
+        Context.md의 선언명으로 바꾸기)을 여기에만 두면, 식별로 확정한 프로젝트가 자기 문서를 다른 프로젝트로 판정한다.
         """
         key = name.strip().casefold()
         if key in self.display:
             return self.display[key]
-        if key in self.dir_display:
-            return self.dir_display[key]
         folders = self.handoff_folders.get(key)
         if folders and len(folders) == 1:
             return folders[0]
@@ -136,7 +134,6 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
             reg.canonical.setdefault(key, []).append(rel)
             reg.display.setdefault(key, name)
             reg.dir_to_project[ctx_path.parent.name] = name
-            reg.dir_display.setdefault(ctx_path.parent.name.casefold(), name)
     handoff_root = vault_dir / _HANDOFF_ROOT
     if handoff_root.is_dir():
         for d in sorted(handoff_root.iterdir()):
