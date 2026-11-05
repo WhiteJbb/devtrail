@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # --- Obsidian ---
     obsidian_vault_path: str = Field(default="", alias="OBSIDIAN_VAULT_PATH")
     obsidian_vault_dir: str = Field(default="", alias="OBSIDIAN_VAULT_DIR")  # legacy alias
+    # 프로젝트 식별 전용 매핑(별칭·owner/repo → 프로젝트) JSON 경로. 비면 매핑 없이 canonical 이름만 쓴다.
+    # 형식: docs/examples/project-map.example.json — 프로젝트 상태를 복제하는 곳이 아니다.
+    devtrail_project_map: str = Field(default="", alias="DEVTRAIL_PROJECT_MAP")
 
     # --- Git ---
     git_diff_max_chars: int = Field(default=800, alias="GIT_DIFF_MAX_CHARS")

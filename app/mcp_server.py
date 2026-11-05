@@ -127,27 +127,89 @@ def get_project_briefing(project_or_repo: str) -> dict:
     return dataclasses.asdict(result)
 
 
+def _reject_structured_only(tool: str, **given) -> None:
+    """structured 전용 인자를 legacy 호출에 섞으면 조용히 무시하지 않고 거부한다 — 범위를 줬다고 믿고 전체 결과를 읽게 된다."""
+    # 0 == False라 `in (None, False, ...)`로 비교하면 start_line=0 같은 값이 조용히 무시된다 — 타입별로 본다
+    used = sorted(
+        name for name, value in given.items()
+        if not (value is None or value is False or (isinstance(value, (str, list)) and not value))
+    )
+    if used:
+        raise ValueError(f"{tool}: {', '.join(used)}는 structured=True에서만 쓴다.")
+
+
 @mcp.tool()
-def search_vault(query: str, limit: int = 10) -> list[dict]:
+def search_vault(
+    query: str,
+    limit: int | None = None,
+    structured: bool = False,
+    project: str = "",
+    include_common: bool = False,
+    include_unattributed: bool = False,
+    include_history: bool = False,
+    kinds: list[str] | None = None,
+    cursor: str = "",
+    max_chars: int | None = None,
+) -> list[dict] | dict:
     """모르는 모듈·용어·과거 작업·결정이 언급되면 추측 전에 먼저 호출한다. vault 전체 키워드 검색.
 
-    status=stable(승격된 정본) / candidate(검토 대기 후보) / raw(세션·산출물 원문)이
-    함께 반환되며 이 순서로 정렬된다. raw는 근거 조회용이지 확정 지식이 아니다.
+    기본(structured=False): 리스트. status=stable(승격된 정본) / candidate(검토 대기 후보) /
+    raw(세션·산출물 원문)이 이 순서로 정렬된다. limit 기본 10. raw는 근거 조회용이지 확정 지식이 아니다.
+
+    structured=True: 프로젝트 근거 검색 — 원문 줄 발췌(start_line~end_line)와 source_version을 준다.
+    project: 이 프로젝트 소속만(공통·타 프로젝트·소속 불명 제외). 프로젝트명·별칭·owner/repo·repo 경로.
+    include_common: 공통(40_AgentMemory 전역 블록 등)도 합친다. include_unattributed: 소속 불명도 합친다.
+    include_history: superseded/_Archive 문서도 본다. kinds: ["decision","problem","session_handoff",...].
+    limit 기본 5·최대 20, 응답 max_chars 기본·최대 12000. has_more면 next_cursor로 이어 받는다.
+    0건이어도 범위를 넓히지 않는다 — filtered를 보고 직접 정한다. 발췌 구간 전문은 read_note(structured=True).
     """
     _touch_session_marker()
-    hits = vault_tools.search_vault(query, limit=limit, settings=get_settings())
-    return [dataclasses.asdict(h) for h in hits]
+    if not structured:
+        _reject_structured_only(
+            "search_vault", project=project, include_common=include_common,
+            include_unattributed=include_unattributed, include_history=include_history,
+            kinds=kinds, cursor=cursor, max_chars=max_chars,
+        )
+        hits = vault_tools.search_vault(query, limit=10 if limit is None else limit, settings=get_settings())
+        return [dataclasses.asdict(h) for h in hits]
+    return vault_tools.search_evidence(
+        query, project=project, include_common=include_common, include_unattributed=include_unattributed,
+        include_history=include_history, kinds=kinds, limit=limit, cursor=cursor, max_chars=max_chars,
+        settings=get_settings(),
+    )
 
 
 @mcp.tool()
-def read_note(rel_path: str) -> str:
+def read_note(
+    rel_path: str,
+    structured: bool = False,
+    start_line: int | None = None,
+    max_lines: int | None = None,
+    max_chars: int | None = None,
+    char_offset: int | None = None,
+    expected_version: str = "",
+) -> str | dict:
     """search_vault·get_*가 돌려준 rel_path의 전문을 읽는다. briefing 발췌가 잘려 있으면 이걸로 본다.
 
     읽기 허용: 20_Knowledge/, 30_Projects/, 40_AgentMemory/, 60_Candidates/,
     10_Worklog/, 50_Outputs/, 70_Tasks/.
+
+    structured=True: 줄 구간 읽기. 줄 번호는 frontmatter 포함 파일 전체 기준(검색 발췌와 같다).
+    start_line 기본 1, max_lines 기본 120·최대 400, max_chars 기본·최대 16000. 응답의 next가 있으면
+    그 start_line·char_offset·expected_version을 그대로 넘겨 이어 읽는다. next=None이면 끝(eof).
+    파일이 바뀌면 error.code=version_mismatch — 처음부터 다시 읽는다.
     """
     _touch_session_marker()
-    return vault_tools.read_note(rel_path, settings=get_settings())
+    if not structured:
+        _reject_structured_only(
+            "read_note", start_line=start_line, max_lines=max_lines, max_chars=max_chars,
+            char_offset=char_offset, expected_version=expected_version,
+        )
+        return vault_tools.read_note(rel_path, settings=get_settings())
+    return vault_tools.read_source(
+        rel_path, start_line=start_line, max_lines=max_lines, max_chars=max_chars,
+        char_offset=char_offset, expected_version=expected_version, settings=get_settings(),
+    )
 
 
 @mcp.tool()
