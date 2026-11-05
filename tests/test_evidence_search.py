@@ -441,7 +441,7 @@ def test_legacy_search_and_read_reject_symlink_bypass(tmp_path):
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"limit": 0}, {"limit": 21}, {"max_chars": 12001}, {"max_chars": 1999}, {"kinds": ["nope"]},
+    {"limit": 0}, {"limit": 21}, {"max_chars": 12001}, {"max_chars": 2999}, {"kinds": ["nope"]},
     {"include_common": True}, {"include_unattributed": True},
 ])
 def test_invalid_arguments(tmp_path, kwargs):
@@ -475,13 +475,13 @@ def test_excluded_block_tags_and_heading_do_not_leak(tmp_path):
 
 def test_budget_holds_with_huge_title_and_many_duplicates(tmp_path):
     _w(tmp_path, "20_Knowledge/big.md", _fm(title="큰제목 " + "가" * 3000) + "예산경계 본문\n")
-    resp = _search(tmp_path, "예산경계", max_chars=2000)
-    assert len(json.dumps(resp, ensure_ascii=False)) <= 2000 and not resp["budget"]["exceeded"]
+    resp = _search(tmp_path, "예산경계", max_chars=3000)
+    assert resp["ok"] and len(json.dumps(resp, ensure_ascii=False)) <= 3000
     assert len(resp["results"][0]["title"]) <= 200
     for i in range(200):
         _w(tmp_path, f"20_Knowledge/dup{i:03d}.md", "중복예산 같은 본문\n")
     resp = _search(tmp_path, "중복예산")
-    assert len(json.dumps(resp, ensure_ascii=False)) <= 12000 and not resp["budget"]["exceeded"]
+    assert resp["ok"] and len(json.dumps(resp, ensure_ascii=False)) <= 12000
     assert len(resp["results"][0]["duplicates"]) == 10 and resp["results"][0]["duplicates_omitted"] == 189
 
 
@@ -538,3 +538,72 @@ def test_legacy_search_keeps_link_to_hidden_target_in_scope(tmp_path):
     hits = vault_tools.search_vault("숨김대상토큰", settings=_settings(tmp_path))
     assert [h.path for h in hits] == ["20_Knowledge/visible.md"]
     assert "숨김대상토큰" in vault_tools.read_note("20_Knowledge/visible.md", settings=_settings(tmp_path))
+
+
+def test_budget_holds_for_document_with_hundreds_of_marker_blocks(tmp_path):
+    """marker 200개 문서 — 블록 목록도 예산 안으로 줄이고 생략 개수·줄 범위를 남긴다."""
+    _projects(tmp_path, "Alpha")
+    body = "".join(
+        f'<!-- devtrail-memory-patch: {{"scope": "project", "project": "Alpha"}} -->\n- 블록예산 교훈 {i}\n'
+        for i in range(200)
+    )
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md", body)
+    resp = _search(tmp_path, "블록예산", project="Alpha")
+    assert resp["ok"] and len(json.dumps(resp, ensure_ascii=False)) <= 12000
+    att = resp["results"][0]["attribution"]
+    assert len(att["blocks"]) <= 10
+    assert att["blocks_omitted"]["count"] == 200 - len(att["blocks"]) and att["blocks_omitted"]["last_line"] == 400
+    small = _search(tmp_path, "블록예산", project="Alpha", max_chars=3000)
+    assert small["ok"] and len(json.dumps(small, ensure_ascii=False)) <= 3000 and small["returned"] == 1
+
+
+def test_budget_never_returns_oversized_success(tmp_path):
+    _projects(tmp_path, "Alpha")
+    deep = "30_Projects/Alpha/Plans/" + "/".join(["a" * 200] * 10) + "/n.md"  # 경로만 2천 자가 넘는다
+    _w(tmp_path, deep, "경로예산 본문\n")
+    tight = _search(tmp_path, "경로예산", project="Alpha", max_chars=3000)
+    assert not tight["ok"] and tight["error"]["code"] == "budget_too_small"  # 넘는 응답을 성공으로 내지 않는다
+    assert len(json.dumps(tight, ensure_ascii=False)) <= 3000
+    for i in range(30):
+        _w(tmp_path, f"30_Projects/Alpha/Plans/{'b' * 200}{i:02d}/x/{'c' * 200}.md", f"경로예산 {i}\n")
+    roomy = _search(tmp_path, "경로예산", project="Alpha", limit=20)
+    assert roomy["ok"] and len(json.dumps(roomy, ensure_ascii=False)) <= 12000 and roomy["has_more"]
+
+
+def test_long_query_is_rejected(tmp_path):
+    _w(tmp_path, "20_Knowledge/a.md", "본문\n")
+    assert _search(tmp_path, "가나" * 200)["error"]["code"] == "invalid_argument"
+    assert _search(tmp_path, " ".join(f"단어{i}" for i in range(40)))["error"]["code"] == "invalid_argument"
+
+
+def test_long_first_line_keeps_following_evidence(tmp_path):
+    """긴 첫 줄을 800자로 자르면 같은 창의 뒷줄 근거가 사라지면 안 된다 — 생략 범위를 남기고 두 번째 발췌로 보존한다."""
+    _w(tmp_path, "10_Worklog/Sessions/s.md", "앞" * 2000 + " 긴줄토큰 " + "뒤" * 2000 + "\n두번째 줄 후속토큰 근거\n")
+    r = _search(tmp_path, "긴줄토큰 후속토큰")["results"][0]
+    first, second = r["excerpts"]
+    assert first["start_line"] == 1 and first["line_clip"] and first["omitted_lines"] == [2, 2]
+    assert (second["start_line"], second["end_line"]) == (2, 2) and "후속토큰" in second["text"]
+
+
+def test_legacy_search_never_opens_forbidden_link_targets(tmp_path, monkeypatch):
+    """금지 prefix·vault 밖 링크는 결과 노출뿐 아니라 파일 읽기 자체가 일어나지 않아야 한다."""
+    from app.services import wiki_service
+
+    vault = tmp_path / "vault"
+    _w(vault, "00_Inbox/secret.md", "열기토큰 비밀\n")
+    _w(tmp_path, "outside/out.md", "열기토큰 밖\n")
+    _w(vault, "20_Knowledge/real.md", "열기토큰 정상\n")
+    os.symlink(vault / "00_Inbox" / "secret.md", vault / "20_Knowledge" / "to-inbox.md")
+    os.symlink(tmp_path / "outside", vault / "20_Knowledge" / "outdir")
+    os.symlink(vault / "20_Knowledge" / "missing.md", vault / "20_Knowledge" / "dangling.md")
+    opened: list[str] = []
+    real_parse = wiki_service.WikiService._parse_note
+
+    def spy(self, path):
+        opened.append(path.relative_to(vault).as_posix())
+        return real_parse(self, path)
+
+    monkeypatch.setattr(wiki_service.WikiService, "_parse_note", spy)
+    hits = vault_tools.search_vault("열기토큰", settings=_settings(vault))
+    assert [h.path for h in hits] == ["20_Knowledge/real.md"]
+    assert not any(p.startswith(("00_Inbox/", "20_Knowledge/to-inbox", "20_Knowledge/outdir")) for p in opened)

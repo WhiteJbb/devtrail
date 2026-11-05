@@ -43,7 +43,9 @@ from app.services.wiki_service import _INLINE_TAG_RE, _TOKEN_RE
 DEFAULT_LIMIT = 5
 MAX_LIMIT = 20
 DEFAULT_MAX_CHARS = 12000
-MIN_MAX_CHARS = 2000  # 응답 고정부(범위·필터·예산 등 약 1.2천 자)와 최소형 결과 1건이 들어가는 크기
+MIN_MAX_CHARS = 3000  # 응답 고정부(최대 약 1.9천 자: 질의 300자·토큰 32개 포함)와 압축형 결과 1건이 들어가는 크기
+MAX_QUERY_CHARS = 300  # 질의는 응답에 되돌려 싣는다 — 길이가 무제한이면 고정부만으로 예산을 넘는다
+MAX_QUERY_TOKENS = 32
 EXCERPTS_PER_DOC = 2
 EXCERPT_MAX_CHARS = 800
 _WINDOW_LINES = 5  # "같은 근거 창" — 연속 5줄 안에 함께 나온 토큰 수
@@ -53,6 +55,8 @@ _WARNINGS_CAP = 20
 _DOC_WARNINGS_CAP = 5
 _DUPLICATES_CAP = 10
 _TITLE_MAX_CHARS = 200
+_BLOCKS_CAP = 10  # attribution.blocks — marker가 수백 개인 문서도 결과 크기가 무한히 커지지 않게
+_EVIDENCE_MAX_CHARS = 160  # marker JSON의 project 값처럼 문서에서 온 문자열은 길이 상한을 둔다
 _CURSOR_VERSION = 1
 
 # 코드가 실제로 쓰는 status 값 (2026-11-05 조사 — docs/evidence-search.md "상태 값 근거").
@@ -580,17 +584,23 @@ def _score(doc: _Doc, units: list[_Unit], tokens: list[str], phrase: str) -> _Sc
 
 
 def _excerpts(doc: _Doc, body, line_hits, windows, tokens) -> list[dict]:
-    picked: list[tuple[int, int]] = []
+    """좋은 창부터 발췌한다. 겹침은 창이 아니라 **실제로 낸 줄 범위**로 판정한다 — 800자에 맞추려고 덜어낸
+    뒷줄(omitted_lines)의 근거가 다음 발췌로 살아남게 하려는 것이다."""
+    out: list[dict] = []
+    spans: list[tuple[int, int]] = []
     for distinct, start, end, has_phrase in sorted(windows, key=lambda w: (-w[0], not w[3], w[1])):
-        if any(not (end < s or start > e) for s, e in picked):
+        first_no = body[start][1]
+        if any(s <= first_no <= e for s, e in spans):
             continue
-        picked.append((start, end))
-        if len(picked) >= EXCERPTS_PER_DOC:
+        excerpt = _render_excerpt(doc, body, line_hits, start, end, tokens)
+        span = (excerpt["start_line"], excerpt["end_line"])
+        if any(not (span[1] < s or span[0] > e) for s, e in spans):
+            continue
+        out.append(excerpt)
+        spans.append(span)
+        if len(out) >= EXCERPTS_PER_DOC:
             break
-    out = []
-    for start, end in sorted(picked):
-        out.append(_render_excerpt(doc, body, line_hits, start, end, tokens))
-    return out
+    return sorted(out, key=lambda e: e["start_line"])
 
 
 def _render_excerpt(doc: _Doc, body, line_hits, start: int, end: int, tokens: list[str]) -> dict:
@@ -617,8 +627,11 @@ def _render_excerpt(doc: _Doc, body, line_hits, start: int, end: int, tokens: li
     char_end = char_start + EXCERPT_MAX_CHARS
     piece = line[char_start:char_end]
     kept_terms = sorted({t for t in terms if t in piece.lower()}, key=tokens.index)
-    return {"start_line": first_no, "end_line": first_no, "text": piece, "matched_terms": kept_terms,
-            "truncated": True, "line_clip": {"line": first_no, "char_start": char_start, "char_end": char_end, "line_chars": len(line)}}
+    out = {"start_line": first_no, "end_line": first_no, "text": piece, "matched_terms": kept_terms,
+           "truncated": True, "line_clip": {"line": first_no, "char_start": char_start, "char_end": char_end, "line_chars": len(line)}}
+    if last_no > first_no:
+        out["omitted_lines"] = [first_no + 1, last_no]  # 같은 창의 뒷줄 근거 — 다음 발췌나 read_note로 본다
+    return out
 
 
 # ── 중복 출처 ────────────────────────────────────────────────────────────────
@@ -685,16 +698,25 @@ def _decode_cursor(cursor: str) -> dict:
 # ── 응답 조립 ────────────────────────────────────────────────────────────────
 
 
-def _attribution_dict(doc: _Doc, units: list[_Unit]) -> dict:
+def _ev(items: list[str]) -> list[str]:
+    return [_clip(e, _EVIDENCE_MAX_CHARS) for e in items]
+
+
+def _attribution_dict(doc: _Doc, units: list[_Unit], blocks_cap: int = _BLOCKS_CAP) -> dict:
     fu = doc.file_unit
-    out: dict[str, Any] = {"scope": fu.scope, "project": fu.project, "evidence": fu.evidence}
+    out: dict[str, Any] = {"scope": fu.scope, "project": _clip(fu.project, _EVIDENCE_MAX_CHARS), "evidence": _ev(fu.evidence)}
     if fu.conflict_with:
-        out["conflict_with"] = fu.conflict_with
+        out["conflict_with"] = [_clip(c, _EVIDENCE_MAX_CHARS) for c in fu.conflict_with]
     if doc.has_markers:
+        shown = units[:blocks_cap]
         out["blocks"] = [
-            {"lines": [u.start, u.end], "scope": u.scope, "project": u.project, "evidence": u.evidence}
-            for u in units
+            {"lines": [u.start, u.end], "scope": u.scope, "project": _clip(u.project, _EVIDENCE_MAX_CHARS), "evidence": _ev(u.evidence)}
+            for u in shown
         ]
+        if len(units) > len(shown):
+            rest = units[len(shown):]
+            # 생략한 포함 블록의 개수와 줄 범위 — 목록 대신 범위만 남겨 크기를 고정한다
+            out["blocks_omitted"] = {"count": len(rest), "first_line": rest[0].start, "last_line": rest[-1].end}
         out["blocks_excluded"] = len(doc.units) - len(units)
     return out
 
@@ -749,6 +771,22 @@ def _minimal(entry: dict) -> dict:
     return out
 
 
+def _compact(entry: dict, item: "_Scored") -> dict:
+    """최소형도 예산에 안 들어갈 때의 압축형 — 위치·버전·소속만 남긴다. 나머지는 read_note로 본다."""
+    att = entry["attribution"]
+    out = {
+        "rank": entry["rank"], "path": entry["path"], "title": _clip(entry["title"], 80), "kind": entry["kind"],
+        "record_tier": entry["record_tier"], "status": {"class": entry["status"]["class"]},
+        "attribution": {"scope": att["scope"], "project": att["project"]},
+        "relevance": {"group": entry["relevance"]["group"]},
+        "excerpts": [], "excerpt_lines": [[e["start_line"], e["end_line"]] for e in item.excerpts],
+        "source_version": entry["source_version"], "total_lines": entry["total_lines"], "compacted": True,
+    }
+    if item.doc.has_markers:
+        out["attribution"]["blocks_count"] = len(item.units)
+    return out
+
+
 def _size(obj: Any) -> int:
     return len(json.dumps(obj, ensure_ascii=False))
 
@@ -789,9 +827,13 @@ def search(
             raise SearchArgumentError(
                 "invalid_argument", "include_common/include_unattributed는 project를 줄 때만 의미가 있습니다 (project 없으면 vault 전체)."
             )
+        if len(query or "") > MAX_QUERY_CHARS or len(project) > MAX_QUERY_CHARS:
+            raise SearchArgumentError("invalid_argument", f"query·project는 {MAX_QUERY_CHARS}자 이하입니다.")
         tokens = query_tokens(query or "")
         if not tokens:
             raise SearchArgumentError("invalid_argument", "검색어에 2글자 이상인 단어가 없습니다.")
+        if len(tokens) > MAX_QUERY_TOKENS:
+            raise SearchArgumentError("invalid_argument", f"검색어 단어는 {MAX_QUERY_TOKENS}개 이하입니다.")
         cursor_data = _decode_cursor(cursor) if cursor.strip() else None
     except SearchArgumentError as exc:
         return _error(exc.code, str(exc))
@@ -861,7 +903,7 @@ def search(
         "partial": scan.partial,
         "warnings": warnings,
         "warnings_omitted": omitted_warnings,
-        "budget": {"max_chars": max_chars, "used_chars": 0, "stopped_by": "end", "exceeded": False, "excerpt_max_chars": EXCERPT_MAX_CHARS,
+        "budget": {"max_chars": max_chars, "used_chars": 0, "stopped_by": "end", "excerpt_max_chars": EXCERPT_MAX_CHARS,
                    "excerpts_per_doc": EXCERPTS_PER_DOC},
         "results": [],
         "elapsed_ms": 0,
@@ -890,15 +932,23 @@ def search(
             break
         results.pop()
         if not results:
-            results.append(_minimal(entry))
-            warnings.insert(0, {"code": "budget_exceeded", "message": "결과 1건이 예산 안에 들어가지 않아 발췌 없이 냈습니다. read_note로 원문을 읽으세요."})
+            # 첫 결과는 줄여서라도 낸다 — 0건 페이지가 무한 이어받기를 만들지 않게. 최소형 → 압축형 순으로 줄인다
+            warnings.insert(0, {"code": "budget_exceeded", "message": "결과 1건이 예산 안에 들어가지 않아 줄여서 냈습니다. 발췌 위치(excerpt_lines)나 read_note로 원문을 읽으세요."})
+            minimal = _minimal(entry)
+            minimal["attribution"] = _attribution_dict(item.doc, item.units, blocks_cap=1)
+            results.append(minimal)
+            if not fits():
+                results[-1] = _compact(entry, item)
         stopped_by = "budget"
         break
-    # 응답 공통부(경고)가 길어 넘치면 뒤 경고부터 개수로 바꾼다. 그래도 넘치면 숨기지 않고 exceeded로 알린다
-    while not fits() and len(warnings) > 1:
+    # 응답 공통부(경고)가 길어 넘치면 뒤 경고부터 개수로 바꾼다
+    while not fits() and warnings:
         warnings.pop()
         response["warnings_omitted"] += 1
-    response["budget"]["exceeded"] = not fits()
+    if not fits():
+        # 상한을 넘는 응답을 성공으로 내지 않는다 (압축형 1건 + 고정부도 안 들어가는 아주 작은 max_chars나 비정상 경로 길이)
+        return _error("budget_too_small", f"max_chars {max_chars}에 결과 1건도 들어가지 않습니다. max_chars를 늘리세요.",
+                      needed_chars=_size(response))
     returned = len(results)
     next_offset = offset + returned
     response["returned"] = returned
@@ -922,5 +972,5 @@ def _resolution_dict(res: ProjectResolution | None) -> dict | None:
         return None
     return {
         "input": res.input, "status": res.status, "project": res.project, "method": res.method,
-        "evidence": res.evidence, "candidates": res.candidates, "hint": res.hint,
+        "evidence": _ev(res.evidence), "candidates": res.candidates, "hint": res.hint,
     }

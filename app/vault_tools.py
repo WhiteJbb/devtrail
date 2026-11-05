@@ -323,14 +323,17 @@ def search_vault(query: str, limit: int = 10, settings: Settings | None = None) 
     # 절단 없이 다 받아 여기서 status 우선순위로 재정렬한 뒤 자른다 — raw(10_Worklog 등)는
     # 노트 수가 압도적이라 wiki 쪽에서 limit으로 자르면 stable이 재정렬 전에 이미 사라진다.
     # 점수화는 어차피 스코프 안 전 노트에 대해 일어나므로 늘어나는 비용은 리스트 길이뿐이다.
-    results = wiki.search(query, limit=_SEARCH_FETCH_ALL, prefixes=_ALLOWED_READ_PREFIXES)
+    # 실제 경로 검증은 파일을 **열기 전에** 한다 — 링크로 금지 prefix·vault 밖을 가리키는 파일은 읽지도 않는다.
+    # 숨김 대상은 허용한다(기존 검색 범위 보존). 순위 계산은 그대로, 빠지는 건 범위 밖 파일뿐이다.
+    # 읽을 수 없는 파일(깨진 링크 등)은 건너뛰어 검색 전체가 멈추지 않게 한다.
+    results = wiki.search(
+        query, limit=_SEARCH_FETCH_ALL, prefixes=_ALLOWED_READ_PREFIXES,
+        path_filter=lambda p: _real_scoped_rel(vault_dir, p, allow_hidden=True) is not None,
+    )
 
     hits = [
         SearchHit(path=r.note.path, title=r.note.title, status=_status_of(r.note.path), score=r.score, summary=r.note.summary)
         for r in results
-        # 링크로 금지 영역·vault 밖 파일을 가리키는 노트는 뺀다 — 순위 계산은 그대로, 빠지는 건 범위 밖 파일뿐
-        # 숨김 대상은 허용한다 — 금지 prefix·vault 밖만 막고, 기존 검색 범위(허용 prefix 안 링크 대상)는 보존
-        if _real_scoped_rel(vault_dir, vault_dir / r.note.path, allow_hidden=True) is not None
     ]
 
     hits.sort(key=lambda h: (_STATUS_RANK[h.status], -h.score, h.path))

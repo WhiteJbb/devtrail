@@ -32,7 +32,7 @@ search_vault(query, structured=True,
              kinds=None,                # ["decision","problem","session_handoff",...]
              limit=None,                # 기본 5, 최대 20
              cursor="",                 # 이전 응답의 next_cursor
-             max_chars=None)            # 응답 전체 JSON 문자 수. 기본·최대 12000, 최소 2000 (응답 고정부 + 최소형 결과 1건)
+             max_chars=None)            # 응답 전체 JSON 문자 수. 기본·최대 12000, 최소 3000 (응답 고정부 + 압축형 결과 1건)
 ```
 
 `kinds` 값: `context decision problem plan design conversation prompt_log project_doc knowledge agent_memory
@@ -47,12 +47,19 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 | 응답 전체 | 기본·최대 12000자 (JSON 직렬화 길이, `budget.used_chars`가 실제 길이) | 설계 확정값 — 줄일 수만 있다 |
 | 근거 창 | 연속 5줄 | 구현 상수 `_WINDOW_LINES` |
 | 반복 인정 | 토큰당 3회 | 구현 상수 `_FREQ_CAP` |
+| 질의 | 300자·단어 32개 이하 (`query`·`project` 모두) | 응답에 되돌려 싣는 값이라 길이를 묶어야 응답 상한을 보장할 수 있다 |
+| 결과 안 메타데이터 | 제목 200자, `attribution.blocks` 10개, `duplicates` 10개, 문서 경고 5개, 근거 문자열 160자 | 초과분은 `blocks_omitted`(개수·첫 줄·끝 줄), `duplicates_omitted`, `warnings_omitted`로 남긴다 |
 
-예산을 넘기면 그 결과의 발췌를 1개로 줄여 보고, 그래도 넘치면 그 앞에서 멈춘다(`budget.stopped_by="budget"`,
-`has_more=true`, `next_cursor`로 이어 받는다). 첫 결과가 발췌 1개로도 넘치면 발췌·중복 목록·문서 경고를 개수로만
-남긴 최소형 1건을 내고 `budget_exceeded` 경고를 단다 — 0건 페이지가 무한 이어받기를 만들지 않게 한다. 그래도 넘치면
-뒤 경고부터 `warnings_omitted`로 바꾸고, 끝내 못 맞추면 숨기지 않고 `budget.exceeded=true`로 알린다.
-결과당 제목은 200자, `duplicates`는 10개(`duplicates_omitted`), 문서 경고는 5개(`warnings_omitted`)까지 싣는다.
+**성공 응답은 언제나 `max_chars` 이하다.** 예산을 넘기면 그 결과의 발췌를 1개로 줄여 보고, 그래도 넘치면 그 앞에서
+멈춘다(`budget.stopped_by="budget"`, `has_more=true`, `next_cursor`로 이어 받는다). 첫 결과가 발췌 1개로도 넘치면
+줄여서라도 1건은 낸다 — 0건 페이지가 무한 이어받기를 만들지 않게 한다:
+
+1. 최소형: 발췌·중복 목록·문서 경고를 개수로만 남기고 블록은 1개만(`blocks_omitted`)
+2. 압축형(`compacted: true`): 경로·제목 80자·종류·등급·상태 class·소속·관련도 그룹·`excerpt_lines`(발췌했을 줄 범위)·버전만
+3. 응답 공통부의 뒤 경고부터 `warnings_omitted`로 바꾼다
+
+그래도 넘치면(아주 긴 경로 등) 성공으로 내지 않고 `ok=false`, `error.code="budget_too_small"`(`needed_chars` 포함)를 돌려준다.
+1·2단계에 들어가면 `budget_exceeded` 경고가 붙는다.
 
 ### 응답
 
@@ -92,7 +99,9 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 - `total_matches`: 범위 안 일치 문서 수(중복 출처를 묶은 뒤). **스캔이 불완전하면(`partial=true`) `null`** — 모르는 수를 만들지 않는다.
 - `filtered`: 점수화 전에 범위 밖이라 뺀 문서·블록 수(이유별). 0건일 때 범위를 넓힐지는 이 값을 보고 호출자가 정한다.
 - `excerpts[].truncated`: 800자에 맞추려고 뒷줄을 덜었으면 `omitted_lines`, 한 줄이 800자보다 길면 `line_clip`
-  (`char_start`/`char_end`/`line_chars`)이 붙는다. 전문은 `read_note(structured=True, start_line=…, char_offset=…)`.
+  (`char_start`/`char_end`/`line_chars`)이 붙는다. 긴 첫 줄 때문에 같은 근거 창의 뒷줄을 못 실었을 때도 `omitted_lines`가
+  붙고, 발췌 겹침은 실제로 낸 줄 범위로 판정하므로 그 뒷줄 근거는 두 번째 발췌로 나온다(발췌 자리가 남아 있으면).
+  전문은 `read_note(structured=True, start_line=…, char_offset=…)`.
 - `duplicates`: 명시적 동일 출처만 묶는다 — ① 본문 바이트가 같다(`same_content`) ② 같은 `session_id`의
   `10_Worklog/Sessions` 세션 원문과 SessionHandoff Process(`same_session_id`). Plan은 내용이 달라 묶지 않는다.
   대표는 순위가 높은 쪽이다.
@@ -237,12 +246,15 @@ read_note(rel_path, structured=True,
 
 ## 경로 보안
 
-검색과 읽기 모두 실제 경로(`os.path.realpath`)를 푼 뒤 vault 안인지, 허용 prefix
-(`20_Knowledge/ 30_Projects/ 40_AgentMemory/ 60_Candidates/ 10_Worklog/ 50_Outputs/ 70_Tasks/`) 안인지,
-프로젝트 등록부(Context.md·SessionHandoffs 폴더 탐색)도 같은 경계를 쓴다 — 링크된 Context.md·폴더는 읽지 않고 경고만 남긴다.
-검색은 숨김 폴더가 아닌지도 다시 본다(legacy 검색도 숨김 경로를 보지 않는다). 읽기는 기존 `read_note`처럼 숨김 폴더
-안 파일도 읽는다. 검색은 링크된 디렉터리를 따라가지 않고(`symlink_dir_skipped`), 링크 파일은
-읽지 않는다(`outside_scope_link` / `symlink_file_skipped` — 대상이 범위 안이면 대상 경로로 검색된다).
+실제 경로(`os.path.realpath`)를 푼 뒤 vault 안인지, 허용 prefix
+(`20_Knowledge/ 30_Projects/ 40_AgentMemory/ 60_Candidates/ 10_Worklog/ 50_Outputs/ 70_Tasks/`) 안인지를 **파일을 열기 전에** 본다.
+
+| 경로 | 검사 |
+|---|---|
+| structured 검색 | 링크된 디렉터리는 따라가지 않고(`symlink_dir_skipped`), 링크 파일은 읽지 않는다(`outside_scope_link` / `symlink_file_skipped` — 대상이 범위 안이면 대상 경로로 검색된다). 숨김 폴더도 보지 않는다 |
+| legacy 검색 | `WikiService.search(path_filter=…)`로 파일을 열기 전에 거른다. 금지 prefix·vault 밖 대상은 읽지도 않고, 허용 prefix 안 대상(숨김 폴더 포함)은 전처럼 검색된다. 읽을 수 없는 파일(깨진 링크 등)은 건너뛴다 — 전에는 검색 전체가 예외로 멈췄다 |
+| 프로젝트 등록부 | Context.md·SessionHandoffs 폴더가 링크면 읽지 않고 경고만 남긴다 |
+| structured·legacy 읽기 | 범위 밖 실제 경로는 거부. 기존 `read_note`처럼 숨김 폴더 안 파일은 읽는다 |
 
 ## 프로젝트 식별
 
@@ -297,15 +309,15 @@ structured는 `search_vault(structured=True, project=…)` 후 발췌가 정답 
 
 | 사례 | 종류 | 정답 | legacy 순위 | 새 순위 | legacy 응답에 근거 | 새 응답에 근거 | 호출 legacy→새 | 문자 legacy→새 | ms legacy→새 | 타 프로젝트(상위5) legacy→새 | superseded(상위5) legacy→새 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| mcp 개명 문제 | regression | `30_Projects/Devtrail/Problems/mcp 2.x 개명.md:16-16` | 2 | 1 | 아니오 | 예 | 2→1 | 595→1932 | 8.5→9.5 | 0→0 | 0→0 |
-| Stop 훅 결정 | regression | `30_Projects/Devtrail/Decisions/2026-10-19 Stop 훅 parent_pid.md:12-12` | 1 | 1 | 예 | 예 | 1→1 | 528→3867 | 4.0→8.0 | 0→0 | 0→0 |
-| 자동 승격 결정 | history | `30_Projects/Devtrail/Decisions/2026-10-18 검토 게이트 제거.md:12-12` | 2 | 1 | 예 | 예 | 1→1 | 655→1951 | 3.9→9.5 | 0→0 | 1→0 |
-| Context 상한 세션 근거 | inversion | `60_Candidates/SessionHandoffs/Devtrail/2026-10-27 Process.md:128-129` | 없음 | 1 | 아니오 | 예 | -→1 | 797→3562 | 4.3→10.0 | 0→0 | 0→0 |
-| 조상 pid 매칭 세션 근거 | late | `10_Worklog/Sessions/2026-10-19-stop-hook.md:79-80` | 3 | 1 | 아니오 | 예 | 2→1 | 3061→2955 | 4.0→7.6 | 0→0 | 0→0 |
-| 다른 프로젝트 격리 | isolation | `60_Candidates/SessionHandoffs/rpg-game-web/2026-10-20 Process.md:14-14` | 없음 | 1 | 아니오 | 예 | -→1 | 797→2909 | 4.0→8.4 | 2→0 | 0→0 |
-| Lessons 프로젝트 블록 | isolation | `40_AgentMemory/06_Lessons.md:12-12` | 1 | 1 | 아니오 | 예 | 2→1 | 473→2067 | 3.9→7.1 | 0→0 | 0→0 |
+| mcp 개명 문제 | regression | `30_Projects/Devtrail/Problems/mcp 2.x 개명.md:16-16` | 2 | 1 | 아니오 | 예 | 2→1 | 595→1914 | 11.5→12.3 | 0→0 | 0→0 |
+| Stop 훅 결정 | regression | `30_Projects/Devtrail/Decisions/2026-10-19 Stop 훅 parent_pid.md:12-12` | 1 | 1 | 예 | 예 | 1→1 | 528→3848 | 7.7→9.1 | 0→0 | 0→0 |
+| 자동 승격 결정 | history | `30_Projects/Devtrail/Decisions/2026-10-18 검토 게이트 제거.md:12-12` | 2 | 1 | 예 | 예 | 1→1 | 655→1932 | 6.4→9.3 | 0→0 | 1→0 |
+| Context 상한 세션 근거 | inversion | `60_Candidates/SessionHandoffs/Devtrail/2026-10-27 Process.md:128-129` | 없음 | 1 | 아니오 | 예 | -→1 | 797→3543 | 5.6→7.6 | 0→0 | 0→0 |
+| 조상 pid 매칭 세션 근거 | late | `10_Worklog/Sessions/2026-10-19-stop-hook.md:79-80` | 3 | 1 | 아니오 | 예 | 2→1 | 3061→2936 | 7.8→8.0 | 0→0 | 0→0 |
+| 다른 프로젝트 격리 | isolation | `60_Candidates/SessionHandoffs/rpg-game-web/2026-10-20 Process.md:14-14` | 없음 | 1 | 아니오 | 예 | -→1 | 797→2890 | 5.7→8.1 | 2→0 | 0→0 |
+| Lessons 프로젝트 블록 | isolation | `40_AgentMemory/06_Lessons.md:12-12` | 1 | 1 | 아니오 | 예 | 2→1 | 473→2048 | 5.5→6.9 | 0→0 | 0→0 |
 
-규모: 같은 Vault에 세션 원문 1000개(각 약 3천 자)를 더했을 때 검색 1회 중앙값 legacy 263.2ms, structured 305.2ms (3회).
+규모: 같은 Vault에 세션 원문 1000개(각 약 3천 자)를 더했을 때 검색 1회 중앙값 legacy 290.6ms, structured 305.6ms (3회). legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 느려졌다 — 같은 조건 A/B(5회 중앙값)에서 수정 전 256.4ms → 수정 후 286.6ms(약 12%). 대신 금지 prefix·vault 밖 링크 대상과 00_Inbox 등 범위 밖 파일은 더 이상 열지 않는다.
 
 읽는 법:
 
@@ -313,8 +325,30 @@ structured는 `search_vault(structured=True, project=…)` 후 발췌가 정답 
 - 관련도 역전: legacy는 stable을 무조건 앞에 둬 단어 하나만 맞는 정본 5개가 정확한 세션 근거(후보·원문)를 밀어냈다. structured는 1위.
 - 후반 근거: legacy summary는 문서 첫 줄이라 128행·80행 근거가 안 보여 전문 읽기가 한 번 더 필요했다. structured는 발췌가 그 줄이다.
 - 격리: legacy는 rpg-game-web 질의 상위 5에 Devtrail 문서 2개가 섞였고 정답은 밖이었다. structured는 0개.
-- 문자 수: 짧은 문서에서는 structured 응답이 더 길다(범위·필터·발췌·버전 메타데이터, 1.9~3.9천 자). 긴 원문을 전문으로 읽어야 하던 사례(80행 세션)에서만 줄었다. 상한 12000자 안이다.
-- 시간: 같은 환경에서 structured가 사례당 1.1~2.4배(사례별 ms는 1회 측정이라 흔들린다), 1000문서 규모에서 약 1.16배 느리다(파일마다 버전 해시·줄 단위 창 계산).
+- 문자 수: 짧은 문서에서는 structured 응답이 더 길다(범위·필터·발췌·버전 메타데이터, 1.9~3.8천 자). 긴 원문을 전문으로 읽어야 하던 사례(80행 세션)에서만 줄었다. 상한 12000자 안이다.
+- 시간: 같은 환경에서 structured가 사례당 1.0~1.5배(사례별 ms는 1회 측정이라 흔들린다), 1000문서 규모에서 약 1.05배 느리다(파일마다 버전 해시·줄 단위 창 계산).
+
+## 테스트 결과 (2026-11-05)
+
+환경: 이 작업 컨테이너에는 Python과 PyPI 접근이 없어, 공식 Pyodide 0.27.7(CPython 3.12.7 wasm) + mcp 1.30.0 +
+pydantic 2.12.5(공식 emscripten 휠) 위에서 `python -m pytest`를 돌렸다. 프로세스를 띄우는 테스트는 이 환경에서 실패한다.
+
+| 시점 | 결과 |
+|---|---|
+| 변경 전(baseline, `5d2f4be`) | 511 passed, 6 failed |
+| 변경 후 | 624 passed, 6 failed — 실패 목록이 baseline과 같다(새 실패 0건) |
+
+baseline과 같은 실패 6건:
+
+- 환경(프로세스 없음) 5건: `test_candidate_writer.py::test_parallel_process_writes_allocate_distinct_candidate_files`,
+  `test_session_markers.py`의 `test_dead_process_marker_is_not_live`·`test_ancestor_pids_starts_with_self_and_includes_parent`·
+  `test_marker_for_current_session_picks_own_among_concurrent`, `test_vault_tools.py::test_write_session_process_serializes_multiprocess_appends`
+- 기존 실패 1건: `test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process` — 대소문자를 구분하는 파일시스템에서
+  `"devtrail"` 조회가 `Devtrail` 폴더를 못 찾는다. 이번 변경과 무관하다.
+
+관련 테스트: `test_evidence_search.py`, `test_source_reader.py`, `test_project_identity.py`, `test_evidence_eval.py`,
+`test_mcp_server.py`(실제 `call_tool` 경로), 그리고 공유 서비스 회귀 확인용 `test_vault_tools.py`·`test_wiki_core.py`.
+리뷰에서 나온 경계 사례마다 회귀 테스트를 붙였고, 그 테스트가 수정 전 코드에서는 실패하는 것을 확인했다.
 
 ## 알려진 한계
 
