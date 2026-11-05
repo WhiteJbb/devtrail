@@ -249,3 +249,13 @@ def test_hidden_folder_file_is_still_readable(tmp_path):
     settings = type("S", (), {"obsidian_vault_root": str(tmp_path)})()
     assert vault_tools.read_note("20_Knowledge/.drafts/h.md", settings=settings) == "숨김 초안\n"
     assert read_range(tmp_path, "20_Knowledge/.drafts/h.md")["content"] == "숨김 초안"
+
+
+def test_error_code_does_not_depend_on_path_text(tmp_path):
+    """오류 코드는 예외 타입으로 정한다 — 경로에 '찾지 못했습니다'가 있어도 범위 위반은 범위 위반이다."""
+    _w(tmp_path, "00_Inbox/secret.md", "비밀\n")
+    (tmp_path / "20_Knowledge").mkdir(exist_ok=True)
+    os.symlink(tmp_path / "00_Inbox" / "secret.md", tmp_path / "20_Knowledge" / "찾지 못했습니다.md")
+    r = read_range(tmp_path, "20_Knowledge/찾지 못했습니다.md")
+    assert r["error"]["code"] == "scope_violation"
+    assert read_range(tmp_path, "20_Knowledge/없음.md")["error"]["code"] == "not_found"

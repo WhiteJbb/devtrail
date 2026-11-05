@@ -54,6 +54,7 @@ class ProjectRegistry:
     canonical: dict[str, list[str]] = field(default_factory=dict)
     display: dict[str, str] = field(default_factory=dict)  # casefold → 표기
     dir_to_project: dict[str, str] = field(default_factory=dict)  # 30_Projects 폴더명 → 표기
+    dir_display: dict[str, str] = field(default_factory=dict)  # casefold 폴더명 → 그 Context.md가 선언한 표기
     handoff_folders: dict[str, list[str]] = field(default_factory=dict)  # casefold → 폴더명들
     aliases: dict[str, set[str]] = field(default_factory=dict)  # casefold alias → canonical 표기들
     repos: dict[str, set[str]] = field(default_factory=dict)  # casefold owner/repo → canonical 표기들
@@ -67,6 +68,25 @@ class ProjectRegistry:
         folders = self.handoff_folders.get(key)
         if folders and len(folders) == 1:
             return folders[0]
+        return name.strip()
+
+    def attribution_name(self, name: str) -> str:
+        """문서가 선언한 프로젝트 이름(frontmatter·marker)을 소속 비교용 표기로 바꾼다.
+
+        식별(resolve_project)이 인정하는 근거와 맞춘다: 등록 표기 → 30_Projects 폴더명(그 Context.md가 선언한 이름) →
+        SessionHandoffs 폴더 → 매핑 별칭(가리키는 프로젝트가 하나일 때만). 어느 것도 아니면 입력 그대로다.
+        """
+        key = name.strip().casefold()
+        if key in self.display:
+            return self.display[key]
+        if key in self.dir_display:
+            return self.dir_display[key]
+        folders = self.handoff_folders.get(key)
+        if folders and len(folders) == 1:
+            return folders[0]
+        targets = self.aliases.get(key, set())
+        if len(targets) == 1:
+            return next(iter(targets))
         return name.strip()
 
     def is_known(self, name: str) -> bool:
@@ -93,6 +113,8 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
     projects_dir = vault_dir / "30_Projects"
     if projects_dir.is_dir():
         for ctx_path in sorted(projects_dir.glob("*/Context.md")):
+            if ctx_path.parent.name.startswith("."):
+                continue  # 숨김 폴더(.trash 등)는 검색 스캔도 보지 않는다 — 링크 경고로 오인하게 하지 않는다
             rel = ctx_path.relative_to(vault_dir).as_posix()
             # 검색 스캔과 같은 읽기 경계 — 링크로 금지 prefix·vault 밖을 가리키면 내용을 읽지 않는다.
             # 범위 안 다른 위치로의 링크도 읽지 않는다(스캔도 링크 폴더·파일을 따라가지 않으니 소속 근거가 어긋난다).
@@ -102,7 +124,10 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
             name = ctx_path.parent.name
             try:
                 meta = frontmatter.loads(ctx_path.read_text(encoding="utf-8")).metadata
-                declared = str(meta.get("project") or "").strip()
+                value = meta.get("project") if isinstance(meta, dict) else None
+                declared = value.strip() if isinstance(value, str) else ""
+                if value not in (None, "") and not isinstance(value, str):
+                    reg.warnings.append(f"{rel}: frontmatter project가 문자열이 아니라 폴더명으로 식별합니다.")
             except Exception:
                 declared = ""
                 reg.warnings.append(f"{rel}: frontmatter를 읽지 못해 폴더명으로 식별합니다.")
@@ -111,6 +136,7 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
             reg.canonical.setdefault(key, []).append(rel)
             reg.display.setdefault(key, name)
             reg.dir_to_project[ctx_path.parent.name] = name
+            reg.dir_display.setdefault(ctx_path.parent.name.casefold(), name)
     handoff_root = vault_dir / _HANDOFF_ROOT
     if handoff_root.is_dir():
         for d in sorted(handoff_root.iterdir()):
@@ -282,13 +308,18 @@ def _finalize(reg: ProjectRegistry, raw: str, target: str, method: str, evidence
     return ProjectResolution(input=raw, status="resolved", project=target, method=method, evidence=evidence, warnings=warnings)
 
 
-def resolve_project(vault_dir: Path, identifier: str, map_path: str = "") -> ProjectResolution:
-    """identifier(프로젝트명 / 별칭 / owner/repo / repo 디렉터리 경로)를 명시적 근거로만 확정한다."""
+def resolve_project(
+    vault_dir: Path, identifier: str, map_path: str = "", registry: ProjectRegistry | None = None
+) -> ProjectResolution:
+    """identifier(프로젝트명 / 별칭 / owner/repo / repo 디렉터리 경로)를 명시적 근거로만 확정한다.
+
+    registry를 주면 그것을 쓴다 — 검색이 같은 등록부로 식별과 소속 판정을 하게 하려는 것이다.
+    """
     raw = identifier or ""
     text = raw.strip()
     if not text:
         return ProjectResolution(input=raw, status="invalid", warnings=["project가 비어 있습니다."])
-    reg = load_registry(vault_dir, map_path)
+    reg = registry if registry is not None else load_registry(vault_dir, map_path)
     warnings = list(reg.warnings)
 
     path = Path(text).expanduser()

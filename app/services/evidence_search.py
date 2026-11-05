@@ -129,6 +129,7 @@ class _Doc:
     meta: dict[str, Any]
     title: str
     title_line: int  # 제목을 본문 '# ' 줄에서 얻었으면 그 줄 번호, frontmatter·파일명이면 0
+    body_start: int  # 점수·발췌 대상이 시작하는 줄 — frontmatter를 해석하지 못하면 1(파일 전체가 본문)
     tags: list[str]
     meta_tags: list[str]  # frontmatter tags만 — marker 문서는 범위 안 블록의 인라인 태그와 합친다
     summary: str
@@ -230,11 +231,12 @@ def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warn
     meta_project = _str_meta(meta, "project")
     if meta_project == "" and "project" in meta and meta["project"] not in ("", None):
         warnings.append("frontmatter project가 문자열이 아니라 소속 근거로 쓰지 않았습니다.")
-    meta_name = reg.canonical_name(meta_project) if meta_project else ""
+    meta_name = reg.attribution_name(meta_project) if meta_project else ""
+    meta_evidence = f"meta:project={meta_project}" + (f"→{meta_name}" if meta_name != meta_project else "")
     scope_value = (_str_meta(meta, "scope") or "").casefold()
 
     if path_hit and meta_name:
-        evidence = [path_hit[1], f"meta:project={meta_project}"]
+        evidence = [path_hit[1], meta_evidence]
         if path_hit[0].casefold() == meta_name.casefold():
             return _Unit(0, 0, "project", path_hit[0], evidence)
         return _Unit(0, 0, "conflict", "", evidence, conflict_with=sorted({path_hit[0], meta_name}, key=str.casefold))
@@ -245,7 +247,7 @@ def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warn
     if path_hit:
         return _Unit(0, 0, "project", path_hit[0], [path_hit[1]])
     if meta_name:
-        return _Unit(0, 0, "project", meta_name, [f"meta:project={meta_project}"])
+        return _Unit(0, 0, "project", meta_name, [meta_evidence])
     if rel.startswith("40_AgentMemory/"):
         return _Unit(0, 0, "common", "", ["path_convention:40_AgentMemory=전역 메모리"])
     return _Unit(0, 0, "unknown", "", ["소속 근거 없음 (프로젝트 경로·frontmatter project·scope 없음)"])
@@ -280,7 +282,9 @@ def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: 
         scope = str(data.get("scope") or "").strip().casefold()
         project = str(data.get("project") or "").strip()
         if scope == "project" and project and isinstance(data.get("project"), str):
-            units.append(_Unit(line_no, end, "project", reg.canonical_name(project), [f"marker:{line_no}행 project={project}"]))
+            name = reg.attribution_name(project)
+            units.append(_Unit(line_no, end, "project", name,
+                               [f"marker:{line_no}행 project={project}" + (f"→{name}" if name != project else "")]))
         elif scope == "global":
             units.append(_Unit(line_no, end, "common", "", [f"marker:{line_no}행 scope=global"]))
         else:
@@ -342,15 +346,23 @@ def load_doc(vault_dir: Path, rel: str, path: Path, reg: ProjectRegistry) -> _Do
     source = read_source_text(path)
     warnings = list(source.warnings)
     meta: dict[str, Any] = {}
+    body_start = source.body_start_line
     if source.frontmatter_lines:
+        # 해석에 실패하거나 결과가 매핑이 아니면 '---' 사이 줄도 본문으로 본다 — 수평선으로 시작하는 노트의 앞줄이
+        # 검색에서 사라지지 않게 (legacy WikiService도 해석 실패 시 원문 전체를 본문으로 본다)
         try:
             loaded = frontmatter.loads("\n".join(source.lines)).metadata
-            meta = dict(loaded) if isinstance(loaded, dict) else {}
         except Exception:
-            warnings.append("frontmatter를 해석하지 못해 메타데이터 없이 본문만 봅니다.")
+            loaded = None
+        fm_body = source.lines[1:source.frontmatter_lines[1] - 1]
+        # python-frontmatter는 YAML이 매핑이 아니면(문자열 한 줄 등) 조용히 빈 dict를 준다 — 내용이 있는데 비면 해석 실패다
+        if isinstance(loaded, dict) and (loaded or not any(line.strip() for line in fm_body)):
+            meta = dict(loaded)
+        else:
+            body_start = 1
+            warnings.append("frontmatter를 해석하지 못해 메타데이터 없이 파일 전체를 본문으로 봅니다.")
     elif source.lines and source.lines[0].strip() == "---":
         warnings.append("frontmatter가 닫히지 않아 파일 전체를 본문으로 봅니다.")
-    body_start = source.body_start_line
     body_text = "\n".join(source.lines[body_start - 1:])
     file_unit = _file_attribution(rel, meta, reg, warnings)
     total = source.total_lines
@@ -370,7 +382,7 @@ def load_doc(vault_dir: Path, rel: str, path: Path, reg: ProjectRegistry) -> _Do
     summary = (_str_meta(meta, "summary") or _str_meta(meta, "description") or "")[:160]
     declared_type = _str_meta(meta, "candidate_type") or _str_meta(meta, "type") or ""
     return _Doc(
-        rel=rel, source=source, meta=meta, title=title, title_line=title_line,
+        rel=rel, source=source, meta=meta, title=title, title_line=title_line, body_start=body_start,
         tags=_tags(meta, body_text), meta_tags=_tags(meta, ""), summary=summary, kind=classify_kind(rel), declared_type=declared_type,
         tier=record_tier(rel), status_declared=status_declared, status_class=status_class,
         status_reason=status_reason, time_value=time_value, time_source=time_source,
@@ -653,7 +665,7 @@ def _dup_keys(doc: _Doc) -> list[tuple[str, ...]]:
     keys: list[tuple[str, ...]] = []
     fu = doc.file_unit
     owner = (fu.scope, fu.project.casefold(), "|".join(sorted(c.casefold() for c in fu.conflict_with)))
-    body = "\n".join(doc.source.lines[doc.source.body_start_line - 1:]).strip()
+    body = "\n".join(doc.source.lines[doc.body_start - 1:]).strip()
     if body:
         keys.append(("same_content", hashlib.sha256(body.encode("utf-8")).hexdigest(), Path(doc.rel).name.casefold(), *owner))
     session_id = _str_meta(doc.meta, "session_id") or ""
@@ -871,10 +883,12 @@ def search(
     except SearchArgumentError as exc:
         return _error(exc.code, str(exc))
 
+    # 등록부는 한 번만 읽는다 — 식별과 소속 판정이 서로 다른 시점의 등록부를 보면 범위와 보고가 어긋난다
+    reg = load_registry(vault_dir, project_map)
     resolution: ProjectResolution | None = None
     resolved_project = ""
     if project.strip():
-        resolution = resolve_project(vault_dir, project, project_map)
+        resolution = resolve_project(vault_dir, project, project_map, registry=reg)
         if resolution.status != "resolved":
             return _error(
                 f"project_{resolution.status}",
@@ -882,7 +896,6 @@ def search(
                 project_resolution=_resolution_dict(resolution),
             )
         resolved_project = resolution.project
-    reg = load_registry(vault_dir, project_map)
     scope = SearchScope(resolved_project, include_common, include_unattributed, include_history, wanted_kinds)
 
     scan = scan_vault(vault_dir, reg)

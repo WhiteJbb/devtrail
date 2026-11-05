@@ -700,3 +700,60 @@ def test_legacy_search_never_opens_forbidden_link_targets(tmp_path, monkeypatch)
     hits = vault_tools.search_vault("열기토큰", settings=_settings(vault))
     assert [h.path for h in hits] == ["20_Knowledge/real.md"]
     assert not any(p.startswith(("00_Inbox/", "20_Knowledge/to-inbox", "20_Knowledge/outdir")) for p in opened)
+
+
+# ── 최종 리뷰 반영 ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("fm_block", ["key: [닫히지 않음", "그냥 문장 한 줄"])
+def test_unparseable_frontmatter_lines_stay_searchable(tmp_path, fm_block):
+    """'---' 사이가 YAML 매핑이 아니면 그 줄도 본문이다 — 수평선으로 시작하는 노트의 앞줄이 사라지지 않게."""
+    _w(tmp_path, "20_Knowledge/hr.md", f"---\n{fm_block} 앞줄토큰\n---\n뒷부분\n")
+    r = _search(tmp_path, "앞줄토큰")["results"][0]
+    assert r["excerpts"][0]["start_line"] == 2 and "앞줄토큰" in r["excerpts"][0]["text"]
+    assert any("frontmatter를 해석하지 못해" in w for w in r["warnings"])
+
+
+def test_alias_and_folder_names_in_documents_attribute_like_identification(tmp_path):
+    """문서가 별칭·폴더명으로 프로젝트를 적어도 식별과 같은 근거로 소속을 정한다."""
+    _w(tmp_path, "30_Projects/devtrail-dir/Context.md", _fm(project="Devtrail") + "# Devtrail\n")
+    _projects(tmp_path, "Other")
+    mapping = tmp_path / "map.json"
+    mapping.write_text(json.dumps({"projects": {"Devtrail": {"aliases": ["dt"]}, "Other": {"aliases": ["shared"]},
+                                                "Third": {"aliases": ["shared"]}}}), encoding="utf-8")
+    _w(tmp_path, "10_Worklog/Sessions/a.md", _fm(project="dt") + "별칭토큰 세션\n")
+    _w(tmp_path, "10_Worklog/Sessions/b.md", _fm(project="devtrail-dir") + "별칭토큰 폴더명\n")
+    _w(tmp_path, "30_Projects/devtrail-dir/Plans/p.md", _fm(project="dt") + "별칭토큰 계획\n")
+    _w(tmp_path, "10_Worklog/Sessions/c.md", _fm(project="shared") + "별칭토큰 모호\n")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md", '<!-- devtrail-memory-patch: {"scope": "project", "project": "dt"} -->\n별칭토큰 교훈\n')
+    resp = vault_tools.search_evidence("별칭토큰", project="Devtrail", limit=20,
+                                       settings=_settings(tmp_path, str(mapping)))
+    by = {r["path"]: r for r in resp["results"]}
+    assert set(by) == {"10_Worklog/Sessions/a.md", "10_Worklog/Sessions/b.md", "30_Projects/devtrail-dir/Plans/p.md",
+                       "40_AgentMemory/06_Lessons.md"}
+    assert by["10_Worklog/Sessions/a.md"]["attribution"]["evidence"] == ["meta:project=dt→Devtrail"]
+    assert by["30_Projects/devtrail-dir/Plans/p.md"]["attribution"]["scope"] == "project"  # 충돌 아님
+    assert by["40_AgentMemory/06_Lessons.md"]["attribution"]["blocks"][0]["project"] == "Devtrail"
+    # 두 프로젝트를 가리키는 별칭은 소속을 정하지 않는다
+    assert resp["filtered"]["documents"]["other_project"] >= 1
+
+
+def test_registry_is_loaded_once_per_search(tmp_path, monkeypatch):
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "30_Projects/Alpha/Plans/p.md", "한번토큰\n")
+    calls = []
+    real = evidence_search.load_registry
+    monkeypatch.setattr(evidence_search, "load_registry", lambda *a, **k: calls.append(1) or real(*a, **k))
+    import app.services.project_identity as pi
+    monkeypatch.setattr(pi, "load_registry", lambda *a, **k: calls.append(2) or real(*a, **k))
+    assert _search(tmp_path, "한번토큰", project="Alpha")["returned"] == 1
+    assert calls == [1]
+
+
+def test_hidden_project_folder_is_not_reported_as_link(tmp_path):
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "30_Projects/.trash/Old/Context.md", _fm(project="Old") + "# Old\n")
+    _w(tmp_path, "30_Projects/.trash/Context.md", _fm(project="Old") + "# Old\n")
+    _w(tmp_path, "30_Projects/Alpha/Plans/p.md", "숨김토큰\n")
+    resp = _search(tmp_path, "숨김토큰", project="Alpha")
+    assert resp["ok"] and not [w for w in resp["warnings"] if "링크" in w["message"]]

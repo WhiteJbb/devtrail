@@ -242,3 +242,26 @@ def test_alias_and_repo_to_duplicated_name_are_ambiguous(tmp_path):
     assert resolve_project(vault, str(repo), project_map).status == "ambiguous"
     remote_only = _repo(tmp_path, "remote-only", remote="https://github.com/org/alpha.git")
     assert resolve_project(vault, str(remote_only), project_map).status == "ambiguous"
+
+
+def test_resolve_project_identity_uses_settings_map(tmp_path):
+    from types import SimpleNamespace
+
+    from app import vault_tools
+
+    vault = tmp_path / "vault"
+    _ctx(vault, "Devtrail", "Devtrail")
+    settings = SimpleNamespace(obsidian_vault_root=str(vault),
+                               devtrail_project_map=_map(tmp_path, {"Devtrail": {"repos": ["WhiteJbb/devtrail"]}}))
+    res = vault_tools.resolve_project_identity("WhiteJbb/devtrail", settings=settings)
+    assert (res.status, res.project, res.method) == ("resolved", "Devtrail", "repo_mapping")
+
+
+def test_non_string_context_project_falls_back_to_folder(tmp_path):
+    vault = tmp_path / "vault"
+    path = vault / "30_Projects" / "Alpha" / "Context.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("---\nproject: [a, b]\n---\n# Alpha\n", encoding="utf-8")
+    res = resolve_project(vault, "Alpha")
+    assert res.status == "resolved" and res.project == "Alpha"
+    assert any("문자열이 아니라" in w for w in res.warnings)

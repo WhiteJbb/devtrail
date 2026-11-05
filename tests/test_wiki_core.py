@@ -104,3 +104,28 @@ def test_cli_init_index_search(monkeypatch, tmp_path):
     finally:
         monkeypatch.delenv("OBSIDIAN_VAULT_PATH", raising=False)
         get_settings.cache_clear()
+
+
+def test_search_path_filter_runs_before_reading_and_skips_unreadable(tmp_path, monkeypatch):
+    """path_filter는 파일을 열기 전에 거르고, 읽을 수 없는 파일은 검색 전체를 멈추지 않는다. 인자가 없으면 기존 동작이다."""
+    (tmp_path / "20_Knowledge").mkdir()
+    for name in ("keep.md", "drop.md", "broken.md"):
+        (tmp_path / "20_Knowledge" / name).write_text("필터토큰\n", encoding="utf-8")
+    service = WikiService(tmp_path)
+    opened: list[str] = []
+    real_parse = WikiService._parse_note
+
+    def spy(self, path):
+        opened.append(path.name)
+        if path.name == "broken.md":
+            raise PermissionError(13, "Permission denied")
+        return real_parse(self, path)
+
+    monkeypatch.setattr(WikiService, "_parse_note", spy)
+    hits = service.search("필터토큰", path_filter=lambda p: p.name != "drop.md")
+    assert [h.note.path for h in hits] == ["20_Knowledge/keep.md"]
+    assert "drop.md" not in opened
+    import pytest
+
+    with pytest.raises(PermissionError):  # 기존 경로(path_filter 없음)는 예전처럼 예외를 올린다
+        service.search("필터토큰")

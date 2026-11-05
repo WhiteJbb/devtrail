@@ -31,6 +31,10 @@ class VaultScopeError(ValueError):
     """read_scope/write_scope를 벗어난 요청."""
 
 
+class VaultNotFoundError(VaultScopeError):
+    """범위 안 경로지만 파일이 없다. 기존 호출부가 VaultScopeError로 잡으므로 그 하위 타입으로 둔다."""
+
+
 def record_tier(rel_path: str) -> str:
     """경로가 정하는 기록 등급 — stable(정본) / candidate(후보) / raw(원문). 문서 status와 별개다."""
     if rel_path.startswith(CANDIDATE_PREFIX):
@@ -87,7 +91,7 @@ def resolve_scoped_file(vault_dir: Path, rel_path: str) -> tuple[str, Path]:
         raise VaultScopeError(f"실제 경로가 read_scope 밖입니다(심볼릭 링크 포함): {rel_path}")
     resolved = path.resolve()
     if not resolved.exists() or not resolved.is_file():
-        raise VaultScopeError(f"노트를 찾지 못했습니다: {rel_path}")
+        raise VaultNotFoundError(f"노트를 찾지 못했습니다: {rel_path}")
     return normalized, resolved
 
 

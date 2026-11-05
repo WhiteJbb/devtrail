@@ -17,7 +17,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.vault_source import VaultScopeError, read_source_text, record_tier, resolve_scoped_file
+from app.services.vault_source import (
+    VaultNotFoundError,
+    VaultScopeError,
+    read_source_text,
+    record_tier,
+    resolve_scoped_file,
+)
 
 DEFAULT_MAX_LINES = 120
 MAX_LINES = 400
@@ -54,9 +60,10 @@ def read_range(
 
     try:
         normalized, path = resolve_scoped_file(vault_dir, rel_path)
+    except VaultNotFoundError as exc:
+        return _error("not_found", str(exc))
     except VaultScopeError as exc:
-        code = "not_found" if "찾지 못했습니다" in str(exc) else "scope_violation"
-        return _error(code, str(exc))
+        return _error("scope_violation", str(exc))
     try:
         source = read_source_text(path)
     except OSError as exc:
