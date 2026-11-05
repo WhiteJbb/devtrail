@@ -105,8 +105,14 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
   같은 근거 창의 뒷줄은 `omitted_lines`로 남고, 발췌 겹침은 실제로 낸 줄 범위로 판정하므로 그 뒷줄 근거는 두 번째 발췌로 나온다
   (발췌 자리가 남아 있으면).
 - `duplicates`: 명시적 동일 출처만 묶는다.
-  ① `same_content` — 본문 바이트·**파일명**·파일 소속이 모두 같다(curator 승격과 `_Archive` 보관은 파일명을 유지한다).
-  파일명이 다르면 본문이 같아도(빈 템플릿 결정 등) 서로 다른 문서로 보고, 소속이 다르면 다른 프로젝트 문서로 본다.
+  ① `same_content` — 승격·보관 사본. 다음을 **모두** 만족할 때만 묶는다.
+  - 본문 바이트·파일명·종류(kind)·파일 소속이 같다(curator 승격과 `_Archive` 보관은 파일명을 유지한다).
+  - 승격·보관이 바꾸는 값(`status`·`type`·`candidate_type`·`promoted_at`·`archived_at`·`applied_at`·`updated_at`, 소속은 따로 비교)을 뺀
+    frontmatter가 같다 — 제목·날짜 등이 하나라도 다르면 본문이 같아도 다른 결정이다.
+  - 서로 **다른 영역**에 있다: 후보(`60_Candidates/`) · 정본(`20/30/40`) · 보관(`60_Candidates/_Archive/`) 중 영역당 하나.
+    같은 영역의 같은 본문 두 파일(예: `Decisions/backend/decision.md`와 `Decisions/frontend/decision.md`)은 사본 흐름이 만든 것이
+    아니라 따로 쓴 문서라 묶지 않는다. 원문(10/50/70)은 이 규칙에 들어가지 않는다.
+  curator는 사본 관계를 메타데이터로 남기지 않는다(승격 후 후보를 지운다). 그래서 위 조건이 "명시적 사본"을 판정하는 근거다.
   ② `same_session_id` — 같은 프로젝트·같은 `session_id`의 `10_Worklog/Sessions` 세션 원문과 SessionHandoff Process.
   Plan·결정 후보는 내용이 달라 묶지 않는다. 대표는 순위가 높은 쪽이다.
 - 묶인 사본도 자기 근거를 남긴다: `{path, reason, source_version, record_tier, status{declared,class},
@@ -123,7 +129,8 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 | `60_Candidates/SessionHandoffs/<P>/…` (`_Archive` 아래 포함) | `<P>` |
 | `20_Knowledge/<P>/…` | `<P>`가 등록 프로젝트(Context.md 또는 SessionHandoffs 폴더 — 프로젝트 식별과 같은 기준)일 때만 (curator가 프로젝트 knowledge를 두는 곳). `20_Knowledge/AI/` 같은 주제 폴더는 근거가 아니다 |
 | frontmatter `project:` | 그 프로젝트. 값은 식별과 **같은 근거·같은 순서로만** 정규화한다 — 등록 표기 → SessionHandoffs 폴더 → 매핑 별칭(가리키는 프로젝트가 하나일 때만). 식별이 인정하지 않는 이름(예: 선언명과 다른 30_Projects 폴더명)은 바꾸지 않는다 — 식별로 확정한 프로젝트가 자기 문서를 다른 프로젝트로 판정하지 않게. 정규화했으면 evidence가 `meta:project=dt→Devtrail` 꼴이다. marker의 `project`도 같다 |
-| 경로와 frontmatter가 다르다 | `conflict` (`conflict_with`에 둘 다) |
+| 이름이 모호하다 — 식별에서 `ambiguous`가 되는 이름(같은 이름의 Context.md 둘, 다른 프로젝트의 별칭과 겹침) | `conflict` (`conflict_with`에 후보 전부, evidence에 `(모호: A, B)`). frontmatter·marker의 `project`, SessionHandoffs·20_Knowledge 폴더명 모두 같은 규칙이다. 식별이 모호하다고 거부하는 이름을 소속 판정에서만 하나로 확정하지 않는다 |
+| 경로와 frontmatter가 함께 있다 | 경로 후보와 선언 후보가 함께 가리키는 프로젝트가 **정확히 하나**면 그 프로젝트(예: `30_Projects/Alpha/` 아래 `project: Alpha`는 이름이 모호해도 경로가 좁힌다). 없거나 둘 이상이면 `conflict` (`conflict_with`에 후보 전부) |
 | frontmatter `scope: global` | 공통 (memory_patch가 쓰는 값. 출신 프로젝트는 evidence에 남긴다) |
 | `40_AgentMemory/…` (위 근거 없음) | 공통 — AGENTS.md가 "전역 AI 메모리"로 정의한 경로 규칙 |
 | 아무 근거 없음 (`50_Outputs` digest, `70_Tasks` 등) | `unknown`. 메타데이터가 없다고 공통으로 보지 않는다 |
@@ -332,15 +339,15 @@ structured는 `search_vault(structured=True, project=…)` 후 발췌가 정답 
 
 | 사례 | 종류 | 정답 | legacy 순위 | 새 순위 | legacy 응답에 근거 | 새 응답에 근거 | 호출 legacy→새 | 문자 legacy→새 | ms legacy→새 | 타 프로젝트(상위5) legacy→새 | superseded(상위5) legacy→새 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| mcp 개명 문제 | regression | `30_Projects/Devtrail/Problems/mcp 2.x 개명.md:16-16` | 2 | 1 | 아니오 | 예 | 2→1 | 595→1913 | 13.1→8.7 | 0→0 | 0→0 |
-| Stop 훅 결정 | regression | `30_Projects/Devtrail/Decisions/2026-10-19 Stop 훅 parent_pid.md:12-12` | 1 | 1 | 예 | 예 | 1→1 | 528→3848 | 5.7→6.9 | 0→0 | 0→0 |
+| mcp 개명 문제 | regression | `30_Projects/Devtrail/Problems/mcp 2.x 개명.md:16-16` | 2 | 1 | 아니오 | 예 | 2→1 | 595→1914 | 10.1→10.9 | 0→0 | 0→0 |
+| Stop 훅 결정 | regression | `30_Projects/Devtrail/Decisions/2026-10-19 Stop 훅 parent_pid.md:12-12` | 1 | 1 | 예 | 예 | 1→1 | 528→3848 | 5.7→7.3 | 0→0 | 0→0 |
 | 자동 승격 결정 | history | `30_Projects/Devtrail/Decisions/2026-10-18 검토 게이트 제거.md:12-12` | 2 | 1 | 예 | 예 | 1→1 | 655→1932 | 5.6→6.4 | 0→0 | 1→0 |
-| Context 상한 세션 근거 | inversion | `60_Candidates/SessionHandoffs/Devtrail/2026-10-27 Process.md:128-129` | 없음 | 1 | 아니오 | 예 | -→1 | 797→3713 | 5.4→6.6 | 0→0 | 0→0 |
-| 조상 pid 매칭 세션 근거 | late | `10_Worklog/Sessions/2026-10-19-stop-hook.md:79-80` | 3 | 1 | 아니오 | 예 | 2→1 | 3061→2936 | 5.6→6.3 | 0→0 | 0→0 |
-| 다른 프로젝트 격리 | isolation | `60_Candidates/SessionHandoffs/rpg-game-web/2026-10-20 Process.md:14-14` | 없음 | 1 | 아니오 | 예 | -→1 | 797→2890 | 5.3→5.8 | 2→0 | 0→0 |
-| Lessons 프로젝트 블록 | isolation | `40_AgentMemory/06_Lessons.md:12-12` | 1 | 1 | 아니오 | 예 | 2→1 | 473→2048 | 5.9→6.3 | 0→0 | 0→0 |
+| Context 상한 세션 근거 | inversion | `60_Candidates/SessionHandoffs/Devtrail/2026-10-27 Process.md:128-129` | 없음 | 1 | 아니오 | 예 | -→1 | 797→3713 | 5.4→6.9 | 0→0 | 0→0 |
+| 조상 pid 매칭 세션 근거 | late | `10_Worklog/Sessions/2026-10-19-stop-hook.md:79-80` | 3 | 1 | 아니오 | 예 | 2→1 | 3061→2936 | 6.0→6.4 | 0→0 | 0→0 |
+| 다른 프로젝트 격리 | isolation | `60_Candidates/SessionHandoffs/rpg-game-web/2026-10-20 Process.md:14-14` | 없음 | 1 | 아니오 | 예 | -→1 | 797→2890 | 5.3→5.9 | 2→0 | 0→0 |
+| Lessons 프로젝트 블록 | isolation | `40_AgentMemory/06_Lessons.md:12-12` | 1 | 1 | 아니오 | 예 | 2→1 | 473→2048 | 5.3→6.1 | 0→0 | 0→0 |
 
-규모: 같은 Vault에 세션 원문 1000개(각 약 3천 자)를 더했을 때 검색 1회 중앙값 legacy 287.5ms, structured 301.0ms (5회).
+규모: 같은 Vault에 세션 원문 1000개(각 약 3천 자)를 더했을 때 검색 1회 중앙값 legacy 289.2ms, structured 296.9ms (5회).
 legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 기능 이전보다 느려졌다 — 같은 조건 A/B(5회 중앙값, 이전 측정)에서 256.4ms → 286.6ms(약 12%).
 대신 금지 prefix·vault 밖 링크 대상과 00_Inbox 등 범위 밖 파일은 더 이상 열지 않는다.
 
@@ -354,7 +361,7 @@ legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 기능 �
 - 후반 근거: legacy summary는 문서 첫 줄이라 128행·80행 근거가 안 보여 전문 읽기가 한 번 더 필요했다. structured는 발췌가 그 줄이다.
 - 격리: legacy는 rpg-game-web 질의 상위 5에 Devtrail 문서 2개가 섞였고 정답은 밖이었다. structured는 0개.
 - 문자 수: 짧은 문서에서는 structured 응답이 더 길다(범위·필터·발췌·버전 메타데이터, 1.9~3.9천 자). 긴 원문을 전문으로 읽어야 하던 사례(80행 세션)에서만 줄었다. 상한 12000자 안이다.
-- 시간: 같은 환경에서 structured가 사례당 0.7~1.2배(사례별 ms는 1회 측정이라 흔들린다 — 앞선 측정에서는 1.0~1.5배), 1000문서 규모에서 약 1.05배 느리다(파일마다 버전 해시·줄 단위 창 계산).
+- 시간: 같은 환경에서 structured가 사례당 1.1~1.3배(사례별 ms는 1회 측정이라 흔들린다 — 앞선 측정들에서는 0.7~1.5배), 1000문서 규모에서 약 1.03배 느리다(파일마다 버전 해시·줄 단위 창 계산).
 
 ## 테스트 결과 (2026-11-05)
 
@@ -367,7 +374,7 @@ mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위�
 |---|---|
 | 기능 이전(baseline, `5d2f4be` = main) | 511 passed, 6 failed |
 | 앞선 작업 끝(`a297825`) | 624 passed, 6 failed |
-| 이번 작업 끝 | 657 passed, 6 failed — 실패 목록이 세 시점 모두 같다(새 실패 0건) |
+| 이번 작업 끝 | 662 passed, 6 failed — 실패 목록이 세 시점 모두 같다(새 실패 0건) |
 
 같은 실패 6건:
 
@@ -395,6 +402,8 @@ mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위�
 - 근거 창은 줄 기준이다. 문단 한 줄이 아주 긴 문서에서는 "같은 창"이 넓어지고, 800자보다 긴 일치 줄은 발췌 text 없이 위치만 나온다.
 - 소속 근거가 없는 문서(digest, 70_Tasks/Active.md 등)는 `unknown`이라 프로젝트 검색 기본값에서 빠진다. 본문 언급으로 귀속하지 않는 것은 의도다.
 - `20_Knowledge/<P>/` 경로 근거는 `<P>`가 등록 프로젝트일 때만 쓴다. 주제 폴더 이름이 우연히 프로젝트명과 같으면 그 프로젝트로 본다.
-- 중복 출처는 "본문 바이트·파일명·소속이 같다"와 session_id 규칙만 묶는다. 거의 같은 내용(승격 시 "관련 노트" 절이 붙은 사본 등)이나
-  파일명을 바꾼 사본은 따로 나온다 — 서로 다른 결정을 숨기는 것보다 사본이 두 번 나오는 쪽을 택했다.
+- 중복 출처는 위 `same_content`(다른 영역·같은 식별 메타데이터) 규칙과 session_id 규칙만 묶는다. 거의 같은 내용(승격 시 "관련 노트" 절이
+  붙은 사본 등), 파일명을 바꾼 사본, 같은 영역에 복사해 둔 파일은 따로 나온다 — 서로 다른 결정을 숨기는 것보다 사본이 두 번 나오는 쪽을 택했다.
+- 별칭이 다른 프로젝트 이름과 겹치는 매핑을 두면, 그 이름만 선언한 문서는 양쪽 프로젝트 검색 기본값에서 모두 빠진다(`conflict`).
+  매핑을 고치거나 `include_unattributed=True`로 본다.
 - `get_project_briefing`, `get_recent_sessions` 등 다른 도구의 프로젝트 판정은 바꾸지 않았다 (briefing은 여전히 basename 매칭을 쓴다).

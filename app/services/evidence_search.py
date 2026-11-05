@@ -206,10 +206,31 @@ def _str_meta(meta: dict[str, Any], key: str) -> str | None:
     return ""
 
 
-def _path_project(rel: str, reg: ProjectRegistry) -> tuple[str, str] | None:
+def _name_candidates(reg: ProjectRegistry, name: str) -> list[str]:
+    """이름 하나의 소속 후보 — 식별과 같은 규칙. 등록 근거가 없는 이름은 그 이름 그대로 하나."""
+    return reg.attribution_targets(name) or [name.strip()]
+
+
+def _with_candidates(evidence: str, raw: str, cands: list[str]) -> str:
+    if len(cands) > 1:
+        return f"{evidence} (모호: {', '.join(cands)})"
+    return evidence + (f"→{cands[0]}" if cands[0] != raw.strip() else "")
+
+
+def _decide(start: int, end: int, cands: list[str], evidence: list[str]) -> _Unit:
+    """후보가 하나면 그 프로젝트, 둘 이상이면 conflict(후보 보존) — 모호한 이름을 하나로 확정하지 않는다."""
+    unique = list({c.casefold(): c for c in cands}.values())
+    if len(unique) == 1:
+        return _Unit(start, end, "project", unique[0], evidence)
+    return _Unit(start, end, "conflict", "", evidence, conflict_with=sorted(unique, key=str.casefold))
+
+
+def _path_project(rel: str, reg: ProjectRegistry) -> tuple[list[str], str] | None:
+    """경로가 가리키는 소속 후보와 근거. 30_Projects는 그 폴더 Context.md의 선언이라 하나로 정해지고,
+    폴더 이름이 곧 프로젝트 이름인 SessionHandoffs·20_Knowledge는 식별과 같은 이름 규칙(충돌 보존)을 거친다."""
     parts = rel.split("/")
     if parts[0] == "30_Projects" and len(parts) >= 3:
-        return reg.dir_to_project.get(parts[1], parts[1]), f"path:30_Projects/{parts[1]}/"
+        return [reg.dir_to_project.get(parts[1], parts[1])], f"path:30_Projects/{parts[1]}/"
     handoff_at = None
     if parts[:2] == ["60_Candidates", "SessionHandoffs"]:
         handoff_at = 2
@@ -217,12 +238,14 @@ def _path_project(rel: str, reg: ProjectRegistry) -> tuple[str, str] | None:
         handoff_at = 3
     if handoff_at is not None and len(parts) > handoff_at + 1 and not parts[handoff_at].startswith("_"):
         folder = parts[handoff_at]
-        return reg.canonical_name(folder), f"path:{'/'.join(parts[:handoff_at + 1])}/"
+        cands = _name_candidates(reg, folder)
+        return cands, _with_candidates(f"path:{'/'.join(parts[:handoff_at + 1])}/", folder, cands)
     # curator는 프로젝트 knowledge를 20_Knowledge/<P>/에 둔다. 등록된 프로젝트 폴더일 때만 근거로 쓴다
     # (20_Knowledge/AI/ 같은 주제 폴더를 프로젝트로 오인하지 않게).
     # 등록 기준은 프로젝트 식별과 같다(Context.md 또는 SessionHandoffs 폴더).
     if parts[0] == "20_Knowledge" and len(parts) >= 3 and reg.is_known(parts[1]):
-        return reg.canonical_name(parts[1]), f"path:20_Knowledge/{parts[1]}/"
+        cands = _name_candidates(reg, parts[1])
+        return cands, _with_candidates(f"path:20_Knowledge/{parts[1]}/", parts[1], cands)
     return None
 
 
@@ -232,23 +255,28 @@ def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warn
     meta_project = _str_meta(meta, "project")
     if meta_project == "" and "project" in meta and meta["project"] not in ("", None):
         warnings.append("frontmatter project가 문자열이 아니라 소속 근거로 쓰지 않았습니다.")
-    meta_name = reg.attribution_name(meta_project) if meta_project else ""
-    meta_evidence = f"meta:project={meta_project}" + (f"→{meta_name}" if meta_name != meta_project else "")
+    meta_cands = _name_candidates(reg, meta_project) if meta_project else []
+    meta_evidence = _with_candidates(f"meta:project={meta_project}", meta_project, meta_cands) if meta_project else ""
     scope_value = (_str_meta(meta, "scope") or "").casefold()
 
-    if path_hit and meta_name:
+    if path_hit and meta_cands:
+        # 경로 후보와 선언 후보가 함께 가리키는 프로젝트가 정확히 하나일 때만 확정한다 — 30_Projects/Alpha/ 아래
+        # `project: Alpha`는 선언 이름이 모호해도(다른 프로젝트 별칭과 겹침) 경로가 Alpha 하나로 좁힌다.
+        # 공통 후보가 없거나 둘 이상이면 conflict(후보 전부).
+        meta_keys = {c.casefold() for c in meta_cands}
+        common = list({c.casefold(): c for c in path_hit[0] if c.casefold() in meta_keys}.values())
         evidence = [path_hit[1], meta_evidence]
-        if path_hit[0].casefold() == meta_name.casefold():
-            return _Unit(0, 0, "project", path_hit[0], evidence)
-        return _Unit(0, 0, "conflict", "", evidence, conflict_with=sorted({path_hit[0], meta_name}, key=str.casefold))
+        if len(common) == 1:
+            return _Unit(0, 0, "project", common[0], evidence)
+        return _decide(0, 0, path_hit[0] + meta_cands, evidence)
     if scope_value == "global":
         # memory_patch의 scope=global — 출신 프로젝트가 있어도 적용 범위는 전역이다 (curator가 같은 규칙으로 marker를 쓴다)
-        origin = f" (출신 {meta_name})" if meta_name else ""
+        origin = f" (출신 {', '.join(meta_cands)})" if meta_cands else ""
         return _Unit(0, 0, "common", "", [f"meta:scope=global{origin}"])
     if path_hit:
-        return _Unit(0, 0, "project", path_hit[0], [path_hit[1]])
-    if meta_name:
-        return _Unit(0, 0, "project", meta_name, [meta_evidence])
+        return _decide(0, 0, path_hit[0], [path_hit[1]])
+    if meta_cands:
+        return _decide(0, 0, meta_cands, [meta_evidence])
     if rel.startswith("40_AgentMemory/"):
         return _Unit(0, 0, "common", "", ["path_convention:40_AgentMemory=전역 메모리"])
     return _Unit(0, 0, "unknown", "", ["소속 근거 없음 (프로젝트 경로·frontmatter project·scope 없음)"])
@@ -283,9 +311,8 @@ def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: 
         scope = str(data.get("scope") or "").strip().casefold()
         project = str(data.get("project") or "").strip()
         if scope == "project" and project and isinstance(data.get("project"), str):
-            name = reg.attribution_name(project)
-            units.append(_Unit(line_no, end, "project", name,
-                               [f"marker:{line_no}행 project={project}" + (f"→{name}" if name != project else "")]))
+            cands = _name_candidates(reg, project)
+            units.append(_decide(line_no, end, cands, [_with_candidates(f"marker:{line_no}행 project={project}", project, cands)]))
         elif scope == "global":
             units.append(_Unit(line_no, end, "common", "", [f"marker:{line_no}행 scope=global"]))
         else:
@@ -656,12 +683,32 @@ def _render_excerpt(doc: _Doc, body, line_hits, start: int, end: int, tokens: li
 # ── 중복 출처 ────────────────────────────────────────────────────────────────
 
 
+# 승격(curator)·보관(retention)이 사본에서 바꾸는 frontmatter — 이 밖의 값(제목·날짜·결정 내용 등)이 하나라도 다르면
+# 본문이 같아도 다른 문서다. project는 파일 소속(owner)으로 따로 비교한다.
+_COPY_VOLATILE_META = frozenset({
+    "status", "type", "candidate_type", "promoted_at", "archived_at", "applied_at", "updated_at", "project",
+})
+
+
+def _copy_area(rel: str) -> str | None:
+    """사본 관계가 생기는 영역 — 후보 → 정본(승격), 후보 → _Archive(보관). 원문(raw)은 이 흐름에 없다."""
+    if rel.startswith(_ARCHIVE_PREFIX):
+        return "archive"
+    if rel.startswith("60_Candidates/"):
+        return "candidate"
+    if record_tier(rel) == "stable":
+        return "official"
+    return None
+
+
 def _dup_keys(doc: _Doc) -> list[tuple[str, ...]]:
     """명시적 동일 출처 키. 같은 키를 가진 문서는 대표 하나만 결과로 내고 나머지는 duplicates에 근거째 남긴다.
 
-    - same_content: 본문 바이트·파일명·소속(파일 단위)이 모두 같다 — curator 승격·_Archive 보관은 파일명을
-      유지하므로 사본은 이 키가 같다. 파일명이 다르면 본문이 같아도(빈 템플릿 결정 등) 다른 문서로 본다 —
-      서로 다른 결정을 한 건으로 숨기지 않기 위해서다. 소속이 다르면 다른 프로젝트의 문서다.
+    - same_content: 승격·보관 사본 — 본문 바이트·파일명·종류·파일 소속이 같고, 승격·보관이 바꾸는 값을 뺀
+      frontmatter(제목·날짜 등)도 같다. 거기에 더해 _collapse_duplicates가 **서로 다른 영역**(후보/정본/보관)에
+      있을 때만 묶는다. 같은 영역의 같은 본문 두 파일(예: Decisions/backend/decision.md와
+      Decisions/frontend/decision.md)은 사본 흐름이 만든 것이 아니라 따로 쓴 문서라 묶지 않는다 —
+      템플릿 본문이 같은 서로 다른 결정을 한 건으로 숨기지 않기 위해서다.
     - same_session_id: 같은 프로젝트·session_id의 세션 원문(10_Worklog/Sessions)과 Process handoff —
       write_session_process가 같은 내용을 두 곳에 쓴다. Plan·결정 후보는 내용이 달라 묶지 않는다.
     """
@@ -669,8 +716,10 @@ def _dup_keys(doc: _Doc) -> list[tuple[str, ...]]:
     fu = doc.file_unit
     owner = (fu.scope, fu.project.casefold(), "|".join(sorted(c.casefold() for c in fu.conflict_with)))
     body = "\n".join(doc.source.lines[doc.body_start - 1:]).strip()
-    if body:
-        keys.append(("same_content", hashlib.sha256(body.encode("utf-8")).hexdigest(), Path(doc.rel).name.casefold(), *owner))
+    if body and _copy_area(doc.rel) is not None:
+        identity = {k: v for k, v in doc.meta.items() if str(k).casefold() not in _COPY_VOLATILE_META}
+        keys.append(("same_content", hashlib.sha256(body.encode("utf-8")).hexdigest(), Path(doc.rel).name.casefold(),
+                     doc.kind, _digest_meta(identity), *owner))
     session_id = _str_meta(doc.meta, "session_id") or ""
     if session_id and fu.scope == "project":
         handoff = (_str_meta(doc.meta, "handoff_type") or "").casefold()
@@ -692,20 +741,34 @@ def _duplicate_entry(item: _Scored, reason: str) -> dict:
 
 def _collapse_duplicates(ranked: list[_Scored]) -> list[_Scored]:
     owner: dict[tuple[str, ...], _Scored] = {}
+    areas: dict[tuple[str, ...], set[str | None]] = {}  # 묶음마다 이미 있는 영역 — same_content는 영역당 하나
     out: list[_Scored] = []
     for item in ranked:
         keys = _dup_keys(item.doc)
-        hit = next((k for k in keys if k in owner), None)
+        area = _copy_area(item.doc.rel)
+        hit = next((k for k in keys if k in owner and (k[0] != "same_content" or area not in areas[k])), None)
         if hit is not None:
             owner[hit].duplicates.append(_duplicate_entry(item, hit[0]))
+            areas[hit].add(area)
             continue
         for k in keys:
-            owner.setdefault(k, item)
+            if k not in owner:
+                owner[k] = item
+                areas[k] = {area}
         out.append(item)
     return out
 
 
 # ── 커서 ─────────────────────────────────────────────────────────────────────
+
+
+def _digest_meta(meta: dict[str, Any]) -> str:
+    """frontmatter 비교용 지문 — 날짜 등 YAML이 만든 비JSON 값은 문자열로 맞춘다."""
+    try:
+        text = json.dumps({str(k): v for k, v in meta.items()}, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):  # 중첩 매핑의 비문자열 키 등 — 비교만 하면 되므로 repr로 대신한다
+        text = repr(sorted((str(k), repr(v)) for k, v in meta.items()))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def _digest(value: Any) -> str:
@@ -758,6 +821,7 @@ def _attribution_dict(doc: _Doc, units: list[_Unit], blocks_cap: int = _BLOCKS_C
         shown = units[:blocks_cap]
         out["blocks"] = [
             {"lines": [u.start, u.end], "scope": u.scope, "project": _clip(u.project, _EVIDENCE_MAX_CHARS), "evidence": _ev(u.evidence),
+             **({"conflict_with": [_clip(c, _EVIDENCE_MAX_CHARS) for c in u.conflict_with[:5]]} if u.conflict_with else {}),
              **({"invalid_marker": True} if u.invalid_marker else {})}
             for u in shown
         ]

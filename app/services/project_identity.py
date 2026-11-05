@@ -69,23 +69,16 @@ class ProjectRegistry:
             return folders[0]
         return name.strip()
 
-    def attribution_name(self, name: str) -> str:
-        """문서가 선언한 프로젝트 이름(frontmatter·marker)을 소속 비교용 표기로 바꾼다.
+    def attribution_targets(self, name: str) -> list[str]:
+        """문서가 선언한 프로젝트 이름(frontmatter·marker·handoff/knowledge 폴더명)의 후보 프로젝트들.
 
-        식별(resolve_project)과 같은 근거·같은 순서만 쓴다: 등록 표기 → SessionHandoffs 폴더 → 매핑 별칭(가리키는
-        프로젝트가 하나일 때만). 어느 것도 아니면 입력 그대로다. 식별이 쓰지 않는 규칙(예: 30_Projects 폴더명을 그
-        Context.md의 선언명으로 바꾸기)을 여기에만 두면, 식별로 확정한 프로젝트가 자기 문서를 다른 프로젝트로 판정한다.
+        식별(resolve_project)의 이름 판정(_resolve_name)을 그대로 쓴다 — 등록 표기·SessionHandoffs 폴더·매핑 별칭을
+        모두 보고, 같은 이름이 둘 이상을 가리키면(동명 Context.md, 다른 프로젝트의 별칭과 겹침) 후보를 전부 돌려준다.
+        빈 목록은 등록 근거가 없는 이름이다. 식별에서는 모호한 이름을 소속 판정에서만 하나로 확정하면, 다른 근거로
+        확정한 프로젝트 검색에 모호한 문서가 섞인다.
         """
-        key = name.strip().casefold()
-        if key in self.display:
-            return self.display[key]
-        folders = self.handoff_folders.get(key)
-        if folders and len(folders) == 1:
-            return folders[0]
-        targets = self.aliases.get(key, set())
-        if len(targets) == 1:
-            return next(iter(targets))
-        return name.strip()
+        _, _, targets = _resolve_name(self, name)
+        return sorted(targets, key=str.casefold)
 
     def is_known(self, name: str) -> bool:
         key = name.strip().casefold()

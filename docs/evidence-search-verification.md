@@ -19,7 +19,7 @@
 |---|---|---|
 | 기능 이전 `5d2f4be`(= main) | 511 passed | 6 |
 | 앞선 작업 끝 `a297825` | 624 passed | 6 |
-| 이번 작업 끝 | 657 passed | 6 |
+| 이번 작업 끝 | 662 passed | 6 |
 
 실패 6건은 세 시점 모두 같은 목록이다(새 실패 0건) — 프로세스 생성 5건과 대소문자 구분 파일시스템에서 실패하는 기존
 `test_get_recent_sessions_groups_plan_and_process` 1건. 목록은 `evidence-search.md` "테스트 결과".
@@ -33,6 +33,7 @@
 | `a297825`(긴 줄·cursor·중복 수정 전) | 17건 | 긴 줄 `line_too_long`(읽기 5·발췌 2·MCP 1), `char_offset` 제거, 완전한 줄 성질, cursor(스캔 집합·소속·partial 회복) 3, 중복(다른 결정·프로젝트 경계·사본 근거) 3, 손상 marker 집계 1 |
 | `e857ab8`(1차 리뷰 반영 전) | 8건 | 해석 못 한 frontmatter 2, 별칭 소속, 등록부 1회, 숨김 폴더 경고, 경로 문자열 오류 코드, Context project 비문자열, NotFound 타입 |
 | `58fe4cc`(2차 리뷰 반영 전) | 4건 | 폴더명≠선언명 프로젝트의 자기 문서 유실, 별칭 소속 기대값, 주석·`{}` frontmatter 오판 2 |
+| `4b1dfde`(병합 차단 리뷰 반영 전) | 5건 | 모호한 이름의 소속 충돌 보존 1, 같은 파일명·본문의 다른 결정 1, 같은 영역 동일 파일 1, 제목이 다른 후보·정본 1, 같은 영역 200개 예산 1 |
 
 "발췌는 완전한 원문 줄" 성질 테스트는 처음에 수정 전 코드에서도 통과했다. 입력에 긴 줄이 발췌로 뽑히는 경우가 없었기 때문이라,
 긴 줄이 반드시 발췌되도록 입력을 바꾼 뒤 수정 전 코드에서 실패하는 것을 확인했다.
@@ -90,16 +91,25 @@
 cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 stale로 만드는 정도의 과잉 보수는 계약상 허용), 중복 키와 사본 근거,
 비문자열 YAML 값(`title: 123`, `status: [a]`, `project: {a: 1}`, 숫자 marker project)에서 예외 없음, `VaultNotFoundError`의 하위 호환.
 
+### 3차 — 병합 차단 리뷰(BLOCK) 반영
+
+| # | 지적 | 판단 | 조치 |
+|---|---|---|---|
+| 1 | `attribution_name`은 canonical 이름이 있으면 별칭을 보지 않는다. Beta의 별칭이 Alpha이면 식별(`_resolve_name("Alpha")`)은 후보 둘인데 소속은 Alpha로 확정해, repo 매핑으로 Alpha를 검색하면 모호한 `project: Alpha` 문서·블록이 섞인다 | 확인함(재현 테스트가 수정 전 코드에서 실패) | 소속 판정이 식별의 `_resolve_name`을 그대로 쓴다(`attribution_targets`). frontmatter·marker의 `project`, SessionHandoffs·20_Knowledge 폴더명 모두 후보가 둘 이상이면 `conflict`(후보 보존, `(모호: …)` 근거). 경로와 선언이 함께 있으면 공통 후보가 정확히 하나일 때만 확정 — `30_Projects/Alpha/` 안의 `project: Alpha`는 경로가 좁혀 Alpha로 남는다(그러지 않으면 Alpha 폴더 문서 전부가 conflict가 된다). 처음 고친 버전은 합집합으로 판정해 Alpha의 Context.md까지 conflict가 됐고, 테스트에서 잡아 교집합 규칙으로 바꿨다 |
+| 2 | 중복 키가 제목 등 frontmatter를 빼서, 같은 프로젝트 `Decisions/backend/decision.md`(캐시 도입)와 `Decisions/frontend/decision.md`(캐시 제거)가 템플릿 본문이 같으면 한 결정이 사본으로 축약된다 | 확인함 | curator는 사본 관계를 메타데이터로 남기지 않아(승격 후 후보 삭제), 사본 판정 근거를 좁혔다: 승격·보관이 바꾸는 값만 뺀 frontmatter가 같고, **서로 다른 영역**(후보·정본·보관 중 영역당 하나)일 때만 묶는다. 같은 영역의 같은 본문 파일은 묶지 않는다. 승격·보관 흐름의 사본(후보+정본+보관)은 계속 한 건으로 묶이고 각자 상태·근거 줄을 남긴다(회귀 테스트) |
+
+같은 Vault에서 legacy A/B를 다시 돌려 결과가 기능 이전과 바이트 단위로 같음을 확인했고, 평가·규모 측정도 다시 했다(`evidence-search.md` 표).
+
 ## 수용 기준별 결과
 
 | 기준 | 확인 방법 | 결과 |
 |---|---|---|
 | 기존 호출 호환·structured 계약·모순 인자 거부 | `test_mcp_server.py` 10건(FastMCP `call_tool` 경로), legacy A/B 132건 동일 | 통과. stdio 서버 프로세스 왕복은 미실행 |
-| 명시적 식별·미등록/충돌/동명 안전 실패·basename 미사용 | `test_project_identity.py`, `test_evidence_search.py`(별칭 소속·basename) | 통과 |
+| 명시적 식별·미등록/충돌/동명 안전 실패·basename 미사용 | `test_project_identity.py`, `test_evidence_search.py`(별칭 소속·basename·모호한 이름의 소속 conflict 보존) | 통과 |
 | 프로젝트/공통/unknown/conflict/손상 marker 필터가 점수·발췌 전, 자동 확대 없음 | `test_evidence_search.py` 범위 절 + `invalid_marker` 집계 | 통과 |
-| 관련도 우선·정본 우대·raw 잠식 방지·이력 기본 제외·미지 상태·중복 근거 보존 | 순위·상태·중복 테스트, 평가 Vault | 통과 |
+| 관련도 우선·정본 우대·raw 잠식 방지·이력 기본 제외·미지 상태·중복 근거 보존 | 순위·상태·중복 테스트(다른 결정·같은 영역 파일 미병합, 승격·보관 사본 병합), 평가 Vault | 통과 |
 | 응답 범위·반환 수·cursor·partial·귀속·발췌·버전·예산·후반 근거, 모르는 total 없음 | 응답 필드·예산·partial 테스트, 평가 "late" 사례 | 통과 |
 | 원문 구간·줄 기준·버전·이어읽기, 한글·CRLF·frontmatter·빈 파일·EOF·긴 줄·버전 불일치 | `test_source_reader.py`(임의 줄 길이 성질 테스트 포함), `test_vault_source.py` | 통과. 16000자 초과 줄은 structured로 읽을 수 없음(설계상) |
 | 페이지 일관성·partial·경로 탈출·금지 prefix·링크 | cursor 테스트 6종, 링크 테스트(검색·읽기·등록부) | 통과 |
-| 최종 리뷰 차단 문제 해결·검사 근거 | 이 문서 | 1차 정확성 지적 5건·2차 2건 반영, 정리 지적 3건은 사유와 함께 보류 |
+| 최종 리뷰 차단 문제 해결·검사 근거 | 이 문서 | 1차 정확성 지적 5건·2차 2건·병합 차단 2건 반영, 정리 지적 3건은 사유와 함께 보류 |
 | 평가 Vault 실측·문서·범위 밖 무변경 | `evidence-search.md` 평가 표, `git diff --stat` | 사용자 vault·운영 설정·브리핑·쓰기 코드 변경 없음 |

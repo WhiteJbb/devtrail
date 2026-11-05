@@ -570,11 +570,12 @@ def test_budget_holds_with_huge_title_and_many_duplicates(tmp_path):
     resp = _search(tmp_path, "예산경계", max_chars=3000)
     assert resp["ok"] and len(json.dumps(resp, ensure_ascii=False)) <= 3000
     assert len(resp["results"][0]["title"]) <= 200
+    # 같은 영역의 같은 본문 200개 — 사본 흐름이 아니라 묶지 않는다. 결과가 많아도 예산은 지킨다
     for i in range(200):
-        _w(tmp_path, f"20_Knowledge/d{i:03d}/dup.md", "중복예산 같은 본문\n")  # 같은 파일명 사본
-    resp = _search(tmp_path, "중복예산")
+        _w(tmp_path, f"20_Knowledge/d{i:03d}/dup.md", "중복예산 같은 본문\n")
+    resp = _search(tmp_path, "중복예산", limit=20)
     assert resp["ok"] and len(json.dumps(resp, ensure_ascii=False)) <= 12000
-    assert len(resp["results"][0]["duplicates"]) == 10 and resp["results"][0]["duplicates_omitted"] == 189
+    assert resp["total_matches"] == 200 and all("duplicates" not in r for r in resp["results"])
 
 
 def test_four_dash_frontmatter_matches_parser(tmp_path):
@@ -777,3 +778,79 @@ def test_hidden_project_folder_is_not_reported_as_link(tmp_path):
     _w(tmp_path, "30_Projects/Alpha/Plans/p.md", "숨김토큰\n")
     resp = _search(tmp_path, "숨김토큰", project="Alpha")
     assert resp["ok"] and not [w for w in resp["warnings"] if "링크" in w["message"]]
+
+
+# ── 병합 차단 리뷰 반영 ───────────────────────────────────────────────────────
+
+
+def test_ambiguous_names_stay_conflict_in_attribution_like_identification(tmp_path):
+    """식별에서 모호한 이름(별칭이 다른 canonical과 겹침)은 소속 판정에서도 하나로 확정하지 않는다."""
+    _projects(tmp_path, "Alpha", "Beta")
+    mapping = tmp_path / "map.json"
+    mapping.write_text(json.dumps({"projects": {"Alpha": {"repos": ["owner/alpha"]}, "Beta": {"aliases": ["Alpha"]}}}),
+                       encoding="utf-8")
+    settings = _settings(tmp_path, str(mapping))
+    assert vault_tools.resolve_project_identity("Alpha", settings=settings).status == "ambiguous"
+    _w(tmp_path, "30_Projects/Alpha/Plans/p.md", "모호토큰 경로로 확정\n")
+    _w(tmp_path, "30_Projects/Alpha/Plans/q.md", _fm(project="Alpha") + "모호토큰 경로가 좁힌 선언\n")
+    _w(tmp_path, "10_Worklog/Sessions/x.md", _fm(project="Alpha") + "모호토큰 선언만\n")
+    _w(tmp_path, "60_Candidates/SessionHandoffs/Alpha/h.md", _fm(handoff_type="process") + "모호토큰 폴더\n")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md",
+       '<!-- devtrail-memory-patch: {"scope": "project", "project": "Alpha"} -->\n모호토큰 블록\n')
+    resp = vault_tools.search_evidence("모호토큰", project="owner/alpha", limit=20, settings=settings)
+    assert resp["ok"] and resp["scope"]["project"] == "Alpha"
+    # Alpha 폴더 안의 `project: Alpha`(q.md, Context.md)는 경로가 모호함을 좁혀 Alpha 소속이다 — conflict가 아니다
+    assert sorted(_paths(resp)) == ["30_Projects/Alpha/Plans/p.md", "30_Projects/Alpha/Plans/q.md"]
+    assert resp["filtered"]["documents"]["conflict"] == 3  # 세션·handoff·Lessons(블록이 전부 conflict)
+    whole = vault_tools.search_evidence("모호토큰", limit=20, settings=settings)
+    by = {r["path"]: r["attribution"] for r in whole["results"]}
+    assert by["10_Worklog/Sessions/x.md"]["scope"] == "conflict"
+    assert by["10_Worklog/Sessions/x.md"]["conflict_with"] == ["Alpha", "Beta"]
+    assert "모호" in by["10_Worklog/Sessions/x.md"]["evidence"][0]
+    assert by["40_AgentMemory/06_Lessons.md"]["blocks"][0]["conflict_with"] == ["Alpha", "Beta"]
+    # 명시적으로 소속 불명·충돌을 포함하면 이 프로젝트가 한쪽인 충돌 문서만 더해진다
+    wide = vault_tools.search_evidence("모호토큰", project="owner/alpha", include_unattributed=True, limit=20,
+                                       settings=settings)
+    assert set(_paths(wide)) == set(by)
+
+
+def test_same_name_and_body_with_different_metadata_are_different_decisions(tmp_path):
+    """리뷰 재현: 같은 파일명·같은 템플릿 본문이라도 제목이 다른 두 결정은 각각 나온다."""
+    _projects(tmp_path, "Alpha")
+    template = "## 결정\n\n템플릿토큰 (작성 예정)\n"
+    _w(tmp_path, "30_Projects/Alpha/Decisions/backend/decision.md", _fm(title="캐시 도입") + template)
+    _w(tmp_path, "30_Projects/Alpha/Decisions/frontend/decision.md", _fm(title="캐시 제거") + template)
+    resp = _search(tmp_path, "템플릿토큰", project="Alpha")
+    assert len(resp["results"]) == 2 and all("duplicates" not in r for r in resp["results"])
+
+
+def test_same_area_identical_files_are_not_copies(tmp_path):
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "30_Projects/Alpha/Decisions/a/decision.md", "같은영역토큰\n")
+    _w(tmp_path, "30_Projects/Alpha/Decisions/b/decision.md", "같은영역토큰\n")
+    assert _search(tmp_path, "같은영역토큰", project="Alpha")["total_matches"] == 2
+
+
+def test_candidate_and_promoted_copy_with_conflicting_title_are_not_merged(tmp_path):
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "60_Candidates/Decisions/d.md", _fm(project="Alpha", title="캐시 도입", candidate_type="decision") + "제목토큰\n")
+    _w(tmp_path, "30_Projects/Alpha/Decisions/d.md", _fm(project="Alpha", title="캐시 제거", type="decision") + "제목토큰\n")
+    assert _search(tmp_path, "제목토큰", project="Alpha")["total_matches"] == 2
+
+
+def test_promotion_and_archive_copies_are_merged_with_their_evidence(tmp_path):
+    """승격·보관 흐름의 사본(영역이 다르고 바뀌는 값은 status·type·promoted_at뿐)은 한 건으로 묶는다."""
+    _projects(tmp_path, "Alpha")
+    meta = {"project": "Alpha", "title": "캐시 도입", "created_at": "2026-10-01"}
+    _w(tmp_path, "60_Candidates/Decisions/d.md", _fm(**meta, status="candidate", candidate_type="decision") + "사본토큰\n")
+    _w(tmp_path, "30_Projects/Alpha/Decisions/d.md",
+       _fm(**meta, status="accepted", type="decision", promoted_at="2026-10-02") + "사본토큰\n")
+    _w(tmp_path, "60_Candidates/_Archive/Decisions/d.md", _fm(**meta, status="candidate", candidate_type="decision") + "사본토큰\n")
+    resp = _search(tmp_path, "사본토큰", project="Alpha", include_history=True)
+    assert _paths(resp) == ["30_Projects/Alpha/Decisions/d.md"]
+    dups = {d["path"]: d for d in resp["results"][0]["duplicates"]}
+    assert set(dups) == {"60_Candidates/Decisions/d.md", "60_Candidates/_Archive/Decisions/d.md"}
+    assert dups["60_Candidates/_Archive/Decisions/d.md"]["status"]["class"] == "history"
+    # 사본마다 frontmatter 길이가 달라 근거 줄도 자기 파일 기준이다 (대표는 9행)
+    assert resp["results"][0]["excerpts"][0]["start_line"] == 9
+    assert all(d["reason"] == "same_content" and d["excerpt_lines"] == [[8, 8]] for d in dups.values())
