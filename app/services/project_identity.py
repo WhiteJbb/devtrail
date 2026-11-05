@@ -22,6 +22,8 @@ from pathlib import Path
 
 import frontmatter
 
+from app.services.vault_source import real_scoped_rel
+
 _HANDOFF_ROOT = "60_Candidates/SessionHandoffs"
 _OWNER_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$")
 _REMOTE_URL_RE = re.compile(r"(?:[:/])([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9._-]+?)(?:\.git)?/?$")
@@ -71,6 +73,15 @@ class ProjectRegistry:
         key = name.strip().casefold()
         return key in self.canonical or key in self.handoff_folders
 
+    def same_name_sources(self, name: str) -> list[str]:
+        """같은 이름(대소문자 무시)을 선언한 근거가 둘 이상이면 그 목록 — 어느 경로로 가리켜도 하나로 확정할 수 없다."""
+        key = name.strip().casefold()
+        if key in self.canonical:
+            rels = self.canonical[key]
+            return [f"context:{r}" for r in rels] if len(rels) > 1 else []
+        folders = self.handoff_folders.get(key, [])
+        return [f"handoff_folder:{_HANDOFF_ROOT}/{f}" for f in folders] if len(folders) > 1 else []
+
     def known_projects(self) -> list[str]:
         names = {self.display[k] for k in self.canonical}
         names.update(f for folders in self.handoff_folders.values() for f in folders)
@@ -83,6 +94,11 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
     if projects_dir.is_dir():
         for ctx_path in sorted(projects_dir.glob("*/Context.md")):
             rel = ctx_path.relative_to(vault_dir).as_posix()
+            # 검색 스캔과 같은 읽기 경계 — 링크로 금지 prefix·vault 밖을 가리키면 내용을 읽지 않는다.
+            # 범위 안 다른 위치로의 링크도 읽지 않는다(스캔도 링크 폴더·파일을 따라가지 않으니 소속 근거가 어긋난다).
+            if real_scoped_rel(vault_dir, ctx_path) != rel:
+                reg.warnings.append(f"{rel}: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
+                continue
             name = ctx_path.parent.name
             try:
                 meta = frontmatter.loads(ctx_path.read_text(encoding="utf-8")).metadata
@@ -99,6 +115,10 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
     if handoff_root.is_dir():
         for d in sorted(handoff_root.iterdir()):
             if d.is_dir() and not d.name.startswith((".", "_")):
+                rel = d.relative_to(vault_dir).as_posix()
+                if real_scoped_rel(vault_dir, d) != rel:
+                    reg.warnings.append(f"{rel}/: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
+                    continue
                 reg.handoff_folders.setdefault(d.name.casefold(), []).append(d.name)
     if map_path.strip():
         _load_map(reg, Path(map_path.strip()).expanduser())
@@ -248,6 +268,20 @@ def _resolve_name(reg: ProjectRegistry, name: str) -> tuple[str, list[str], set[
     return (methods[0] if len(hits) == 1 else "+".join(methods)), [e for v in hits.values() for e in v], set(hits)
 
 
+def _finalize(reg: ProjectRegistry, raw: str, target: str, method: str, evidence: list[str], warnings: list[str],
+              unregistered_hint: str) -> ProjectResolution:
+    """후보 하나로 좁혀진 뒤의 공통 판정 — 별칭·매핑 경로도 직접 이름 입력과 같은 동명·미등록 검사를 거친다."""
+    target = reg.canonical_name(target)
+    same = reg.same_name_sources(target)
+    if same:
+        return ProjectResolution(input=raw, status="ambiguous", method=method, evidence=[*evidence, *same],
+                                 candidates=sorted(f"{target} ({s.split(':', 1)[1]})" for s in same), warnings=warnings)
+    if not reg.is_known(target):
+        return ProjectResolution(input=raw, status="unregistered", project=target, method=method, evidence=evidence,
+                                 warnings=warnings, hint=unregistered_hint)
+    return ProjectResolution(input=raw, status="resolved", project=target, method=method, evidence=evidence, warnings=warnings)
+
+
 def resolve_project(vault_dir: Path, identifier: str, map_path: str = "") -> ProjectResolution:
     """identifier(프로젝트명 / 별칭 / owner/repo / repo 디렉터리 경로)를 명시적 근거로만 확정한다."""
     raw = identifier or ""
@@ -271,10 +305,8 @@ def resolve_project(vault_dir: Path, identifier: str, map_path: str = "") -> Pro
         targets = reg.repos.get(owner_repo, set())
         if len(targets) == 1:
             target = next(iter(targets))
-            return ProjectResolution(
-                input=raw, status="resolved" if reg.is_known(target) else "unregistered", project=target,
-                method="repo_mapping", evidence=[f"repo:{owner_repo}→{target}"], warnings=warnings,
-            )
+            return _finalize(reg, raw, target, "repo_mapping", [f"repo:{owner_repo}→{target}"], warnings,
+                             "매핑은 있지만 vault에 Context.md·SessionHandoffs가 없는 프로젝트입니다.")
         if len(targets) > 1:
             return ProjectResolution(
                 input=raw, status="conflict", candidates=sorted(targets), method="repo_mapping",
@@ -287,14 +319,9 @@ def resolve_project(vault_dir: Path, identifier: str, map_path: str = "") -> Pro
 
     method, evidence, targets = _resolve_name(reg, text)
     if len(targets) == 1:
-        target = next(iter(targets))
-        if not reg.is_known(target):
-            # 별칭은 있지만 가리키는 프로젝트가 vault에 없다 — 빈 범위를 성공처럼 검색하지 않는다
-            return ProjectResolution(
-                input=raw, status="unregistered", project=target, method=method, evidence=evidence, warnings=warnings,
-                hint="식별 매핑이 가리키는 프로젝트가 vault에 없습니다 (Context.md·SessionHandoffs 없음).",
-            )
-        return ProjectResolution(input=raw, status="resolved", project=target, method=method, evidence=evidence, warnings=warnings)
+        # 별칭이 가리키는 프로젝트가 vault에 없거나 동명이면 확정하지 않는다
+        return _finalize(reg, raw, next(iter(targets)), method, evidence, warnings,
+                         "식별 매핑이 가리키는 프로젝트가 vault에 없습니다 (Context.md·SessionHandoffs 없음).")
     if len(targets) > 1:
         return ProjectResolution(
             input=raw, status="ambiguous", candidates=sorted(targets), method=method, evidence=evidence, warnings=warnings
@@ -328,14 +355,8 @@ def _resolve_repo_dir(reg: ProjectRegistry, raw: str, repo_dir: Path, warnings: 
             input=raw, status="conflict", candidates=sorted(distinct.values()), evidence=evidence, warnings=warnings,
         )
     if len(distinct) == 1:
-        target = reg.canonical_name(next(iter(distinct.values())))
-        method = "local_mapping" if local else "repo_mapping"
-        if not reg.is_known(target):
-            return ProjectResolution(
-                input=raw, status="unregistered", project=target, method=method, evidence=evidence, warnings=warnings,
-                hint="매핑은 있지만 vault에 Context.md·SessionHandoffs가 없는 프로젝트입니다.",
-            )
-        return ProjectResolution(input=raw, status="resolved", project=target, method=method, evidence=evidence, warnings=warnings)
+        return _finalize(reg, raw, next(iter(distinct.values())), "local_mapping" if local else "repo_mapping",
+                         evidence, warnings, "매핑은 있지만 vault에 Context.md·SessionHandoffs가 없는 프로젝트입니다.")
 
     hint = ""
     basename_key = repo_dir.resolve().name.casefold()

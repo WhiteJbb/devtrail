@@ -329,7 +329,8 @@ def search_vault(query: str, limit: int = 10, settings: Settings | None = None) 
         SearchHit(path=r.note.path, title=r.note.title, status=_status_of(r.note.path), score=r.score, summary=r.note.summary)
         for r in results
         # 링크로 금지 영역·vault 밖 파일을 가리키는 노트는 뺀다 — 순위 계산은 그대로, 빠지는 건 범위 밖 파일뿐
-        if _real_scoped_rel(vault_dir, vault_dir / r.note.path) is not None
+        # 숨김 대상은 허용한다 — 금지 prefix·vault 밖만 막고, 기존 검색 범위(허용 prefix 안 링크 대상)는 보존
+        if _real_scoped_rel(vault_dir, vault_dir / r.note.path, allow_hidden=True) is not None
     ]
 
     hits.sort(key=lambda h: (_STATUS_RANK[h.status], -h.score, h.path))

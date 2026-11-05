@@ -492,3 +492,49 @@ def test_four_dash_frontmatter_matches_parser(tmp_path):
     assert resp["results"][0]["attribution"]["scope"] == "conflict"
     # frontmatter 줄은 본문으로 점수화되지 않는다
     assert "30_Projects/Alpha/Plans/x.md" not in _paths(_search(tmp_path, "beta", project="Alpha", include_unattributed=True))
+
+
+def test_marker_without_closing_is_a_block_boundary(tmp_path):
+    _projects(tmp_path, "Alpha", "Beta")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md",
+       '<!-- devtrail-memory-patch: {"scope": "project", "project": "Alpha"} -->\n'
+       "- 알파 교훈 경계토큰\n\n"
+       '<!-- devtrail-memory-patch: {"scope": "project", "project": "Beta"}\n'
+       "- 베타 비밀 경계토큰\n")
+    resp = _search(tmp_path, "경계토큰", project="Alpha")
+    lessons = resp["results"][0]
+    assert "베타" not in json.dumps(lessons["excerpts"], ensure_ascii=False)
+    assert lessons["attribution"]["blocks"] == [
+        {"lines": [1, 3], "scope": "project", "project": "Alpha", "evidence": ["marker:1행 project=Alpha"]}]
+    assert any("4행 marker" in w for w in lessons["warnings"])
+    beta = _search(tmp_path, "비밀", project="Beta")
+    assert beta["results"] == []  # 깨진 marker 블록은 Beta로도 확정하지 않는다
+    unk = _search(tmp_path, "비밀", project="Alpha", include_unattributed=True)["results"][0]
+    assert ("unknown", "") in {(b["scope"], b["project"]) for b in unk["attribution"]["blocks"]}
+    assert "베타 비밀" in unk["excerpts"][0]["text"]
+
+
+def test_cursor_stale_when_duplicate_copy_changes(tmp_path):
+    _projects(tmp_path, "Alpha")
+    for i in range(4):
+        _w(tmp_path, f"30_Projects/Alpha/Plans/p{i}.md", f"사본토큰 계획 {i}\n")
+    _w(tmp_path, "60_Candidates/SessionHandoffs/Alpha/proc.md",
+       _fm(project="Alpha", handoff_type="process", session_id="s-dup") + "사본토큰 사본토큰 사본토큰 Process\n")
+    log = _w(tmp_path, "10_Worklog/Sessions/s.md", _fm(project="Alpha", session_id="s-dup") + "사본토큰 세션 원문\n")
+    whole = _search(tmp_path, "사본토큰", project="Alpha", limit=20)
+    proc = next(r for r in whole["results"] if r["path"].endswith("proc.md"))
+    assert proc["duplicates"][0]["path"] == "10_Worklog/Sessions/s.md"
+    first = _search(tmp_path, "사본토큰", project="Alpha", limit=2)
+    assert first["next_cursor"]
+    log.write_text(_fm(project="Alpha", session_id="s-dup") + "사본토큰 세션 원문 수정\n", encoding="utf-8")
+    again = _search(tmp_path, "사본토큰", project="Alpha", limit=2, cursor=first["next_cursor"])
+    assert not again["ok"] and again["error"]["code"] == "cursor_stale"
+
+
+def test_legacy_search_keeps_link_to_hidden_target_in_scope(tmp_path):
+    """허용 prefix 안 숨김 파일을 가리키는 링크는 기존처럼 legacy 검색에 남는다 (금지 prefix만 막는다)."""
+    _w(tmp_path, "20_Knowledge/.drafts/hidden.md", "숨김대상토큰 초안\n")
+    os.symlink(tmp_path / "20_Knowledge" / ".drafts" / "hidden.md", tmp_path / "20_Knowledge" / "visible.md")
+    hits = vault_tools.search_vault("숨김대상토큰", settings=_settings(tmp_path))
+    assert [h.path for h in hits] == ["20_Knowledge/visible.md"]
+    assert "숨김대상토큰" in vault_tools.read_note("20_Knowledge/visible.md", settings=_settings(tmp_path))

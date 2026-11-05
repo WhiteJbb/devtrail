@@ -201,3 +201,44 @@ def test_bare_name_is_not_a_cwd_relative_path(tmp_path, monkeypatch):
     res = resolve_project(vault, "Alpha")
     assert (res.status, res.project, res.method) == ("resolved", "Alpha", "canonical")
     assert resolve_project(vault, "./Alpha").status == "unregistered"
+
+
+def test_registry_does_not_read_context_through_links(tmp_path):
+    """Context.md나 프로젝트 폴더가 금지 prefix·vault 밖으로 연결돼 있으면 읽지도 노출하지도 않는다."""
+    import os
+
+    vault = tmp_path / "vault"
+    _ctx(vault, "Alpha", "Alpha")
+    inbox = vault / "00_Inbox" / "Context.md"
+    inbox.parent.mkdir(parents=True)
+    inbox.write_text("---\nproject: 비밀인박스\n---\n# x\n", encoding="utf-8")
+    (vault / "30_Projects" / "Linked").mkdir()
+    os.symlink(inbox, vault / "30_Projects" / "Linked" / "Context.md")
+    outside = tmp_path / "outside" / "Escaped"
+    outside.mkdir(parents=True)
+    (outside / "Context.md").write_text("---\nproject: 바깥비밀\n---\n# y\n", encoding="utf-8")
+    os.symlink(outside, vault / "30_Projects" / "Escaped")
+    (tmp_path / "outside" / "Handoff").mkdir()
+    (vault / "60_Candidates" / "SessionHandoffs").mkdir(parents=True)
+    os.symlink(tmp_path / "outside" / "Handoff", vault / "60_Candidates" / "SessionHandoffs" / "Handoff")
+    for name in ("비밀인박스", "바깥비밀", "Handoff"):
+        res = resolve_project(vault, name)
+        assert res.status == "unresolved" and res.candidates == ["Alpha"], name
+    res = resolve_project(vault, "Alpha")
+    assert "비밀인박스" not in repr(res) and "바깥비밀" not in repr(res)
+    assert sum("링크" in w for w in res.warnings) == 3
+
+
+def test_alias_and_repo_to_duplicated_name_are_ambiguous(tmp_path):
+    vault = tmp_path / "vault"
+    _ctx(vault, "Alpha", "Alpha")
+    _ctx(vault, "alpha-copy", "Alpha")
+    project_map = _map(tmp_path, {"Alpha": {"aliases": ["al"], "repos": ["org/alpha"]}})
+    for ident in ("Alpha", "al", "org/alpha"):
+        res = resolve_project(vault, ident, project_map)
+        assert res.status == "ambiguous" and res.project == "", ident
+        assert len(res.candidates) == 2, ident
+    repo = _repo(tmp_path, "checkout", vault_json="al")
+    assert resolve_project(vault, str(repo), project_map).status == "ambiguous"
+    remote_only = _repo(tmp_path, "remote-only", remote="https://github.com/org/alpha.git")
+    assert resolve_project(vault, str(remote_only), project_map).status == "ambiguous"

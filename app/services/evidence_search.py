@@ -85,6 +85,8 @@ _CANDIDATE_SUBKINDS = {
     "BlogIdeas": "blog_idea", "CareerBullets": "career_bullet", "SessionHandoffs": "session_handoff",
 }
 _MARKER_RE = re.compile(r"^<!-- devtrail-memory-patch: (.+) -->\s*$")
+# 블록 경계는 접두로 감지한다 — 닫는 `-->`가 빠진 marker를 경계로 안 보면 그 아래 블록이 앞 블록 소속에 흡수된다
+_MARKER_PREFIX = "<!-- devtrail-memory-patch:"
 _TIME_KEYS = ("updated_at", "created_at", "date", "promoted_at")
 
 
@@ -242,11 +244,13 @@ def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warn
 def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: ProjectRegistry, warnings: list[str]) -> list[_Unit]:
     """40_AgentMemory 문서를 marker 블록으로 나눈다. marker 앞은 파일 소속(AgentMemory는 전역)."""
     total = len(doc_lines)
-    marks: list[tuple[int, str]] = []
+    marks: list[tuple[int, str | None]] = []
     for idx in range(body_start - 1, total):
-        m = _MARKER_RE.match(doc_lines[idx])
-        if m:
-            marks.append((idx + 1, m.group(1)))
+        line = doc_lines[idx]
+        if not line.startswith(_MARKER_PREFIX):
+            continue
+        m = _MARKER_RE.match(line)
+        marks.append((idx + 1, m.group(1) if m else None))  # None = 형식이 깨진 marker
     if not marks:
         return []
     units: list[_Unit] = []
@@ -256,7 +260,7 @@ def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: 
     for i, (line_no, payload) in enumerate(marks):
         end = marks[i + 1][0] - 1 if i + 1 < len(marks) else total
         try:
-            data = json.loads(payload)
+            data = json.loads(payload) if payload is not None else None
         except ValueError:
             data = None
         if not isinstance(data, dict):
@@ -815,7 +819,9 @@ def search(
 
     fingerprint = _digest({"q": " ".join(query.split()), "p": resolved_project.casefold(), "c": include_common,
                            "u": include_unattributed, "h": include_history, "k": list(wanted_kinds)})
-    corpus = _digest([[r.doc.rel, r.doc.source.version, [d["path"] for d in r.duplicates]] for r in ranked])
+    # 묶인 중복 출처의 내용 버전까지 넣는다 — 사본만 바뀌어도 이어 받던 페이지와 응답이 달라진다
+    corpus = _digest([[r.doc.rel, r.doc.source.version, [[d["path"], d["source_version"]] for d in r.duplicates]]
+                      for r in ranked])
     offset = 0
     if cursor_data is not None:
         if cursor_data.get("f") != fingerprint:
