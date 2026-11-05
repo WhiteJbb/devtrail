@@ -198,7 +198,8 @@ def run_case(vault: Path, case: EvalCase) -> dict:
     if srank:
         hit = resp["results"][srank - 1]
         lo, hi = case.expected_lines
-        covered = any(e["start_line"] <= hi and e["end_line"] >= lo for e in hit["excerpts"])
+        # text 없는 line_too_long 발췌는 위치만 알려 줄 뿐 근거를 보여 준 것이 아니다
+        covered = any(e["text"] is not None and e["start_line"] <= hi and e["end_line"] >= lo for e in hit["excerpts"])
         if not covered:
             t2 = time.perf_counter()
             page = vault_tools.read_source(case.expected_path, start_line=lo, max_lines=hi - lo + 1,

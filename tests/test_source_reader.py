@@ -21,13 +21,24 @@ def _w(vault: Path, rel: str, data: str | bytes) -> Path:
     return path
 
 
+def _next_of(page: dict) -> dict | None:
+    if page.get("ok"):
+        return page["next"]
+    if page["error"]["code"] == "line_too_long":
+        return page["error"]["next"]
+    return None
+
+
 def _follow(vault: Path, rel: str, **kwargs) -> list[dict]:
-    """next를 끝까지 따라간다. 무한 이어읽기면 실패한다."""
+    """next(성공 페이지)와 error.next(line_too_long)를 끝까지 따라간다. 무한 이어읽기면 실패한다."""
     pages = [read_range(vault, rel, **kwargs)]
-    while pages[-1].get("ok") and pages[-1]["next"]:
-        nxt = pages[-1]["next"]
-        pages.append(read_range(vault, rel, start_line=nxt["start_line"], char_offset=nxt["char_offset"],
-                                expected_version=nxt["expected_version"],
+    while (nxt := _next_of(pages[-1])) is not None:
+        prev = pages[-1]
+        prev_start = prev["start_line"] if prev.get("ok") else prev["error"]["line"]
+        assert nxt["start_line"] > prev_start, "next가 앞으로 나아가지 않는다"
+        if prev.get("ok"):
+            assert prev["returned_lines"] >= 1 and nxt["start_line"] == prev["end_line"] + 1
+        pages.append(read_range(vault, rel, start_line=nxt["start_line"], expected_version=nxt["expected_version"],
                                 **{k: v for k, v in kwargs.items() if k in ("max_lines", "max_chars")}))
         assert len(pages) < 500, "continuation이 끝나지 않는다"
     return pages
@@ -47,7 +58,7 @@ def test_exact_range_and_next_position(tmp_path):
     r = read_range(tmp_path, "20_Knowledge/a.md", start_line=3, max_lines=4)
     assert r["content"] == "줄3\n줄4\n줄5\n줄6"
     assert (r["end_line"], r["truncation_reason"]) == (6, "max_lines")
-    assert r["next"] == {"start_line": 7, "char_offset": 0, "expected_version": r["source_version"]}
+    assert r["next"] == {"start_line": 7, "expected_version": r["source_version"]}
     assert not r["eof"]
 
 
@@ -92,20 +103,63 @@ def test_max_chars_stops_before_line_that_does_not_fit(tmp_path):
     _w(tmp_path, "20_Knowledge/a.md", "가" * 150 + "\n" + "나" * 150 + "\n")
     r = read_range(tmp_path, "20_Knowledge/a.md", max_chars=200)
     assert r["returned_lines"] == 1 and r["truncation_reason"] == "max_chars"
-    assert r["next"]["start_line"] == 2 and r["next"]["char_offset"] == 0
+    assert r["next"] == {"start_line": 2, "expected_version": r["source_version"]}
+    assert "char_offset" not in r and "line_clip" not in r
 
 
-def test_long_single_line_continues_by_char_offset_and_terminates(tmp_path):
+def test_long_first_line_is_line_too_long_not_a_partial_line(tmp_path):
+    """긴 줄은 잘라 주지 않는다 — 내용 없는 line_too_long 결과, 다음 줄로 넘어가는 next."""
     line = "".join(chr(0xAC00 + (i % 50)) for i in range(1000))
     _w(tmp_path, "20_Knowledge/long.md", line + "\n끝\n")
-    pages = _follow(tmp_path, "20_Knowledge/long.md", max_chars=300)
-    first = pages[0]
-    assert first["truncation_reason"] == "long_line" and first["truncated"] and not first["eof"]
-    assert first["line_clip"] == {"line": 1, "char_start": 0, "char_end": 300, "line_chars": 1000}
-    # 긴 줄 조각은 이어 붙이면 원문 그대로다 — 마지막 조각 페이지에는 다음 줄이 함께 올 수 있다
-    assert "".join(p["content"] for p in pages) == line + "\n끝"
-    assert [p["char_offset"] for p in pages] == [0, 300, 600, 900]
-    assert pages[-1]["eof"] and pages[-1]["next"] is None
+    r = read_range(tmp_path, "20_Knowledge/long.md", max_chars=300)
+    assert not r["ok"] and "content" not in r
+    err = r["error"]
+    assert err["code"] == "line_too_long" and (err["line"], err["line_chars"], err["max_chars"]) == (1, 1000, 300)
+    assert err["readable_with_max_chars"] is True and err["total_lines"] == 2
+    assert err["next"] == {"start_line": 2, "expected_version": err["source_version"]}
+    # 상한 안 길이면 max_chars를 올려 통째로 받는다
+    whole = read_range(tmp_path, "20_Knowledge/long.md", max_chars=1000, max_lines=1)
+    assert whole["ok"] and whole["content"] == line and whole["end_line"] == 1
+
+
+def test_long_line_in_middle_stops_before_it_and_terminates(tmp_path):
+    long_line = "가" * 500
+    _w(tmp_path, "20_Knowledge/m.md", "첫\n" + long_line + "\n셋\n" + long_line + "\n")
+    pages = _follow(tmp_path, "20_Knowledge/m.md", max_chars=300)
+    p1, e2, p3, e4 = pages
+    assert p1["content"] == "첫" and p1["truncation_reason"] == "line_too_long"
+    assert p1["long_line"] == {"line": 2, "line_chars": 500} and p1["next"]["start_line"] == 2 and not p1["eof"]
+    assert e2["error"]["code"] == "line_too_long" and e2["error"]["next"]["start_line"] == 3
+    assert p3["content"] == "셋" and p3["next"]["start_line"] == 4
+    # 마지막 줄이 긴 줄이면 next가 없다 — 같은 줄을 다시 가리키지 않는다
+    assert e4["error"]["line"] == 4 and e4["error"]["next"] is None
+
+
+def test_line_longer_than_absolute_cap_points_to_legacy_full_read(tmp_path):
+    _w(tmp_path, "20_Knowledge/huge.md", "x" * 16001 + "\n")
+    err = read_range(tmp_path, "20_Knowledge/huge.md")["error"]
+    assert err["code"] == "line_too_long" and err["readable_with_max_chars"] is False and err["next"] is None
+    assert "structured=False" in err["message"]
+
+
+def test_pages_hold_only_whole_lines_and_cover_file_in_order(tmp_path):
+    """임의 길이 줄로 이어 읽기 — 모든 페이지의 content는 원문 줄 그대로이고, 건너뛴 줄은 line_too_long으로 드러난다."""
+    import random
+
+    rng = random.Random(7)
+    lines = ["".join(rng.choice("가나다abc ") for _ in range(rng.choice([0, 1, 5, 40, 150, 260, 420]))) for _ in range(120)]
+    _w(tmp_path, "20_Knowledge/r.md", "\r\n".join(lines) + "\r\n")
+    pages = _follow(tmp_path, "20_Knowledge/r.md", max_chars=300, max_lines=7)
+    seen: list[str] = []
+    for p in pages:
+        if p["ok"]:
+            assert p["content"].split("\n") == lines[p["start_line"] - 1:p["end_line"]]
+            assert len(p["content"]) <= 300
+            seen += lines[p["start_line"] - 1:p["end_line"]]
+        else:
+            assert p["error"]["code"] == "line_too_long" and len(lines[p["error"]["line"] - 1]) > 300
+            seen.append(lines[p["error"]["line"] - 1])
+    assert seen == lines
 
 
 def test_version_mismatch_returns_no_content(tmp_path):
@@ -119,7 +173,7 @@ def test_version_mismatch_returns_no_content(tmp_path):
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"start_line": 0}, {"max_lines": 401}, {"max_lines": 0}, {"max_chars": 16001}, {"char_offset": -1},
+    {"start_line": 0}, {"max_lines": 401}, {"max_lines": 0}, {"max_chars": 16001}, {"max_chars": 199},
     {"start_line": True},
 ])
 def test_invalid_arguments(tmp_path, kwargs):
@@ -128,10 +182,10 @@ def test_invalid_arguments(tmp_path, kwargs):
     assert not r["ok"] and r["error"]["code"] == "invalid_argument"
 
 
-def test_char_offset_beyond_line_is_out_of_range(tmp_path):
+def test_char_offset_is_not_part_of_the_contract(tmp_path):
     _w(tmp_path, "20_Knowledge/a.md", "abc\n")
-    r = read_range(tmp_path, "20_Knowledge/a.md", char_offset=3)
-    assert not r["ok"] and r["error"]["code"] == "out_of_range"
+    with pytest.raises(TypeError):
+        read_range(tmp_path, "20_Knowledge/a.md", char_offset=3)
 
 
 def test_defaults_are_120_lines_16000_chars(tmp_path):

@@ -16,7 +16,7 @@
 | 도구 이름 | `search_vault`, `read_note` 그대로. 새 도구 없음 |
 | 기본 호출 | `search_vault(query, limit=10)` → `[{path,title,status,score,summary}]` 리스트, `read_note(rel_path)` → 전문 문자열 |
 | legacy 순위 | WikiService 점수, stable → candidate → raw 정렬, raw 예약(최대 3자리, limit의 1/3) 변경 없음 |
-| 모순된 인자 | `structured=False`인데 `project`·`kinds`·`cursor`·`include_*`·`max_chars`(검색), `start_line`·`max_lines`·`max_chars`·`char_offset`·`expected_version`(읽기)를 주면 **오류**다. 조용히 무시하면 범위를 줬다고 믿고 전체 결과를 읽게 된다 |
+| 모순된 인자 | `structured=False`인데 `project`·`kinds`·`cursor`·`include_*`·`max_chars`(검색), `start_line`·`max_lines`·`max_chars`·`expected_version`(읽기)를 주면 **오류**다. 조용히 무시하면 범위를 줬다고 믿고 전체 결과를 읽게 된다 |
 | 바뀐 것 | 심볼릭 링크로 금지 prefix(00_Inbox 등)나 vault 밖을 가리키는 파일은 legacy `read_note`도 거부하고 legacy `search_vault` 결과에서도 빠진다. 허용 prefix 안(숨김 폴더 포함)을 가리키는 링크는 전처럼 검색·읽기된다. 정상 파일의 순위는 그대로다 |
 
 MCP 반환 스키마는 `list[dict] | dict`(검색), `str | dict`(읽기)로 넓어졌다. 기존 인자로 부르면 값의 형태는 이전과 같다.
@@ -98,13 +98,20 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 
 - `total_matches`: 범위 안 일치 문서 수(중복 출처를 묶은 뒤). **스캔이 불완전하면(`partial=true`) `null`** — 모르는 수를 만들지 않는다.
 - `filtered`: 점수화 전에 범위 밖이라 뺀 문서·블록 수(이유별). 0건일 때 범위를 넓힐지는 이 값을 보고 호출자가 정한다.
-- `excerpts[].truncated`: 800자에 맞추려고 뒷줄을 덜었으면 `omitted_lines`, 한 줄이 800자보다 길면 `line_clip`
-  (`char_start`/`char_end`/`line_chars`)이 붙는다. 긴 첫 줄 때문에 같은 근거 창의 뒷줄을 못 실었을 때도 `omitted_lines`가
-  붙고, 발췌 겹침은 실제로 낸 줄 범위로 판정하므로 그 뒷줄 근거는 두 번째 발췌로 나온다(발췌 자리가 남아 있으면).
-  전문은 `read_note(structured=True, start_line=…, char_offset=…)`.
-- `duplicates`: 명시적 동일 출처만 묶는다 — ① 본문 바이트가 같다(`same_content`) ② 같은 `session_id`의
-  `10_Worklog/Sessions` 세션 원문과 SessionHandoff Process(`same_session_id`). Plan은 내용이 달라 묶지 않는다.
-  대표는 순위가 높은 쪽이다.
+- `excerpts[].text`는 언제나 **완전한 원문 줄**이다(줄 중간을 자르지 않는다). 800자에 맞추려고 뒷줄을 덜었으면
+  `truncated: true`와 `omitted_lines`가 붙는다.
+- 첫 줄 하나가 800자보다 길면 그 발췌는 `text: null`, `line_too_long: {line, line_chars}`다 — 줄 일부를 근거처럼 내지 않는다.
+  그 줄은 `read_note(structured=True, start_line=line, max_lines=1, max_chars>=line_chars)`로 통째로 읽는다(16000자 이하일 때).
+  같은 근거 창의 뒷줄은 `omitted_lines`로 남고, 발췌 겹침은 실제로 낸 줄 범위로 판정하므로 그 뒷줄 근거는 두 번째 발췌로 나온다
+  (발췌 자리가 남아 있으면).
+- `duplicates`: 명시적 동일 출처만 묶는다.
+  ① `same_content` — 본문 바이트·**파일명**·파일 소속이 모두 같다(curator 승격과 `_Archive` 보관은 파일명을 유지한다).
+  파일명이 다르면 본문이 같아도(빈 템플릿 결정 등) 서로 다른 문서로 보고, 소속이 다르면 다른 프로젝트 문서로 본다.
+  ② `same_session_id` — 같은 프로젝트·같은 `session_id`의 `10_Worklog/Sessions` 세션 원문과 SessionHandoff Process.
+  Plan·결정 후보는 내용이 달라 묶지 않는다. 대표는 순위가 높은 쪽이다.
+- 묶인 사본도 자기 근거를 남긴다: `{path, reason, source_version, record_tier, status{declared,class},
+  attribution{scope,project}, excerpt_lines}` — `excerpt_lines`는 그 사본 파일에서 근거가 있는 줄 범위다(frontmatter 길이가
+  달라 대표와 줄 번호가 다를 수 있다).
 
 ### 범위: 파일 소속과 블록 소속
 
@@ -114,7 +121,7 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 |---|---|
 | `30_Projects/<dir>/…` | `<dir>`의 Context.md가 선언한 프로젝트 (없으면 폴더명) |
 | `60_Candidates/SessionHandoffs/<P>/…` (`_Archive` 아래 포함) | `<P>` |
-| `20_Knowledge/<P>/…` | `<P>`가 등록 프로젝트일 때만 (curator가 프로젝트 knowledge를 두는 곳). `20_Knowledge/AI/` 같은 주제 폴더는 근거가 아니다 |
+| `20_Knowledge/<P>/…` | `<P>`가 등록 프로젝트(Context.md 또는 SessionHandoffs 폴더 — 프로젝트 식별과 같은 기준)일 때만 (curator가 프로젝트 knowledge를 두는 곳). `20_Knowledge/AI/` 같은 주제 폴더는 근거가 아니다 |
 | frontmatter `project:` | 그 프로젝트 |
 | 경로와 frontmatter가 다르다 | `conflict` (`conflict_with`에 둘 다) |
 | frontmatter `scope: global` | 공통 (memory_patch가 쓰는 값. 출신 프로젝트는 evidence에 남긴다) |
@@ -126,7 +133,8 @@ marker 문서에서는 제목(본문 `# ` 줄에서 얻은 경우)과 인라인 
 
 블록: `40_AgentMemory/` 문서는 `<!-- devtrail-memory-patch: {...} -->` marker로 나눈다(agent_memory_loader·curator·
 update_open_loops가 쓰는 형식). marker 앞은 파일 소속(보통 공통), `{"scope":"project","project":P}` 블록은 P,
-`{"scope":"global"}` 블록은 공통, JSON이 깨졌거나 scope가 그 외면 `unknown` + 경고.
+`{"scope":"global"}` 블록은 공통, JSON이 깨졌거나 scope/project를 해석할 수 없으면 `unknown` + 경고 +
+`invalid_marker: true`. 손상 marker 블록은 필터 집계에서 "근거 없음(`unknown`)"과 구분해 `filtered.blocks.invalid_marker`로 센다.
 블록 경계는 `<!-- devtrail-memory-patch:` 접두로 감지한다 — 닫는 `-->`가 빠진 marker도 경계로 보고 그 블록을 `unknown`으로 둔다
 (경계로 안 보면 그 아래 블록이 앞 블록 소속에 흡수된다). 이 처리는 검색에만 적용된다 — briefing 로더(`agent_memory_loader`)는 바꾸지 않았다.
 
@@ -191,15 +199,21 @@ OpenLoops `## <project>` 블록(marker로 감싸짐). 지원하지 않는 형식
 
 ### cursor
 
-`next_cursor`는 (검색 조건 지문, 일치 문서 목록+각 `source_version`+묶인 중복 출처의 경로·`source_version`의 지문, 다음 offset)을 담는다.
+`next_cursor`는 (검색 조건 지문, 스캔 상태 지문, 다음 offset)을 담는다. 스캔 상태 지문은 **범위 필터를 통과한 모든 문서**
+(일치 여부와 무관 — 묶인 중복 사본 포함)의 경로·`source_version`·상태 class·파일/블록 소속과, 읽기 실패 경로 목록·`partial`로 만든다.
 
 | 상황 | 결과 |
 |---|---|
 | 같은 조건으로 넘김 (`limit`·`max_chars`는 바꿔도 된다) | 다음 페이지 |
 | query·project·include_*·kinds가 다르다 | `cursor_mismatch` |
-| 일치 문서가 늘거나 줄었거나 내용(버전)이 바뀌었다 | `cursor_stale` — 순위가 달라졌을 수 있어 이어 주지 않는다 |
-| 관계없는 문서만 바뀌었다 | 그대로 이어진다 |
-| 해석 불가 | `cursor_invalid` |
+| 범위 안 문서가 늘거나 줄거나 내용(버전)이 바뀌었다 — 일치하지 않는 문서여도 | `cursor_stale` |
+| 내용은 그대로인데 소속(등록부·매핑 변화)이나 상태 class가 바뀌었다 | `cursor_stale` |
+| 앞 페이지는 `partial`(읽기 실패)이었는데 지금은 읽힌다, 또는 반대 | `cursor_stale` |
+| 범위 밖 문서(다른 프로젝트, 금지 prefix)만 바뀌었다 | 그대로 이어진다 |
+| 해석 불가·이전 형식(v1) cursor | `cursor_invalid` |
+
+`project` 없이 vault 전체를 검색하면 모든 허용 prefix 문서가 범위 안이라, 어느 문서가 바뀌어도 `cursor_stale`이다.
+이어 받기가 끊기면 cursor 없이 처음부터 다시 검색한다 — 순위가 바뀌었을 수 있는 페이지를 이어 붙이지 않는 쪽을 택했다.
 
 ## structured 원문 구간 읽기
 
@@ -208,25 +222,30 @@ read_note(rel_path, structured=True,
           start_line=None,        # 기본 1
           max_lines=None,         # 기본 120, 최대 400
           max_chars=None,         # content 기본·최대 16000, 최소 200
-          char_offset=None,       # start_line 줄 안의 시작 문자 위치 (긴 줄 이어 읽기)
           expected_version="")    # 이전 페이지의 source_version
 ```
 
 ```json
 {"ok": true, "path": "10_Worklog/Sessions/x.md", "record_tier": "raw", "source_version": "sha256:…",
  "total_lines": 132, "line_ending": "lf", "frontmatter_lines": [1, 9], "line_basis": "frontmatter 포함 파일 전체, 1부터",
- "start_line": 121, "end_line": 132, "returned_lines": 12, "content": "…", "char_offset": 0,
- "truncated": false, "truncation_reason": null, "line_clip": null, "eof": true, "next": null, "warnings": []}
+ "start_line": 121, "end_line": 132, "returned_lines": 12, "content": "…",
+ "truncated": false, "truncation_reason": null, "long_line": null, "eof": true, "next": null, "warnings": []}
 ```
 
 - frontmatter 경계는 python-frontmatter와 같다: 첫 줄과 닫는 줄이 `-{3,}`(뒤 공백 허용).
 - 줄 기준: frontmatter를 포함한 파일 전체, 1부터. 줄 끝은 `\r\n`·`\n`만 인정한다(`\x0b`·`\u2028` 등은 줄 끝이 아니다).
   파일 끝 줄바꿈 뒤 빈 문자열은 줄이 아니다. 검색 발췌의 `start_line`/`end_line`과 같은 기준이다.
 - `content`의 줄 구분은 항상 `\n`이다(원래 줄 끝은 `line_ending`: lf/crlf/mixed/none). UTF-8 BOM은 content에서 빼고 경고한다.
-- `truncation_reason`: `max_lines`, `max_chars`(다음 줄이 안 들어간다), `long_line`(한 줄이 max_chars보다 길어 앞부분만 줬다 —
-  `line_clip`에 문자 범위, `next.char_offset`으로 같은 줄을 이어 읽는다).
-- `next`가 있으면 `{start_line, char_offset, expected_version}`를 그대로 넘긴다. `next=null`이면 EOF다.
-  한 페이지는 최소 한 줄 또는 한 글자를 소비하므로 `next`를 따라가면 반드시 끝난다.
+- `content`는 **완전한 줄만** 담는다. 줄 중간에서 자르거나 줄 안 문자 위치로 이어 읽는 방식(char_offset)은 쓰지 않는다.
+- `truncation_reason`: `max_lines`, `max_chars`(다음 줄이 남은 자리에 안 들어간다), `line_too_long`(다음 줄 하나가 max_chars보다
+  길다 — 그 앞에서 멈추고 `long_line: {line, line_chars}`로 알린다).
+- `next`가 있으면 `{start_line, expected_version}`를 그대로 넘긴다. `next=null`이면 EOF다.
+- 요청한 첫 줄이 max_chars보다 길면 내용 없이 `ok=false`, `error.code="line_too_long"`이다. `error`에 `line`·`line_chars`·`max_chars`·
+  `readable_with_max_chars`(16000자 이하라 max_chars를 올리면 통째로 읽힌다)·`next`가 있다. **`error.next`는 그 다음 줄**이라
+  같은 줄을 다시 가리키지 않는다(마지막 줄이면 `null`). 16000자보다 긴 줄은 structured로 읽을 수 없고, 전문은 기존
+  `read_note(structured=False)`로 읽는다.
+- 끝남 보장: 성공 페이지는 최소 한 줄을 소비하고(`next.start_line = end_line + 1`), `line_too_long` 결과는 그 줄을 건너뛴다.
+  그래서 `next`/`error.next`를 따라가면 반드시 끝난다 — 무한 이어읽기가 없다.
 - 빈 파일: `ok=true`, `total_lines=0`, `content=""`, `eof=true`, 경고 "빈 파일". 
 
 오류(`ok=false`, `error.code`):
@@ -236,7 +255,8 @@ read_note(rel_path, structured=True,
 | `invalid_argument` | 범위를 벗어난 인자 |
 | `scope_violation` | read_scope 밖, 절대경로, `..`, 실제 경로가 범위 밖인 심볼릭 링크 |
 | `not_found` | 파일 없음 |
-| `out_of_range` | `start_line`이 전체 줄 수를 넘음, `char_offset`이 줄 길이 이상 (빈 성공으로 위장하지 않는다) |
+| `out_of_range` | `start_line`이 전체 줄 수를 넘음 (빈 성공으로 위장하지 않는다) |
+| `line_too_long` | 요청한 첫 줄이 max_chars보다 길다 — 줄을 잘라 주지 않는다. `error.next`로 다음 줄부터 이어 간다 |
 | `version_mismatch` | `expected_version`과 현재 버전이 다르다 — 내용 없이 돌려준다. 처음부터 다시 읽는다 |
 | `read_failed` | 파일 읽기 실패 |
 

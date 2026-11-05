@@ -447,3 +447,18 @@ def test_legacy_mode_rejects_zero_valued_structured_args(vault_env, monkeypatch)
             _call(mod, "read_note", {"rel_path": "20_Knowledge/a.md", **extra})
     with pytest.raises(ToolError, match="structured=True"):
         _call(mod, "search_vault", {"query": "본문", "max_chars": 0})
+
+
+def test_read_note_structured_long_line_through_call_tool(vault_env, monkeypatch):
+    """긴 줄은 MCP 경로에서도 잘리지 않고 line_too_long으로 온다. char_offset은 도구 인자가 아니다."""
+    _note(vault_env, "20_Knowledge/long.md", "첫 줄\n" + "가" * 500 + "\n끝\n")
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    read = mod.mcp._tool_manager.get_tool("read_note").parameters
+    assert "char_offset" not in read["properties"]
+    _, first = _call(mod, "read_note", {"rel_path": "20_Knowledge/long.md", "structured": True, "max_chars": 300})
+    page = first["result"]
+    assert page["content"] == "첫 줄" and page["truncation_reason"] == "line_too_long" and page["next"]["start_line"] == 2
+    _, second = _call(mod, "read_note", {"rel_path": "20_Knowledge/long.md", "structured": True, "max_chars": 300,
+                                         "start_line": 2, "expected_version": page["next"]["expected_version"]})
+    err = second["result"]["error"]
+    assert err["code"] == "line_too_long" and err["line_chars"] == 500 and err["next"]["start_line"] == 3

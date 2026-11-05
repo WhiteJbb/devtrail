@@ -87,6 +87,8 @@ def test_project_search_excludes_common_other_and_unknown(scoped_vault):
     filtered = resp["filtered"]["documents"]
     assert filtered["other_project"] >= 3 and filtered["common"] == 1 and filtered["unknown"] == 1
     assert filtered["conflict"] == 1
+    # 깨진 marker 블록은 "소속 근거 없음"과 구분해 센다
+    assert resp["filtered"]["blocks"] == {"other_project": 1, "common": 2, "invalid_marker": 1}  # common: marker 앞 + global
 
 
 def test_include_common_adds_common_but_never_other_projects(scoped_vault):
@@ -295,10 +297,32 @@ def test_at_most_two_excerpts_of_800_chars(tmp_path):
     resp = _search(tmp_path, "발췌토큰")
     for r in resp["results"]:
         assert len(r["excerpts"]) <= 2
-        assert all(len(e["text"]) <= 800 for e in r["excerpts"])
-    clip = next(r for r in resp["results"] if r["path"].endswith("longline.md"))["excerpts"][0]
-    assert clip["truncated"] and "발췌토큰" in clip["text"]
-    assert clip["line_clip"]["line_chars"] == 6006 and clip["line_clip"]["char_start"] > 0
+        assert all(e["text"] is None or len(e["text"]) <= 800 for e in r["excerpts"])
+    long = next(r for r in resp["results"] if r["path"].endswith("longline.md"))["excerpts"][0]
+    # 800자보다 긴 줄은 잘라 내지 않는다 — 줄 위치·길이만 알리고 text는 없다
+    assert long["truncated"] and long["text"] is None and "line_clip" not in long
+    assert long["line_too_long"] == {"line": 1, "line_chars": 6006} and long["matched_terms"] == ["발췌토큰"]
+
+
+def test_excerpt_text_is_always_whole_source_lines(tmp_path):
+    from app.services.source_reader import read_range
+
+    # 3행·9행은 800자보다 긴 일치 줄 — 첫 발췌는 긴 줄, 둘째 발췌는 뒤에 긴 줄이 붙은 창이다
+    body = "\n".join(
+        (f"줄{i} 완전토큰 " + "나" * (820 if i in (3, 9) else 30)) if i % 3 == 0 else f"채움 {i}" for i in range(1, 40)
+    )
+    _w(tmp_path, "10_Worklog/Sessions/w.md", body + "\n")
+    lines = (tmp_path / "10_Worklog/Sessions/w.md").read_text(encoding="utf-8").split("\n")
+    r = _search(tmp_path, "완전토큰")["results"][0]
+    assert [(e["start_line"], e["end_line"]) for e in r["excerpts"]] == [(3, 3), (6, 8)]
+    assert r["excerpts"][0]["omitted_lines"] == [4, 6] and r["excerpts"][1]["omitted_lines"] == [9, 9]
+    for e in r["excerpts"]:
+        if e["text"] is None:
+            assert e["line_too_long"]["line_chars"] == len(lines[e["start_line"] - 1]) > 800
+            continue
+        assert e["text"] == "\n".join(lines[e["start_line"] - 1:e["end_line"]])
+        page = read_range(tmp_path, r["path"], start_line=e["start_line"], max_lines=e["end_line"] - e["start_line"] + 1)
+        assert page["content"] == e["text"]
 
 
 def test_limit_defaults_and_cursor_paging(tmp_path):
@@ -334,20 +358,46 @@ def test_duplicate_sources_are_collapsed_explicitly(tmp_path):
     _w(tmp_path, "60_Candidates/SessionHandoffs/Alpha/plan.md",
        _fm(project="Alpha", handoff_type="plan", session_id="sess-9") + "중복토큰 Plan 본문\n")
     _w(tmp_path, "10_Worklog/Sessions/sess.md", _fm(project="Alpha", session_id="sess-9", type="session") + "# 세션\n\n중복토큰 Process 본문\n")
-    _w(tmp_path, "20_Knowledge/Alpha/copy-a.md", "같은 본문 중복토큰\n")
-    _w(tmp_path, "30_Projects/Alpha/Plans/copy-b.md", "같은 본문 중복토큰\n")
+    # 승격 사본 — curator는 파일명을 유지한다
+    _w(tmp_path, "60_Candidates/Decisions/copy.md", _fm(project="Alpha", status="candidate") + "같은 본문 중복토큰\n")
+    _w(tmp_path, "30_Projects/Alpha/Decisions/copy.md", _fm(status="accepted") + "같은 본문 중복토큰\n")
     resp = _search(tmp_path, "중복토큰", project="Alpha", limit=20)
     paths = _paths(resp)
     assert "60_Candidates/SessionHandoffs/Alpha/plan.md" in paths  # Plan은 내용이 달라 묶지 않는다
     proc = next(r for r in resp["results"] if r["path"].endswith("proc.md"))
-    assert proc["duplicates"] == [{"path": "10_Worklog/Sessions/sess.md", "reason": "same_session_id",
-                                   "source_version": proc["duplicates"][0]["source_version"]}]
+    dup = proc["duplicates"][0]
+    assert len(proc["duplicates"]) == 1 and dup["path"] == "10_Worklog/Sessions/sess.md" and dup["reason"] == "same_session_id"
+    # 묶인 사본도 자기 근거(줄 위치·등급·상태·소속·버전)를 잃지 않는다
+    assert dup["excerpt_lines"] == [[8, 8]] and dup["record_tier"] == "raw"
+    assert dup["attribution"] == {"scope": "project", "project": "Alpha"} and dup["source_version"].startswith("sha256:")
     assert "10_Worklog/Sessions/sess.md" not in paths
-    copies = [p for p in paths if "copy-" in p]
-    assert len(copies) == 1
+    copies = [p for p in paths if p.endswith("copy.md")]
+    assert copies == ["30_Projects/Alpha/Decisions/copy.md"]  # 같은 그룹이면 정본이 대표
     rep = next(r for r in resp["results"] if r["path"] in copies)
     assert rep["duplicates"][0]["reason"] == "same_content"
+    assert rep["duplicates"][0]["status"] == {"declared": "candidate", "class": "known"}
     assert resp["total_matches"] == len(paths)
+
+
+def test_identical_bodies_of_different_decisions_are_not_hidden(tmp_path):
+    """본문(템플릿)만 같은 서로 다른 결정·다른 프로젝트 문서는 묶지 않는다."""
+    _projects(tmp_path, "Alpha", "Beta")
+    template = "## 결정\n\n결정토큰 (작성 예정)\n"
+    _w(tmp_path, "30_Projects/Alpha/Decisions/2026-10-01 캐시 도입.md", _fm(title="캐시 도입") + template)
+    _w(tmp_path, "30_Projects/Alpha/Decisions/2026-10-02 캐시 제거.md", _fm(title="캐시 제거") + template)
+    _w(tmp_path, "30_Projects/Beta/Decisions/2026-10-01 캐시 도입.md", _fm(title="캐시 도입") + template)
+    alpha = _search(tmp_path, "결정토큰", project="Alpha")
+    assert len(alpha["results"]) == 2 and all("duplicates" not in r for r in alpha["results"])
+    whole = _search(tmp_path, "결정토큰")
+    assert whole["total_matches"] == 3 and all("duplicates" not in r for r in whole["results"])
+
+
+def test_session_rule_does_not_merge_across_projects(tmp_path):
+    _projects(tmp_path, "Alpha", "Beta")
+    _w(tmp_path, "60_Candidates/SessionHandoffs/Alpha/p.md",
+       _fm(project="Alpha", handoff_type="process", session_id="same") + "세션토큰 알파\n")
+    _w(tmp_path, "10_Worklog/Sessions/b.md", _fm(project="Beta", session_id="same") + "세션토큰 베타\n")
+    assert _search(tmp_path, "세션토큰")["total_matches"] == 2
 
 
 # ── 커서·부분 실패·경로 (AC-7) ────────────────────────────────────────────────
@@ -379,10 +429,52 @@ def test_cursor_rejected_when_documents_change(tmp_path):
     assert _search(tmp_path, "커서토큰", limit=3, cursor=first["next_cursor"])["error"]["code"] == "cursor_stale"
 
 
-def test_cursor_survives_unrelated_change(tmp_path):
+def test_cursor_survives_change_outside_scope(tmp_path):
+    _projects(tmp_path, "Alpha", "Beta")
+    for i in range(6):
+        _w(tmp_path, f"30_Projects/Alpha/Plans/p{i}.md", f"커서토큰 {i}\n")
+    first = _search(tmp_path, "커서토큰", project="Alpha", limit=3)
+    _w(tmp_path, "30_Projects/Beta/Plans/x.md", "커서토큰 다른 프로젝트\n")
+    _w(tmp_path, "00_Inbox/x.md", "커서토큰 범위 밖\n")
+    nxt = _search(tmp_path, "커서토큰", project="Alpha", limit=3, cursor=first["next_cursor"])
+    assert nxt["ok"] and nxt["offset"] == 3
+
+
+def test_cursor_stale_when_scanned_set_changes_even_without_new_match(tmp_path):
+    """범위 안 스캔 대상 집합이 바뀌면 이어 주지 않는다 — 일치하지 않는 문서가 늘어도 마찬가지."""
     first = _two_pages(tmp_path)
     _w(tmp_path, "20_Knowledge/unrelated.md", "관계없는 내용\n")
-    assert _search(tmp_path, "커서토큰", limit=3, cursor=first["next_cursor"])["ok"]
+    assert _search(tmp_path, "커서토큰", limit=3, cursor=first["next_cursor"])["error"]["code"] == "cursor_stale"
+
+
+def test_cursor_stale_when_attribution_changes_without_content_change(tmp_path):
+    """내용은 그대로인데 소속 등록부가 바뀌어 문서 소속이 달라지면 cursor_stale."""
+    for i in range(4):
+        _w(tmp_path, f"20_Knowledge/Gamma/g{i}.md", f"소속토큰 {i}\n")
+    first = _search(tmp_path, "소속토큰", limit=2)
+    assert first["results"][0]["attribution"]["scope"] == "unknown"
+    (tmp_path / "60_Candidates/SessionHandoffs/Gamma").mkdir(parents=True)  # 빈 폴더 — 문서는 늘지 않는다
+    again = _search(tmp_path, "소속토큰", limit=2)
+    assert again["results"][0]["attribution"]["project"] == "Gamma"
+    assert _search(tmp_path, "소속토큰", limit=2, cursor=first["next_cursor"])["error"]["code"] == "cursor_stale"
+
+
+def test_cursor_stale_when_partial_scan_recovers(tmp_path, monkeypatch):
+    for i in range(4):
+        _w(tmp_path, f"20_Knowledge/k{i}.md", f"회복토큰 {i}\n")
+    _w(tmp_path, "20_Knowledge/z-broken.md", "다른 내용\n")
+    real = evidence_search.read_source_text
+
+    def flaky(path):
+        if path.name == "z-broken.md":
+            raise PermissionError(13, "Permission denied")
+        return real(path)
+
+    monkeypatch.setattr(evidence_search, "read_source_text", flaky)
+    first = _search(tmp_path, "회복토큰", limit=2)
+    assert first["partial"] and first["total_matches"] is None and first["next_cursor"]
+    monkeypatch.setattr(evidence_search, "read_source_text", real)
+    assert _search(tmp_path, "회복토큰", limit=2, cursor=first["next_cursor"])["error"]["code"] == "cursor_stale"
 
 
 @pytest.mark.parametrize("cursor", ["!!!", "eyJ2Ijo5fQ"])
@@ -479,7 +571,7 @@ def test_budget_holds_with_huge_title_and_many_duplicates(tmp_path):
     assert resp["ok"] and len(json.dumps(resp, ensure_ascii=False)) <= 3000
     assert len(resp["results"][0]["title"]) <= 200
     for i in range(200):
-        _w(tmp_path, f"20_Knowledge/dup{i:03d}.md", "중복예산 같은 본문\n")
+        _w(tmp_path, f"20_Knowledge/d{i:03d}/dup.md", "중복예산 같은 본문\n")  # 같은 파일명 사본
     resp = _search(tmp_path, "중복예산")
     assert resp["ok"] and len(json.dumps(resp, ensure_ascii=False)) <= 12000
     assert len(resp["results"][0]["duplicates"]) == 10 and resp["results"][0]["duplicates_omitted"] == 189
@@ -577,11 +669,12 @@ def test_long_query_is_rejected(tmp_path):
 
 
 def test_long_first_line_keeps_following_evidence(tmp_path):
-    """긴 첫 줄을 800자로 자르면 같은 창의 뒷줄 근거가 사라지면 안 된다 — 생략 범위를 남기고 두 번째 발췌로 보존한다."""
+    """긴 첫 줄(800자 초과)은 text 없이 line_too_long으로 알리고, 같은 창의 뒷줄 근거는 생략 범위로 남겨 두 번째 발췌로 보존한다."""
     _w(tmp_path, "10_Worklog/Sessions/s.md", "앞" * 2000 + " 긴줄토큰 " + "뒤" * 2000 + "\n두번째 줄 후속토큰 근거\n")
     r = _search(tmp_path, "긴줄토큰 후속토큰")["results"][0]
     first, second = r["excerpts"]
-    assert first["start_line"] == 1 and first["line_clip"] and first["omitted_lines"] == [2, 2]
+    assert first["start_line"] == 1 and first["text"] is None and first["omitted_lines"] == [2, 2]
+    assert first["line_too_long"] == {"line": 1, "line_chars": 4006}
     assert (second["start_line"], second["end_line"]) == (2, 2) and "후속토큰" in second["text"]
 
 

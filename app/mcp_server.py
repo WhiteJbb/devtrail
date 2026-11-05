@@ -186,7 +186,6 @@ def read_note(
     start_line: int | None = None,
     max_lines: int | None = None,
     max_chars: int | None = None,
-    char_offset: int | None = None,
     expected_version: str = "",
 ) -> str | dict:
     """search_vault·get_*가 돌려준 rel_path의 전문을 읽는다. briefing 발췌가 잘려 있으면 이걸로 본다.
@@ -195,20 +194,21 @@ def read_note(
     10_Worklog/, 50_Outputs/, 70_Tasks/.
 
     structured=True: 줄 구간 읽기. 줄 번호는 frontmatter 포함 파일 전체 기준(검색 발췌와 같다).
-    start_line 기본 1, max_lines 기본 120·최대 400, max_chars 기본·최대 16000. 응답의 next가 있으면
-    그 start_line·char_offset·expected_version을 그대로 넘겨 이어 읽는다. next=None이면 끝(eof).
+    start_line 기본 1, max_lines 기본 120·최대 400, max_chars 기본·최대 16000. content는 완전한 줄만 담는다.
+    응답의 next가 있으면 그 start_line·expected_version을 그대로 넘겨 이어 읽는다. next=None이면 끝(eof).
+    한 줄이 max_chars보다 길면 error.code=line_too_long(줄을 자르지 않는다, error.next는 다음 줄).
     파일이 바뀌면 error.code=version_mismatch — 처음부터 다시 읽는다.
     """
     _touch_session_marker()
     if not structured:
         _reject_structured_only(
             "read_note", start_line=start_line, max_lines=max_lines, max_chars=max_chars,
-            char_offset=char_offset, expected_version=expected_version,
+            expected_version=expected_version,
         )
         return vault_tools.read_note(rel_path, settings=get_settings())
     return vault_tools.read_source(
         rel_path, start_line=start_line, max_lines=max_lines, max_chars=max_chars,
-        char_offset=char_offset, expected_version=expected_version, settings=get_settings(),
+        expected_version=expected_version, settings=get_settings(),
     )
 
 

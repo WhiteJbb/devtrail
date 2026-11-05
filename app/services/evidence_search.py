@@ -57,7 +57,7 @@ _DUPLICATES_CAP = 10
 _TITLE_MAX_CHARS = 200
 _BLOCKS_CAP = 10  # attribution.blocks — marker가 수백 개인 문서도 결과 크기가 무한히 커지지 않게
 _EVIDENCE_MAX_CHARS = 160  # marker JSON의 project 값처럼 문서에서 온 문자열은 길이 상한을 둔다
-_CURSOR_VERSION = 1
+_CURSOR_VERSION = 2  # 2: cursor가 범위 안 스캔 대상 전체·소속·읽기 실패를 묶는다
 
 # 코드가 실제로 쓰는 status 값 (2026-11-05 조사 — docs/evidence-search.md "상태 값 근거").
 # 이 목록은 "알려진 값"일 뿐 유효성 인증이 아니다.
@@ -115,6 +115,11 @@ class _Unit:
     project: str = ""
     evidence: list[str] = field(default_factory=list)
     conflict_with: list[str] = field(default_factory=list)
+    invalid_marker: bool = False  # marker가 깨졌거나 scope를 해석할 수 없다 — "근거 없음"과 다른 unknown
+
+    def signature(self) -> list:
+        return [self.start, self.end, self.scope, self.project.casefold(), sorted(c.casefold() for c in self.conflict_with),
+                self.invalid_marker]
 
 
 @dataclass
@@ -213,7 +218,8 @@ def _path_project(rel: str, reg: ProjectRegistry) -> tuple[str, str] | None:
         return reg.canonical_name(folder), f"path:{'/'.join(parts[:handoff_at + 1])}/"
     # curator는 프로젝트 knowledge를 20_Knowledge/<P>/에 둔다. 등록된 프로젝트 폴더일 때만 근거로 쓴다
     # (20_Knowledge/AI/ 같은 주제 폴더를 프로젝트로 오인하지 않게).
-    if parts[0] == "20_Knowledge" and len(parts) >= 3 and parts[1].casefold() in reg.canonical:
+    # 등록 기준은 프로젝트 식별과 같다(Context.md 또는 SessionHandoffs 폴더).
+    if parts[0] == "20_Knowledge" and len(parts) >= 3 and reg.is_known(parts[1]):
         return reg.canonical_name(parts[1]), f"path:20_Knowledge/{parts[1]}/"
     return None
 
@@ -269,17 +275,17 @@ def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: 
             data = None
         if not isinstance(data, dict):
             warnings.append(f"{line_no}행 marker를 해석하지 못해 그 블록 소속을 unknown으로 둡니다.")
-            units.append(_Unit(line_no, end, "unknown", "", [f"marker:{line_no}행 해석 실패"]))
+            units.append(_Unit(line_no, end, "unknown", "", [f"marker:{line_no}행 해석 실패"], invalid_marker=True))
             continue
         scope = str(data.get("scope") or "").strip().casefold()
         project = str(data.get("project") or "").strip()
-        if scope == "project" and project:
+        if scope == "project" and project and isinstance(data.get("project"), str):
             units.append(_Unit(line_no, end, "project", reg.canonical_name(project), [f"marker:{line_no}행 project={project}"]))
         elif scope == "global":
             units.append(_Unit(line_no, end, "common", "", [f"marker:{line_no}행 scope=global"]))
         else:
-            warnings.append(f"{line_no}행 marker의 scope가 project/global이 아니라 unknown으로 둡니다.")
-            units.append(_Unit(line_no, end, "unknown", "", [f"marker:{line_no}행 scope={scope or '없음'}"]))
+            warnings.append(f"{line_no}행 marker의 scope/project를 해석할 수 없어(scope는 project+문자열 project 또는 global) unknown으로 둡니다.")
+            units.append(_Unit(line_no, end, "unknown", "", [f"marker:{line_no}행 scope={scope or '없음'}"], invalid_marker=True))
     return units
 
 
@@ -462,7 +468,9 @@ class SearchScope:
             if self.include_unattributed and key in {c.casefold() for c in unit.conflict_with}:
                 return ""
             return "conflict"
-        return "" if self.include_unattributed else "unknown"
+        if self.include_unattributed:
+            return ""
+        return "invalid_marker" if unit.invalid_marker else "unknown"
 
 
 def _filter(docs: list[_Doc], scope: SearchScope) -> tuple[list[tuple[_Doc, list[_Unit]]], dict[str, dict[str, int]]]:
@@ -619,16 +627,12 @@ def _render_excerpt(doc: _Doc, body, line_hits, start: int, end: int, tokens: li
         kept_terms = sorted({t for t in terms if any(t in s.lower() for s in texts)}, key=tokens.index)
         return {"start_line": first_no, "end_line": kept_last, "text": "\n".join(texts),
                 "matched_terms": kept_terms, "truncated": True, "omitted_lines": [kept_last + 1, last_no]}
-    # 한 줄이 상한보다 길다 — 첫 일치 위치 주변만 자르고 문자 위치를 남긴다 (read_note char_offset으로 이어 읽기)
+    # 첫 줄 하나가 상한보다 길다 — 줄 일부를 근거처럼 내지 않는다(완전한 줄 단위). 위치·길이만 알리고
+    # 원문은 read_note(structured=True, start_line=그 줄, max_chars>=line_chars)로 통째로 읽는다.
     line = texts[0]
-    low = line.lower()
-    pos = min((low.find(t) for t in terms if low.find(t) >= 0), default=0)
-    char_start = max(0, min(pos - EXCERPT_MAX_CHARS // 4, len(line) - EXCERPT_MAX_CHARS))
-    char_end = char_start + EXCERPT_MAX_CHARS
-    piece = line[char_start:char_end]
-    kept_terms = sorted({t for t in terms if t in piece.lower()}, key=tokens.index)
-    out = {"start_line": first_no, "end_line": first_no, "text": piece, "matched_terms": kept_terms,
-           "truncated": True, "line_clip": {"line": first_no, "char_start": char_start, "char_end": char_end, "line_chars": len(line)}}
+    kept_terms = sorted({t for t in terms if t in line.lower()}, key=tokens.index)
+    out = {"start_line": first_no, "end_line": first_no, "text": None, "matched_terms": kept_terms,
+           "truncated": True, "line_too_long": {"line": first_no, "line_chars": len(line)}}
     if last_no > first_no:
         out["omitted_lines"] = [first_no + 1, last_no]  # 같은 창의 뒷줄 근거 — 다음 발췌나 read_note로 본다
     return out
@@ -637,34 +641,48 @@ def _render_excerpt(doc: _Doc, body, line_hits, start: int, end: int, tokens: li
 # ── 중복 출처 ────────────────────────────────────────────────────────────────
 
 
-def _dup_keys(doc: _Doc) -> list[tuple[str, str]]:
-    """명시적 동일 출처 키. 같은 키를 가진 문서는 대표 하나만 결과로 낸다.
+def _dup_keys(doc: _Doc) -> list[tuple[str, ...]]:
+    """명시적 동일 출처 키. 같은 키를 가진 문서는 대표 하나만 결과로 내고 나머지는 duplicates에 근거째 남긴다.
 
-    - content: 본문 바이트가 같다 (복사·승격 사본)
-    - session: 같은 session_id의 세션 원문(10_Worklog/Sessions)과 Process handoff —
-      write_session_process가 같은 내용을 두 곳에 쓴다. Plan은 내용이 달라 묶지 않는다.
+    - same_content: 본문 바이트·파일명·소속(파일 단위)이 모두 같다 — curator 승격·_Archive 보관은 파일명을
+      유지하므로 사본은 이 키가 같다. 파일명이 다르면 본문이 같아도(빈 템플릿 결정 등) 다른 문서로 본다 —
+      서로 다른 결정을 한 건으로 숨기지 않기 위해서다. 소속이 다르면 다른 프로젝트의 문서다.
+    - same_session_id: 같은 프로젝트·session_id의 세션 원문(10_Worklog/Sessions)과 Process handoff —
+      write_session_process가 같은 내용을 두 곳에 쓴다. Plan·결정 후보는 내용이 달라 묶지 않는다.
     """
-    keys: list[tuple[str, str]] = []
+    keys: list[tuple[str, ...]] = []
+    fu = doc.file_unit
+    owner = (fu.scope, fu.project.casefold(), "|".join(sorted(c.casefold() for c in fu.conflict_with)))
     body = "\n".join(doc.source.lines[doc.source.body_start_line - 1:]).strip()
     if body:
-        keys.append(("same_content", hashlib.sha256(body.encode("utf-8")).hexdigest()))
+        keys.append(("same_content", hashlib.sha256(body.encode("utf-8")).hexdigest(), Path(doc.rel).name.casefold(), *owner))
     session_id = _str_meta(doc.meta, "session_id") or ""
-    if session_id:
+    if session_id and fu.scope == "project":
         handoff = (_str_meta(doc.meta, "handoff_type") or "").casefold()
         if doc.kind == "session_log" or (doc.kind == "session_handoff" and handoff == "process"):
-            keys.append(("same_session_id", session_id))
+            keys.append(("same_session_id", session_id, fu.project.casefold()))
     return keys
 
 
+def _duplicate_entry(item: _Scored, reason: str) -> dict:
+    """묶인 사본도 자기 근거(위치·버전·등급·상태·소속·발췌 줄)를 남긴다 — 대표만 보고 사본의 상태를 오인하지 않게."""
+    doc = item.doc
+    return {
+        "path": doc.rel, "reason": reason, "source_version": doc.source.version, "record_tier": doc.tier,
+        "status": {"declared": doc.status_declared, "class": doc.status_class},
+        "attribution": {"scope": doc.file_unit.scope, "project": _clip(doc.file_unit.project, _EVIDENCE_MAX_CHARS)},
+        "excerpt_lines": [[e["start_line"], e["end_line"]] for e in item.excerpts],
+    }
+
+
 def _collapse_duplicates(ranked: list[_Scored]) -> list[_Scored]:
-    owner: dict[tuple[str, str], _Scored] = {}
+    owner: dict[tuple[str, ...], _Scored] = {}
     out: list[_Scored] = []
     for item in ranked:
         keys = _dup_keys(item.doc)
-        rep = next((owner[k] for k in keys if k in owner), None)
-        if rep is not None:
-            reason = next(k[0] for k in keys if k in owner)
-            rep.duplicates.append({"path": item.doc.rel, "reason": reason, "source_version": item.doc.source.version})
+        hit = next((k for k in keys if k in owner), None)
+        if hit is not None:
+            owner[hit].duplicates.append(_duplicate_entry(item, hit[0]))
             continue
         for k in keys:
             owner.setdefault(k, item)
@@ -677,6 +695,20 @@ def _collapse_duplicates(ranked: list[_Scored]) -> list[_Scored]:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+
+def _corpus_digest(kept: list[tuple[_Doc, list[_Unit]]], scan: "_Scan") -> str:
+    """cursor가 묶는 스캔 상태 — 범위 필터를 통과한 **모든** 문서(일치 여부와 무관)의 경로·내용 버전·
+    상태 class·파일/블록 소속, 그리고 읽기 실패 목록.
+
+    일치 문서만 묶으면 범위 안 다른 문서가 새로 일치하게 되는 변화는 잡지만, 소속 등록부(Context.md·매핑)나
+    상태 분류만 바뀐 경우와 앞 페이지가 partial이었다가 회복된 경우를 놓친다. 범위 밖(다른 프로젝트 등) 문서의
+    변화는 넣지 않는다 — 그 문서가 범위 안으로 들어오면 이 목록 자체가 바뀐다.
+    """
+    docs = [[d.rel, d.source.version, d.status_class, d.file_unit.signature(), [u.signature() for u in units]]
+            for d, units in kept]
+    failed = sorted(w.get("path", "") for w in scan.warnings if w.get("code") == "read_failed")
+    return _digest({"docs": docs, "failed": failed, "partial": scan.partial})
 
 
 def _encode_cursor(fingerprint: str, corpus: str, offset: int) -> str:
@@ -710,7 +742,8 @@ def _attribution_dict(doc: _Doc, units: list[_Unit], blocks_cap: int = _BLOCKS_C
     if doc.has_markers:
         shown = units[:blocks_cap]
         out["blocks"] = [
-            {"lines": [u.start, u.end], "scope": u.scope, "project": _clip(u.project, _EVIDENCE_MAX_CHARS), "evidence": _ev(u.evidence)}
+            {"lines": [u.start, u.end], "scope": u.scope, "project": _clip(u.project, _EVIDENCE_MAX_CHARS), "evidence": _ev(u.evidence),
+             **({"invalid_marker": True} if u.invalid_marker else {})}
             for u in shown
         ]
         if len(units) > len(shown):
@@ -861,9 +894,7 @@ def search(
 
     fingerprint = _digest({"q": " ".join(query.split()), "p": resolved_project.casefold(), "c": include_common,
                            "u": include_unattributed, "h": include_history, "k": list(wanted_kinds)})
-    # 묶인 중복 출처의 내용 버전까지 넣는다 — 사본만 바뀌어도 이어 받던 페이지와 응답이 달라진다
-    corpus = _digest([[r.doc.rel, r.doc.source.version, [[d["path"], d["source_version"]] for d in r.duplicates]]
-                      for r in ranked])
+    corpus = _corpus_digest(kept, scan)
     offset = 0
     if cursor_data is not None:
         if cursor_data.get("f") != fingerprint:

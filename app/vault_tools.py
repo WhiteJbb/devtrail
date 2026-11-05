@@ -411,14 +411,13 @@ def read_source(
     start_line: int | None = None,
     max_lines: int | None = None,
     max_chars: int | None = None,
-    char_offset: int | None = None,
     expected_version: str = "",
     settings: Settings | None = None,
 ) -> dict:
     """structured 원문 구간 읽기 — 줄 기준은 검색 발췌와 같다 (frontmatter 포함 파일 전체, 1부터)."""
     return source_reader.read_range(
         _vault_dir(settings), rel_path, start_line=start_line, max_lines=max_lines,
-        max_chars=max_chars, char_offset=char_offset, expected_version=expected_version,
+        max_chars=max_chars, expected_version=expected_version,
     )
 
 
