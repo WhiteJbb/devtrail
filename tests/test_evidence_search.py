@@ -854,3 +854,30 @@ def test_promotion_and_archive_copies_are_merged_with_their_evidence(tmp_path):
     # 사본마다 frontmatter 길이가 달라 근거 줄도 자기 파일 기준이다 (대표는 9행)
     assert resp["results"][0]["excerpts"][0]["start_line"] == 9
     assert all(d["reason"] == "same_content" and d["excerpt_lines"] == [[8, 8]] for d in dups.values())
+
+
+@pytest.mark.parametrize("raw_project", ["123", "2026-10-01", "[a, b]", "true", "1.5"])
+def test_non_string_context_project_identifies_and_attributes_the_same(tmp_path, raw_project):
+    """리뷰 재현: 숫자·날짜 등 문자열이 아닌 project는 식별(폴더명으로 등록)과 소속 판정(근거에서 뺌)이 같은 규칙이다 —
+    project="Alpha" 검색에서 자기 Context.md가 'Alpha와 123의 conflict'로 빠지지 않는다."""
+    _w(tmp_path, "30_Projects/Alpha/Context.md", f"---\nproject: {raw_project}\n---\n# Alpha\n\n타입토큰 배경\n")
+    _w(tmp_path, "30_Projects/Alpha/Plans/p.md", f"---\nproject: {raw_project}\n---\n타입토큰 계획\n")
+    res = vault_tools.resolve_project_identity("Alpha", settings=_settings(tmp_path))
+    assert (res.status, res.project, res.method) == ("resolved", "Alpha", "canonical")
+    assert any("문자열이 아니라" in w for w in res.warnings)
+    resp = _search(tmp_path, "타입토큰", project="Alpha")
+    assert sorted(_paths(resp)) == ["30_Projects/Alpha/Context.md", "30_Projects/Alpha/Plans/p.md"]
+    assert "conflict" not in resp["filtered"]["documents"]
+    for r in resp["results"]:
+        assert r["attribution"] == {"scope": "project", "project": "Alpha", "evidence": ["path:30_Projects/Alpha/"]}
+        assert any("문자열이 아니라 소속 근거로 쓰지 않았습니다" in w for w in r["warnings"])
+
+
+def test_non_string_project_alone_is_not_an_attribution(tmp_path):
+    """경로 근거 없이 숫자 project만 있으면 '123' 프로젝트로 귀속하지 않는다 — 소속 불명이다."""
+    _w(tmp_path, "30_Projects/123/Context.md", "---\nproject: '123'\n---\n# 123\n")
+    _w(tmp_path, "10_Worklog/Sessions/x.md", "---\nproject: 123\n---\n숫자토큰 세션\n")
+    whole = _search(tmp_path, "숫자토큰")
+    assert whole["results"][0]["attribution"]["scope"] == "unknown"
+    scoped = _search(tmp_path, "숫자토큰", project="123")
+    assert scoped["ok"] and scoped["results"] == [] and scoped["filtered"]["documents"] == {"unknown": 1}

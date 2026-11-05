@@ -30,7 +30,7 @@ from typing import Any
 
 import yaml
 
-from app.services.project_identity import ProjectRegistry, ProjectResolution, load_registry, resolve_project
+from app.services.project_identity import ProjectRegistry, ProjectResolution, load_registry, project_field, resolve_project
 from app.services.vault_source import (
     ALLOWED_READ_PREFIXES,
     SourceText,
@@ -252,8 +252,9 @@ def _path_project(rel: str, reg: ProjectRegistry) -> tuple[list[str], str] | Non
 def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warnings: list[str]) -> _Unit:
     evidence: list[str] = []
     path_hit = _path_project(rel, reg)
-    meta_project = _str_meta(meta, "project")
-    if meta_project == "" and "project" in meta and meta["project"] not in ("", None):
+    # 식별(Context.md 등록부)과 같은 규칙 — 숫자·날짜 project는 "123" 같은 이름으로 바꾸지 않고 근거에서 뺀다
+    meta_project, unsupported = project_field(meta)
+    if unsupported:
         warnings.append("frontmatter project가 문자열이 아니라 소속 근거로 쓰지 않았습니다.")
     meta_cands = _name_candidates(reg, meta_project) if meta_project else []
     meta_evidence = _with_candidates(f"meta:project={meta_project}", meta_project, meta_cands) if meta_project else ""
@@ -309,8 +310,8 @@ def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: 
             units.append(_Unit(line_no, end, "unknown", "", [f"marker:{line_no}행 해석 실패"], invalid_marker=True))
             continue
         scope = str(data.get("scope") or "").strip().casefold()
-        project = str(data.get("project") or "").strip()
-        if scope == "project" and project and isinstance(data.get("project"), str):
+        project, _ = project_field(data)  # 문자열이 아닌 project는 빈 값 — 아래에서 해석 불가 marker가 된다
+        if scope == "project" and project:
             cands = _name_candidates(reg, project)
             units.append(_decide(line_no, end, cands, [_with_candidates(f"marker:{line_no}행 project={project}", project, cands)]))
         elif scope == "global":

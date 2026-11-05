@@ -32,6 +32,25 @@ _GIT_URL_RE = re.compile(r"^\s*url\s*=\s*(\S+)\s*$")
 _DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
+def project_field(mapping: object) -> tuple[str, bool]:
+    """frontmatter·marker JSON·.claude/vault.json의 `project` 값을 읽는 **유일한** 규칙 — 식별과 소속 판정이 같이 쓴다.
+
+    문자열만 프로젝트 이름으로 인정한다. 반환은 (이름, 형식 미지원 여부):
+    - 키가 없거나 None·빈 문자열 → ("", False)
+    - 문자열 → (앞뒤 공백을 뺀 값, False)
+    - 숫자·날짜·목록·불리언 등 → ("", True) — 근거로 쓰지 않는다(호출 측이 경고를 남긴다)
+    한쪽은 숫자를 버리고 다른 쪽은 "123"으로 바꾸면, 식별로 확정한 프로젝트가 자기 Context.md를 충돌로 잃는다.
+    """
+    if not isinstance(mapping, dict):
+        return "", False
+    value = mapping.get("project")
+    if value is None:
+        return "", False
+    if isinstance(value, str):
+        return value.strip(), False
+    return "", True
+
+
 @dataclass(frozen=True)
 class ProjectResolution:
     """식별 결과. status가 resolved일 때만 project를 검색 범위로 쓴다."""
@@ -115,9 +134,8 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
             name = ctx_path.parent.name
             try:
                 meta = frontmatter.loads(ctx_path.read_text(encoding="utf-8")).metadata
-                value = meta.get("project") if isinstance(meta, dict) else None
-                declared = value.strip() if isinstance(value, str) else ""
-                if value not in (None, "") and not isinstance(value, str):
+                declared, unsupported = project_field(meta)
+                if unsupported:
                     reg.warnings.append(f"{rel}: frontmatter project가 문자열이 아니라 폴더명으로 식별합니다.")
             except Exception:
                 declared = ""
@@ -254,7 +272,10 @@ def _local_mapping(repo_dir: Path) -> tuple[str, str]:
         return "", ".claude/vault.json을 해석하지 못했습니다."
     if not isinstance(data, dict):
         return "", ".claude/vault.json이 객체가 아닙니다."
-    return str(data.get("project") or "").strip(), ""
+    project, unsupported = project_field(data)
+    if unsupported:
+        return "", ".claude/vault.json의 project가 문자열이 아니라 식별 근거로 쓰지 않았습니다."
+    return project, ""
 
 
 def _resolve_name(reg: ProjectRegistry, name: str) -> tuple[str, list[str], set[str]]:

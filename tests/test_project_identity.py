@@ -265,3 +265,25 @@ def test_non_string_context_project_falls_back_to_folder(tmp_path):
     res = resolve_project(vault, "Alpha")
     assert res.status == "resolved" and res.project == "Alpha"
     assert any("문자열이 아니라" in w for w in res.warnings)
+
+
+def test_non_string_vault_json_project_is_not_evidence(tmp_path):
+    vault = tmp_path / "vault"
+    _ctx(vault, "123", "'123'")
+    repo = tmp_path / "repos" / "r"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "vault.json").write_text('{"project": 123}', encoding="utf-8")
+    res = resolve_project(vault, str(repo))
+    assert res.status == "unresolved" and any("문자열이 아니라" in w for w in res.warnings)
+
+
+def test_project_field_rule():
+    from datetime import date
+
+    from app.services.project_identity import project_field
+
+    assert project_field({"project": " Alpha "}) == ("Alpha", False)
+    assert project_field({}) == ("", False) and project_field({"project": None}) == ("", False)
+    assert project_field({"project": ""}) == ("", False) and project_field("x") == ("", False)
+    for value in (123, 1.5, True, date(2026, 10, 1), ["a"], {"a": 1}):
+        assert project_field({"project": value}) == ("", True)
