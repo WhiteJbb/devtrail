@@ -123,3 +123,130 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 | 페이지 일관성·partial·경로 탈출·금지 prefix·링크 | cursor 테스트 6종, 링크 테스트(검색·읽기·등록부) | 통과 |
 | 최종 리뷰 차단 문제 해결·검사 근거 | 이 문서 | 1차 정확성 지적 5건·2차 2건·병합 차단 2건·2번째 병합 차단 1건 반영, 정리 지적 3건은 사유와 함께 보류 |
 | 평가 Vault 실측·문서·범위 밖 무변경 | `evidence-search.md` 평가 표, `git diff --stat` | 사용자 vault·운영 설정·브리핑·쓰기 코드 변경 없음 |
+
+---
+
+# 2026-11-06 — 권한·매핑 인코딩·손상 marker로 검색 전체가 멈추던 문제, 예산 테스트 경로
+
+[`evidence-search.md`](./evidence-search.md) "권한 오류·손상 입력"의 검증 기록. 이번에는 Pyodide가 아니라 **네이티브 CPython**으로 돌렸다.
+
+## 검증 환경
+
+| 항목 | 내용 |
+|---|---|
+| Python | CPython 3.11.2 (GCC 12.2.0), 프로젝트 venv(`venv/bin/python`) |
+| 플랫폼 | `Linux-7.0.14-orbstack-00380-ga7e0a2dc9535-aarch64-with-glibc2.36` (컨테이너), 실행 사용자 uid 501(비 root) |
+| 대체 | 없음 — Pyodide·`fcntl` 대체·프로세스 생성 대체를 쓰지 않았다 |
+| 못 돌린 것 | **macOS(개발 트리) 실행**. macOS의 실제 권한 의미·경로 한도(PATH_MAX 1024바이트)에서 통과하는지는 확인하지 않았다 |
+
+## 수정 전 재현 (`88288b4`, 같은 venv)
+
+| 결함 | 재현 | 수정 전 결과 |
+|---|---|---|
+| SessionHandoffs 폴더 모드 000 | 실제 chmod | `load_registry`의 `iterdir()`에서 `PermissionError` — 검색 전체 예외 |
+| SessionHandoffs 폴더 모드 r--(실행 권한 없음) | 실제 chmod | 하위 폴더 `is_dir()`에서 `PermissionError` |
+| `30_Projects/Secret` 모드 r-- | 실제 chmod | 등록부 glob은 경고 없이 Secret을 뺐고, 스캔의 `is_symlink()`가 `PermissionError` |
+| `30_Projects/Secret` 모드 000 | 실제 chmod | 예외는 없지만 등록부가 경고 없이 Secret을 뺐다(불완전성이 응답에 안 보임) |
+| cp949 매핑 파일 | 실제 파일 | `UnicodeDecodeError` 전파 (MCP `call_tool`에서는 `ToolError`) |
+| marker `{"scope":"project","project":"\ud800"}` | 실제 파일 | `project` 없는 검색에서 `_digest`(cursor 지문)가 `UnicodeEncodeError` |
+| 예산 테스트 | 코드 확인 | 상대 경로만 2천 자 — macOS PATH_MAX(1024바이트)를 넘어 파일 생성 단계에서 실패하는 구조(Linux는 4096이라 통과) |
+
+## 테스트 결과
+
+실행 명령(전체): `venv/bin/python -m pytest -q -p no:cacheprovider -rfEs`
+등록 검사: 위 명령 + `--deselect tests/test_session_markers.py::test_ancestor_pids_starts_with_self_and_includes_parent --deselect tests/test_session_markers.py::test_marker_for_current_session_picks_own_among_concurrent --deselect tests/test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process`
+
+| 시점 | 전체 | 등록 검사 |
+|---|---|---|
+| 수정 전 baseline (`88288b4`) | 673 passed, 3 failed, 0 skipped | 673 passed, 3 deselected |
+| 수정 후 | 698 passed, 3 failed, 0 skipped | 698 passed, 3 deselected |
+
+실패 3건은 두 시점이 같다(새 실패 0건): `test_ancestor_pids_starts_with_self_and_includes_parent`,
+`test_marker_for_current_session_picks_own_among_concurrent`, `test_get_recent_sessions_groups_plan_and_process` — 이 컨테이너 환경
+실패로 등록 검사에서 deselect한 목록과 같다. 늘어난 25건은 아래 새 테스트다. 실제 chmod 테스트는 root에서만 skip되며 이번에는 실행됐다(skip 0).
+
+### 회귀 테스트가 결함을 실제로 잡는지
+
+수정 전 코드(`git archive 88288b4`)에 현재 테스트를 얹어 돌렸다: **새 테스트 25건 모두 실패**, 기존 테스트는 모두 통과.
+(아래 표의 20건 + 리뷰 반영 5건. 그중 `test_context_path_that_is_not_readable_as_file_keeps_folder_fallback`은 수정 전과 같은 동작을 지키는
+보호 테스트라 새 속성 `unreadable`이 없어서만 실패한다.)
+
+| 테스트 | 수정 전 실패 내용 |
+|---|---|
+| `test_registry_folder_permission_error_does_not_abort_search` ×4 (SessionHandoffs 000·r--, 프로젝트 폴더 000·r--) | `PermissionError` 3건, 등록부 경고 없음 1건 (000 프로젝트 폴더) |
+| `test_docs_under_unconfirmed_registry_folder_are_not_attributed` | `PermissionError` |
+| `test_cursor_stale_when_registry_folder_recovers` | `PermissionError` |
+| `test_real_chmod_registry_folders_do_not_abort_search` (실제 chmod) | `PermissionError` |
+| `test_non_utf8_project_map_is_ignored_and_search_continues` | `UnicodeDecodeError` |
+| `test_marker_with_lone_surrogate_is_a_corrupt_marker` ×4 | `UnicodeEncodeError` 3건, `scope=global`+손상 project가 손상 marker로 안 잡힘 1건 |
+| `test_frontmatter_project_with_lone_surrogate_is_not_evidence` | `UnicodeEncodeError` |
+| `test_project_identity.py` 새 6건 | `UnicodeDecodeError` 2건(매핑·`.claude/vault.json`), `PermissionError` 1건, 손상 project가 이름으로 쓰임 1건, 새 API(`project_field_issue`·`unreadable`) 없음 2건 |
+| `test_mcp_server.py::test_search_vault_structured_survives_corrupt_marker_and_non_utf8_map` | `ToolError`(UnicodeDecodeError) |
+
+`test_budget_never_returns_oversized_success`는 고쳐 쓴 테스트라 수정 전 코드에서도 통과한다(코드 결함이 아니라 테스트 이식성 문제였다).
+
+### 권한 재현 방식
+
+- 결정적 재현: `tests/conftest.py`의 `DenyAccess`가 `os.scandir`·`os.listdir`·`os.stat`·`os.lstat`에서 POSIX 의미대로 EACCES를 낸다
+  (000 폴더는 목록·하위 stat 거부, r-- 폴더는 하위 stat·목록 거부). root·플랫폼과 무관하고, 구현이 glob·iterdir·walk 중 무엇을 쓰든 이 호출을
+  거친다. 각 테스트는 `deny_access.hits`로 거부가 실제로 일어났는지 확인한다.
+- 실제 권한: `test_real_chmod_registry_folders_do_not_abort_search`가 실제 chmod(000, 0o444)로 같은 결과를 확인한다. root에서는 skip.
+
+### 예산 테스트 이식성
+
+경로 길이 대신 응답 고정부를 문서화된 입력 상한(project 선언명 300자, 질의 단어 32개)으로 채웠다. 상대 경로 426자로 `budget_too_small`
+(`needed_chars` 3266 > 3000)이 나고, 짧은 경로 대조군은 압축형으로 성공(2875자 ≤ 3000)한다 — 경계 양쪽에서 성공 응답이 상한을 넘지 않는다.
+여유 있는 예산 사례(30건·`limit=20`)는 그대로 두고 `stopped_by="budget"` 확인을 더했다. 파일을 만들기 전에 절대 경로 < 1024바이트,
+경로 각 부분 ≤ 255바이트를 테스트 안에서 단언한다 — 이 컨테이너의 tmp_path로 확인했고 macOS tmp_path(`/private/var/folders/…`, 보통 100자 안팎)
+에서도 여유가 있을 것으로 보지만 **macOS에서 실행하지는 않았다**.
+
+### 호환성
+
+- 평가 Vault(`python -m tests.evidence_eval`)를 네이티브로 다시 돌렸다: 7개 사례의 순위·근거 적중·호출 수·응답 문자 수·타 프로젝트 수가
+  2026-11-05 표와 같다(ms만 다르다 — 측정 환경이 wasm에서 네이티브로 바뀌었다).
+- 기존 검색·읽기·식별·MCP 테스트(범위 필터·상태·예산·cursor·링크·legacy A/B 포함)는 수정 없이 모두 통과한다. 기존 테스트에서 바꾼 것은
+  예산 테스트 하나다(위).
+- 응답 형태: 새 경고 코드 `registry_unreadable`(`path` 포함, 경고 목록 맨 앞)과 새 소속 evidence `registry_unreadable:<경로>`가 생겼다.
+  필드 추가·삭제는 없다. `partial`은 등록부 미확인일 때도 켜진다.
+- 의미가 바뀐 기존 동작 하나: Context.md를 **권한 등 OSError로 읽지 못하면** 전에는 폴더명으로 등록했고 지금은 등록하지 않는다.
+  선언명이 폴더명과 다를 수 있어 권한 오류로 소속을 잘못 확정하지 않으려는 것이다. 형식 오류(YAML)는 전처럼 폴더명으로 식별한다.
+
+### 비밀값 검사
+
+`git diff`에 API 키·토큰·비밀번호 패턴(`api_key`, `sk-…`, `ghp_…`, `xox?-`, `AKIA…`, private key 헤더 등) 검색 — 일치 없음.
+테스트 fixture는 합성 문자열뿐이고 `.env`는 저장소에 없다.
+
+### 리뷰 반영 테스트 (수정 전 코드에서 실패)
+
+| 테스트 | 수정 전 실패 내용 |
+|---|---|
+| `test_knowledge_folder_hidden_by_unreadable_registry_is_not_attributed` ×2 | `PermissionError` |
+| `test_real_chmod_unreadable_context_file_does_not_attribute` (실제 chmod) | Context.md 000이면 폴더명 Secret으로 등록돼 `project="Secret"`이 확정됐다 |
+| `test_map_with_lone_surrogates_is_ignored_without_encode_error` | `UnicodeEncodeError` |
+| `test_context_path_that_is_not_readable_as_file_keeps_folder_fallback` | 보호 테스트(위 설명) |
+
+## 최종 리뷰 (독립 리뷰, 이번 변경분 `88288b4..작업 트리`)
+
+변경 내용을 모르는 리뷰어에게 diff만 주고 정확성·예외 누출·범위 확대·surrogate 경로·테스트 약화를 보게 했다. 리뷰어가 수정 전 코드와
+같은 스크립트로 비교해 재현했고, 새 테스트 20건이 수정 전 코드에서 모두 실패함과 기존 단언이 약해지지 않았음을 따로 확인했다.
+
+| # | 지적 | 판단 | 조치 |
+|---|---|---|---|
+| F1 | 등록부가 못 읽은 폴더 때문에 `20_Knowledge/<P>/` 경로 근거가 사라지면, `project: Alpha` 선언만으로 Alpha로 확정된다(정상이면 conflict) | 확인함 — 계약의 "권한 오류로 소속을 잘못 확정하지 않는다"에 어긋난다 | `ProjectRegistry.may_hide` — P가 못 읽은 등록부 경로에 가려졌을 수 있으면 선언이 있는 그 문서를 `unknown`으로 둔다. 회귀 테스트 2건 |
+| F2 | 못 읽은 폴더가 같은 이름을 선언했으면 `ambiguous`였을 이름이 `resolved`가 된다 | 확인함 — 수정 전 코드도 같다 | **보류(정책 판단).** 막으려면 등록부 일부만 못 읽어도 모든 이름 식별을 거부해야 해서 "정상 등록부의 검색은 계속"과 부딪친다. `partial`·`registry_unreadable`로 알리고 "알려진 한계"에 남겼다 |
+| F3 | UTF-8로 정상인 매핑의 JSON 이스케이프 surrogate(이름·별칭)가 커서 지문에서 `UnicodeEncodeError` | 확인함 — 수정 전 코드도 같다. 손상 문자열이 지문·직렬화를 멈추게 하는 3번 결함과 같은 부류 | 매핑의 손상 이름·목록을 경고 후 무시. 회귀 테스트 |
+| F4 | 사용자가 넘긴 repo 경로 자체가 권한 때문에 안 보이면 `PermissionError`가 검색 밖으로 나온다 | 확인함 — 수정 전 코드도 같다. 등록부·스캔이 아니라 입력 경로 | 범위 밖으로 남기고 "알려진 한계"에 적었다 |
+| F5 | 인자 `query`/`project`에 surrogate가 있으면 지문에서 멈춘다 | MCP JSON 파서(pydantic_core)가 그런 값을 거부해 MCP로는 들어오지 않는다 | 조치 없음 |
+| F6 | Context.md가 폴더 같은 권한 외 OSError도 등록부 미확인이 되어 검색이 계속 `partial`이 된다 | 확인함 — 의도보다 넓다 | 미확인 처리는 `PermissionError`만. 그 밖의 읽기 실패는 전처럼 폴더명 식별. 보호 테스트 |
+| 기타 | `DenyAccess.stat` 모드(파일 하나만 stat 실패)는 실제 POSIX에서는 생기지 않는 조합이다 | 맞다 — 등록부 확인과 스캔 읽기 결과가 엇갈리는 경우(경합)를 결정적으로 만드는 용도다 | 현실적인 경우(Context.md 000)는 실제 chmod 테스트를 더해 확인했다 |
+
+## 수용 기준별 결과 (2026-11-06)
+
+| 기준 | 확인 방법 | 결과 |
+|---|---|---|
+| 등록부 폴더·하위 폴더 순회 PermissionError | `DenyAccess` 결정적 테스트 4종 + 소속 미추측·cursor·20_Knowledge 테스트, 실제 chmod 테스트 2건 | 통과. 검색은 계속, `registry_unreadable`·`partial`, 정상 프로젝트 결과 유지, 못 읽은 프로젝트는 `project_unresolved` |
+| UTF-8이 아닌 매핑 | 식별·검색·MCP `call_tool` 테스트 | 통과. 경고 후 무시, canonical 유지, 잘못 읽은 별칭 미사용 |
+| marker lone surrogate | marker 4종·frontmatter·`.claude/vault.json`·매핑·MCP 테스트, UTF-8 인코딩 직렬화 확인 | 통과. 손상 marker, 정상 한글 이름 유지, 타 프로젝트 블록 미노출 |
+| 예산 테스트 이식성 | 경로 길이 단언 포함 재작성, 짧은 경로 대조군 | 이 컨테이너에서 통과. **macOS에서는 실행하지 않음** |
+| 네이티브 Python 전체 실행 | CPython 3.11.2 venv, baseline 비교 | 673 → 698 passed, 실패 3건 동일, skip 0 |
+| 호환성·문서·재검사·비밀값·리뷰 | 평가 Vault 재실행, 기존 테스트 무수정 통과, 이 문서 | 순위·근거·분량 동일. 비밀값 일치 없음. 리뷰 F1·F3·F6 반영, F2 정책 보류, F4·F5 범위 밖 |

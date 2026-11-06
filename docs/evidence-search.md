@@ -97,6 +97,8 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 ```
 
 - `total_matches`: 범위 안 일치 문서 수(중복 출처를 묶은 뒤). **스캔이 불완전하면(`partial=true`) `null`** — 모르는 수를 만들지 않는다.
+  `partial`은 파일·폴더 읽기 실패(`read_failed`)뿐 아니라 프로젝트 등록부 일부를 확인하지 못했을 때(`registry_unreadable`)도 켜진다 —
+  아래 "권한 오류·손상 입력".
 - `filtered`: 점수화 전에 범위 밖이라 뺀 문서·블록 수(이유별). 0건일 때 범위를 넓힐지는 이 값을 보고 호출자가 정한다.
 - `excerpts[].text`는 언제나 **완전한 원문 줄**이다(줄 중간을 자르지 않는다). 800자에 맞추려고 뒷줄을 덜었으면
   `truncated: true`와 `omitted_lines`가 붙는다.
@@ -125,7 +127,7 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 
 | 근거 | 판정 |
 |---|---|
-| `30_Projects/<dir>/…` | `<dir>`의 Context.md가 선언한 프로젝트 (없으면 폴더명) |
+| `30_Projects/<dir>/…` | `<dir>`의 Context.md가 선언한 프로젝트 (없으면 폴더명). 등록부가 그 폴더나 Context.md를 권한 등으로 읽지 못했으면 `unknown`(evidence `registry_unreadable:<경로>`) — 폴더명·frontmatter로 추측하지 않는다 |
 | `60_Candidates/SessionHandoffs/<P>/…` (`_Archive` 아래 포함) | `<P>` |
 | `20_Knowledge/<P>/…` | `<P>`가 등록 프로젝트(Context.md 또는 SessionHandoffs 폴더 — 프로젝트 식별과 같은 기준)일 때만 (curator가 프로젝트 knowledge를 두는 곳). `20_Knowledge/AI/` 같은 주제 폴더는 근거가 아니다 |
 | frontmatter `project:` | 그 프로젝트. **문자열만** 근거다 — 숫자·날짜·목록·불리언(`project: 123`, `project: 2026-10-01`)은 이름으로 바꾸지 않고 근거에서 빼며 경고를 남긴다. Context.md 등록부·`.claude/vault.json`·marker도 같은 함수(`project_field`)로 읽어, 식별과 소속 판정이 같은 값을 본다(그래서 `project: 123`인 `30_Projects/Alpha/Context.md`는 식별에서도 소속에서도 Alpha다). 값은 식별과 **같은 근거·같은 순서로만** 정규화한다 — 등록 표기 → SessionHandoffs 폴더 → 매핑 별칭(가리키는 프로젝트가 하나일 때만). 식별이 인정하지 않는 이름(예: 선언명과 다른 30_Projects 폴더명)은 바꾸지 않는다 — 식별로 확정한 프로젝트가 자기 문서를 다른 프로젝트로 판정하지 않게. 정규화했으면 evidence가 `meta:project=dt→Devtrail` 꼴이다. marker의 `project`도 같다 |
@@ -141,7 +143,8 @@ marker 문서에서는 제목(본문 `# ` 줄에서 얻은 경우)과 인라인 
 블록: `40_AgentMemory/` 문서는 `<!-- devtrail-memory-patch: {...} -->` marker로 나눈다(agent_memory_loader·curator·
 update_open_loops가 쓰는 형식). marker 앞은 파일 소속(보통 공통), `{"scope":"project","project":P}` 블록은 P,
 `{"scope":"global"}` 블록은 공통, JSON이 깨졌거나 scope/project를 해석할 수 없으면 `unknown` + 경고 +
-`invalid_marker: true`. 손상 marker 블록은 필터 집계에서 "근거 없음(`unknown`)"과 구분해 `filtered.blocks.invalid_marker`로 센다.
+`invalid_marker: true`. JSON 이스케이프로 짝 없는 surrogate(`"\ud800"` 등)가 scope나 project에 들어 있어도 scope와 무관하게
+손상 marker다 — curator의 `json.dumps`는 그런 값을 만들지 않으므로 marker가 손상된 것이고, 값은 근거·경고 문자열에 싣지 않는다. 손상 marker 블록은 필터 집계에서 "근거 없음(`unknown`)"과 구분해 `filtered.blocks.invalid_marker`로 센다.
 블록 경계는 `<!-- devtrail-memory-patch:` 접두로 감지한다 — 닫는 `-->`가 빠진 marker도 경계로 보고 그 블록을 `unknown`으로 둔다
 (경계로 안 보면 그 아래 블록이 앞 블록 소속에 흡수된다). 이 처리는 검색에만 적용된다 — briefing 로더(`agent_memory_loader`)는 바꾸지 않았다.
 
@@ -219,6 +222,7 @@ OpenLoops `## <project>` 블록(marker로 감싸짐). 지원하지 않는 형식
 | 범위 안 문서가 늘거나 줄거나 내용(버전)이 바뀌었다 — 일치하지 않는 문서여도 | `cursor_stale` |
 | 내용은 그대로인데 소속(등록부·매핑 변화)이나 상태 class가 바뀌었다 | `cursor_stale` |
 | 앞 페이지는 `partial`(읽기 실패)이었는데 지금은 읽힌다, 또는 반대 | `cursor_stale` |
+| 등록부에서 확인하지 못한 경로(`registry_unreadable`)가 바뀌었다 (권한 회복 등) | `cursor_stale` |
 | 범위 밖 문서(다른 프로젝트, 금지 prefix)만 바뀌었다 | 그대로 이어진다 |
 | 해석 불가·이전 형식(v1) cursor | `cursor_invalid` |
 
@@ -283,7 +287,7 @@ read_note(rel_path, structured=True,
 |---|---|
 | structured 검색 | 링크된 디렉터리는 따라가지 않고(`symlink_dir_skipped`), 링크 파일은 읽지 않는다(`outside_scope_link` / `symlink_file_skipped` — 대상이 범위 안이면 대상 경로로 검색된다). 숨김 폴더도 보지 않는다 |
 | legacy 검색 | `WikiService.search(path_filter=…)`로 파일을 열기 전에 거른다. 금지 prefix·vault 밖 대상은 읽지도 않고, 허용 prefix 안 대상(숨김 폴더 포함)은 전처럼 검색된다. 읽을 수 없는 파일(깨진 링크 등)은 건너뛴다 — 전에는 검색 전체가 예외로 멈췄다 |
-| 프로젝트 등록부 | Context.md·SessionHandoffs 폴더가 링크면 읽지 않고 경고만 남긴다 |
+| 프로젝트 등록부 | Context.md·SessionHandoffs 폴더가 링크면 읽지 않고 경고만 남긴다. 권한 오류는 아래 "권한 오류·손상 입력" |
 | structured·legacy 읽기 | 범위 밖 실제 경로는 거부. 기존 `read_note`처럼 숨김 폴더 안 파일은 읽는다 |
 
 ## 프로젝트 식별
@@ -326,7 +330,26 @@ DEVTRAIL_PROJECT_MAP=/path/to/project-map.json
 ```
 
 식별 전용이다 — 프로젝트 상태·설명·목록을 여기에 복제하지 않고, 외부와 동기화하지 않는다. 파일이 없거나 깨지면
-경고만 남기고 canonical 식별은 계속된다.
+경고만 남기고 canonical 식별은 계속된다. UTF-8이 아닌 매핑 파일(cp949 등)도 다른 인코딩으로 추정해 읽지 않고 같은 방식으로 무시한다
+(`.claude/vault.json`도 같다).
+
+## 권한 오류·손상 입력 (2026-11-06)
+
+vault 일부가 손상되거나 권한이 없어도 structured 검색 전체가 예외로 멈추지 않는다. 대신 무엇을 못 봤는지 응답에 남기고,
+못 본 부분 때문에 범위를 넓히거나 소속을 추측하지 않는다. 예외를 삼켜 빈 성공으로 돌려주지 않는다.
+
+| 입력 | 전 동작 | 지금 |
+|---|---|---|
+| 등록부 폴더(`30_Projects/<P>/`, `60_Candidates/SessionHandoffs/`와 그 하위)를 목록·stat 할 수 없다 (모드 000, 실행 권한 없는 r-- 등) | SessionHandoffs는 `PermissionError`로 검색 전체 중단. 30_Projects는 glob이 경고 없이 등록부에서 뺐다(3.11) | 그 경로만 등록부에서 빼고 `warnings`에 `{"code":"registry_unreadable","path":…}`, `partial=true`, `total_matches=null`. 그 경로 아래 문서는 소속 `unknown`(위 표). 그 경로의 프로젝트 이름은 식별되지 않아 `project_unresolved`로 거부된다 |
+| `30_Projects/<P>/Context.md`를 읽을 수 없다 (권한) | 폴더명으로 등록 | 위와 같다 — 선언명이 폴더명과 다를 수 있어 폴더명으로 등록하지 않는다. 권한이 아닌 읽기 실패(Context.md가 폴더 등)와 frontmatter **형식** 오류는 전처럼 폴더명으로 식별한다 |
+| `20_Knowledge/<P>/` 문서가 `project:`를 선언했는데, P가 등록부에 없는 이유가 못 읽은 등록부 경로일 수 있다 | (등록부 미확인 개념 없음) | `unknown`. 정상이면 경로와 선언이 충돌(`conflict`)했을 문서가 선언 프로젝트 검색에 들어오지 않게 한다. 30_Projects 아래 폴더를 못 읽으면 그 선언명을 모르므로 어떤 P든 해당한다. 선언이 없는 문서(`scope: global` 등)는 그대로 |
+| 스캔 중 폴더·파일 stat이 실패한다 (실행 권한 없는 폴더 안 파일 등) | `is_symlink()`의 `PermissionError`로 중단 | 그 경로만 `read_failed`, `partial=true`. 링크인지 모르는 폴더는 따라 들어가지 않는다 |
+| 식별 매핑 파일·`.claude/vault.json`이 UTF-8이 아니다 | `UnicodeDecodeError` 전파 | 경고(`registry` / `project_resolution`) 후 무시. canonical·handoff·remote 식별은 계속된다 |
+| 매핑 파일은 UTF-8인데 JSON 이스케이프로 짝 없는 surrogate가 든 프로젝트 이름·`aliases`·`repos` | 그 값이 소속 후보가 되어 커서 지문에서 `UnicodeEncodeError` | 그 프로젝트 항목(이름이 손상) 또는 그 목록 전체(값 하나가 손상)를 경고 후 무시 |
+| marker JSON의 scope/project에 짝 없는 surrogate | 그 값이 블록 소속이 되어 커서 지문에서 `UnicodeEncodeError` | 손상 marker(`unknown`, `invalid_marker`) + 경고. 값은 응답에 싣지 않는다 |
+| frontmatter·`.claude/vault.json`의 `project`에 짝 없는 surrogate | 그 값이 소속·식별 이름이 됐다 | `project_field`가 형식 미지원으로 본다 — 숫자 `project`와 같은 규칙(근거에서 빼고 경고) |
+
+`registry_unreadable` 경고는 경고 목록 맨 앞에 온다(경고 20개 상한에 밀리지 않게). 남은 한계는 아래 "알려진 한계".
 
 ## 평가 (고정 평가 Vault, 이전/새 방식 비교)
 
@@ -362,6 +385,21 @@ legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 기능 �
 - 격리: legacy는 rpg-game-web 질의 상위 5에 Devtrail 문서 2개가 섞였고 정답은 밖이었다. structured는 0개.
 - 문자 수: 짧은 문서에서는 structured 응답이 더 길다(범위·필터·발췌·버전 메타데이터, 1.9~3.9천 자). 긴 원문을 전문으로 읽어야 하던 사례(80행 세션)에서만 줄었다. 상한 12000자 안이다.
 - 시간: 같은 환경에서 structured가 사례당 0.7~1.3배(사례별 ms는 1회 측정이라 흔들린다 — 앞선 측정들에서는 0.7~1.5배), 1000문서 규모에서 약 1.05배 느리다(파일마다 버전 해시·줄 단위 창 계산).
+
+## 테스트 결과 (2026-11-06, 네이티브 CPython)
+
+권한·인코딩·손상 marker 수정과 예산 테스트 경로 단축 뒤, **네이티브 CPython 3.11.2(Linux aarch64 컨테이너, glibc 2.36)**의 프로젝트 venv로
+`python -m pytest`를 돌렸다. Pyodide·`fcntl` 대체는 쓰지 않았다. macOS에서는 돌리지 않았다.
+
+| 시점 | 결과 |
+|---|---|
+| 수정 전(`88288b4`) | 673 passed, 3 failed |
+| 수정 후 | 698 passed, 3 failed — 실패 목록이 같다(새 실패 0건), skip 0건 |
+
+같은 실패 3건(이 컨테이너 환경 — 등록 검사에서도 deselect한다): `test_session_markers.py`의
+`test_ancestor_pids_starts_with_self_and_includes_parent`·`test_marker_for_current_session_picks_own_among_concurrent`,
+`test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process`. 새 테스트 25건은 수정 전 코드에서 모두 실패한다(보호 테스트 1건은 새 API가 없어서).
+상세는 [`evidence-search-verification.md`](./evidence-search-verification.md) "2026-11-06".
 
 ## 테스트 결과 (2026-11-05)
 
@@ -407,3 +445,15 @@ mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위�
 - 별칭이 다른 프로젝트 이름과 겹치는 매핑을 두면, 그 이름만 선언한 문서는 양쪽 프로젝트 검색 기본값에서 모두 빠진다(`conflict`).
   매핑을 고치거나 `include_unattributed=True`로 본다.
 - `get_project_briefing`, `get_recent_sessions` 등 다른 도구의 프로젝트 판정은 바꾸지 않았다 (briefing은 여전히 basename 매칭을 쓴다).
+- 등록부에서 읽지 못한 폴더가 이미 등록된 이름과 **같은 이름**을 선언했는지는 알 수 없다. 그 경우 원래는 `ambiguous`였을 이름이
+  `resolved`로 나올 수 있다 — `partial=true`와 `registry_unreadable` 경고로 알릴 뿐 판정하지 못한다. 등록부 일부를 못 읽었다고
+  모든 프로젝트 검색을 거부하면 정상 프로젝트 검색까지 막혀서 이쪽을 택했다.
+- 권한 회귀 테스트의 결정적 재현은 OS 호출(`os.scandir`·`os.listdir`·`os.stat`·`os.lstat`)을 가로채는 대역(`tests/conftest.py`
+  `DenyAccess`)이다. 실제 chmod 테스트도 하나 있지만 root에서는 skip된다(root는 디렉터리 권한을 무시한다). macOS 실제 권한·경로 한도에서는
+  돌려 보지 않았다 — 예산 테스트는 경로를 만들기 전에 절대 경로 1024바이트·이름 255바이트 미만을 테스트 안에서 확인한다.
+- 이번 범위 밖으로 남긴 것: ⓪ `project`에 사용자가 넘긴 repo 디렉터리 경로 자체를 권한 때문에 볼 수 없으면 식별 단계의 `PermissionError`가
+  검색 밖으로 올라간다(등록부·스캔이 아니라 입력 경로다). ① structured `read_note`가 실행 권한 없는 폴더 안 파일을 읽으면 `PermissionError`가 그대로 올라간다(검색은
+  아니고 그 호출 하나만 실패한다). ② libyaml 없이 설치된 PyYAML(순수 Python 로더)은 frontmatter `"\ud800"`을 받아들인다 — `project`는
+  위 규칙으로 막지만 `title` 등 다른 값에 들어 있으면 검색이 여전히 `UnicodeEncodeError`로 멈춘다. libyaml 로더(이 venv 기본)는 그런
+  frontmatter를 해석 실패로 보고 본문으로 읽으므로 이 문제가 없다. ③ Linux에서 UTF-8이 아닌 바이트가 든 파일·폴더 이름은 surrogateescape
+  문자열이 되어 같은 인코딩 오류를 낼 수 있다(macOS APFS는 그런 이름을 만들지 않는다).
