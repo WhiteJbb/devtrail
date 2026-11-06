@@ -298,6 +298,9 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 
 ### 프로젝트 근거 검색 (`structured=True`)
 
+새 인자가 도구 목록에 보이지 않으면 [실제 stdio 검증과 모아 연결 확인 절차](docs/mcp-search-connection.md)를 따른다.
+서버 실행 경로·클라이언트 재발견을 구분하며 기존 읽기 전용 allowlist를 유지한다.
+
 기존 호출(`search_vault(query, limit)` → 리스트, `read_note(rel_path)` → 전문)은 그대로이고, `structured=True`를
 줄 때만 새 계약이 나온다. 입력·출력·분량 상한·오류 코드·한계는 [`docs/evidence-search.md`](docs/evidence-search.md).
 
