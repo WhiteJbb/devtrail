@@ -650,17 +650,54 @@ def test_budget_holds_for_document_with_hundreds_of_marker_blocks(tmp_path):
     assert small["ok"] and len(json.dumps(small, ensure_ascii=False)) <= 3000 and small["returned"] == 1
 
 
+# macOS의 절대 경로 상한(PATH_MAX 1024바이트)·이름 상한(NAME_MAX 255바이트). Linux(4096)에서만 통과하는 경로를 만들지 않는다
+_PORTABLE_PATH_BYTES = 1024
+_PORTABLE_NAME_BYTES = 255
+
+
+def _portable_w(vault: Path, rel: str, text: str) -> Path:
+    path = vault / rel
+    raw = os.fsencode(path)
+    assert len(raw) < _PORTABLE_PATH_BYTES, f"절대 경로 {len(raw)}바이트 — macOS PATH_MAX를 넘는다"
+    assert all(len(os.fsencode(part)) <= _PORTABLE_NAME_BYTES for part in path.parts)
+    return _w(vault, rel, text)
+
+
 def test_budget_never_returns_oversized_success(tmp_path):
-    _projects(tmp_path, "Alpha")
-    deep = "30_Projects/Alpha/Plans/" + "/".join(["a" * 200] * 10) + "/n.md"  # 경로만 2천 자가 넘는다
-    _w(tmp_path, deep, "경로예산 본문\n")
-    tight = _search(tmp_path, "경로예산", project="Alpha", max_chars=3000)
+    """압축형 1건 + 고정부도 max_chars에 안 들어가면 넘는 응답을 성공으로 내지 않는다 (budget_too_small).
+
+    전에는 상대 경로만 2천 자를 넘겨 이 상황을 만들었는데, macOS 절대 경로 상한(1024바이트)을 넘어 파일을 만들지
+    못했다. 경로 대신 응답 고정부를 문서화된 입력 상한까지 채운다 — project 300자(선언명)·질의 단어 32개. 그러면
+    tmp_path를 더해도 상한 안인 경로(상대 약 430자)로 같은 분기를 탄다. 짧은 경로 대조군으로 경계 양쪽을 함께 본다.
+    """
+    name = "Budget" + "P" * (evidence_search.MAX_QUERY_CHARS - 6)
+    query = " ".join(f"경로예산{i:02d}" for i in range(evidence_search.MAX_QUERY_TOKENS))
+    assert len(name) <= evidence_search.MAX_QUERY_CHARS and len(query) <= evidence_search.MAX_QUERY_CHARS
+
+    def vault(sub: str, rel: str) -> Path:
+        v = tmp_path / sub
+        _portable_w(v, "30_Projects/B/Context.md", _fm(project=name) + "# B\n")
+        _portable_w(v, rel, query + "\n")
+        return v
+
+    # 대조군: 짧은 경로는 압축형으로 줄여서라도 성공하고, 그 응답도 상한 안이다
+    short = _search(vault("s", "30_Projects/B/Plans/n.md"), query, project=name, max_chars=3000)
+    assert short["ok"] and short["results"][0].get("compacted") and short["budget"]["used_chars"] <= 3000
+    assert len(json.dumps(short, ensure_ascii=False)) <= 3000
+
+    long_rel = "30_Projects/B/Plans/" + "a" * 200 + "/" + "b" * 200 + "/n.md"  # 상대 426자
+    tight = _search(vault("l", long_rel), query, project=name, max_chars=3000)
     assert not tight["ok"] and tight["error"]["code"] == "budget_too_small"  # 넘는 응답을 성공으로 내지 않는다
+    assert tight["error"]["needed_chars"] > 3000
     assert len(json.dumps(tight, ensure_ascii=False)) <= 3000
+
+    roomy_vault = tmp_path / "r"
+    _projects(roomy_vault, "Alpha")
     for i in range(30):
-        _w(tmp_path, f"30_Projects/Alpha/Plans/{'b' * 200}{i:02d}/x/{'c' * 200}.md", f"경로예산 {i}\n")
-    roomy = _search(tmp_path, "경로예산", project="Alpha", limit=20)
+        _portable_w(roomy_vault, f"30_Projects/Alpha/Plans/{'b' * 200}{i:02d}/x/{'c' * 200}.md", f"경로예산 {i}\n")
+    roomy = _search(roomy_vault, "경로예산", project="Alpha", limit=20)
     assert roomy["ok"] and len(json.dumps(roomy, ensure_ascii=False)) <= 12000 and roomy["has_more"]
+    assert roomy["budget"]["stopped_by"] == "budget"
 
 
 def test_long_query_is_rejected(tmp_path):
@@ -881,3 +918,236 @@ def test_non_string_project_alone_is_not_an_attribution(tmp_path):
     assert whole["results"][0]["attribution"]["scope"] == "unknown"
     scoped = _search(tmp_path, "숫자토큰", project="123")
     assert scoped["ok"] and scoped["results"] == [] and scoped["filtered"]["documents"] == {"unknown": 1}
+
+
+# ── 권한·인코딩·손상 marker 회귀 (2026-11-06) ──────────────────────────────────
+
+
+def _perm_vault(vault: Path) -> None:
+    _projects(vault, "Alpha")
+    _w(vault, "30_Projects/Alpha/Decisions/d.md", _fm(status="accepted") + "권한토큰 알파 결정\n")
+    # 폴더명(Secret)과 선언명(Hidden)이 다르다 — 등록부가 못 읽으면 어느 이름인지 모른다
+    _w(vault, "30_Projects/Secret/Context.md", _fm(project="Hidden") + "# Secret\n\n권한토큰 비밀\n")
+    _w(vault, "30_Projects/Secret/Plans/p.md", _fm(project="Alpha") + "권한토큰 비밀 계획\n")
+    _w(vault, "60_Candidates/SessionHandoffs/Alpha/h.md", _fm(project="Alpha") + "권한토큰 알파 세션\n")
+    _w(vault, "60_Candidates/SessionHandoffs/Beta/h.md", _fm(project="Beta") + "권한토큰 베타 세션\n")
+
+
+_ALPHA_OWN = {"30_Projects/Alpha/Decisions/d.md"}
+_ALPHA_HANDOFF = "60_Candidates/SessionHandoffs/Alpha/h.md"
+
+
+@pytest.mark.parametrize(("mode", "rel", "unreadable", "hidden_project"), [
+    ("none", "60_Candidates/SessionHandoffs", ["60_Candidates/SessionHandoffs/"], "Beta"),
+    ("no_exec", "60_Candidates/SessionHandoffs",
+     ["60_Candidates/SessionHandoffs/Alpha/", "60_Candidates/SessionHandoffs/Beta/"], "Beta"),
+    ("none", "30_Projects/Secret", ["30_Projects/Secret/"], "Hidden"),
+    ("no_exec", "30_Projects/Secret", ["30_Projects/Secret/"], "Hidden"),
+])
+def test_registry_folder_permission_error_does_not_abort_search(tmp_path, deny_access, mode, rel, unreadable, hidden_project):
+    """등록부 폴더(30_Projects/<P>, SessionHandoffs와 그 하위)의 순회가 PermissionError를 내도 검색 전체가 멈추지 않는다.
+
+    수정 전: SessionHandoffs의 iterdir/is_dir와 스캔의 is_symlink가 PermissionError를 그대로 올려 검색이 예외로 끝났고,
+    30_Projects/<P>는 glob이 경고 없이 등록부에서 빼 소속 불완전성이 드러나지 않았다.
+    """
+    _perm_vault(tmp_path)
+    getattr(deny_access, mode)(rel)
+    resp = _search(tmp_path, "권한토큰", project="Alpha", limit=20)
+    assert deny_access.hits, "PermissionError가 실제로 재현되지 않았다"
+    assert resp["ok"], resp
+    expected = set(_ALPHA_OWN) | (set() if "SessionHandoffs" in rel else {_ALPHA_HANDOFF})
+    assert set(_paths(resp)) == expected  # 정상 프로젝트 문서는 계속 검색된다
+    assert resp["partial"] is True and resp["total_matches"] is None
+    flagged = [w for w in resp["warnings"] if w["code"] == "registry_unreadable"]
+    assert [w["path"] for w in flagged] == unreadable
+    json.dumps(resp, ensure_ascii=False).encode("utf-8")
+    # 못 읽은 등록부의 프로젝트는 확정하지 않는다 — 범위를 넓혀 대신 검색하지도 않는다
+    hidden = _search(tmp_path, "권한토큰", project=hidden_project)
+    assert not hidden["ok"] and hidden["error"]["code"] == "project_unresolved"
+    whole = _search(tmp_path, "권한토큰", limit=20)
+    assert whole["ok"] and whole["partial"] is True
+
+
+def test_docs_under_unconfirmed_registry_folder_are_not_attributed(tmp_path, deny_access):
+    """등록부가 Context.md를 확인하지 못한 폴더의 문서는 폴더명·frontmatter로 소속을 추측하지 않는다(unknown)."""
+    _perm_vault(tmp_path)
+    deny_access.stat("30_Projects/Secret/Context.md")
+    whole = _search(tmp_path, "권한토큰", limit=20)
+    assert deny_access.hits and whole["ok"]
+    by_path = {r["path"]: r for r in whole["results"]}
+    plan = by_path["30_Projects/Secret/Plans/p.md"]  # 문서 자체는 읽힌다
+    assert plan["attribution"] == {"scope": "unknown", "project": "", "evidence": ["registry_unreadable:30_Projects/Secret/"]}
+    assert any("소속을 확정하지 않습니다" in w for w in plan["warnings"])
+    assert {"code": "read_failed", "path": "30_Projects/Secret/Context.md"}.items() <= next(
+        w for w in whole["warnings"] if w.get("path") == "30_Projects/Secret/Context.md").items()
+    scoped = _search(tmp_path, "권한토큰", project="Alpha", limit=20)
+    assert "30_Projects/Secret/Plans/p.md" not in _paths(scoped)  # frontmatter project=Alpha여도 Alpha로 넣지 않는다
+    assert scoped["filtered"]["documents"].get("unknown") == 1
+    opted = _search(tmp_path, "권한토큰", project="Alpha", include_unattributed=True, limit=20)
+    assert {r["path"]: r["attribution"]["scope"] for r in opted["results"]}["30_Projects/Secret/Plans/p.md"] == "unknown"
+
+
+def test_cursor_stale_when_registry_folder_recovers(tmp_path, deny_access):
+    _perm_vault(tmp_path)
+    deny_access.no_exec("30_Projects/Secret")
+    first = _search(tmp_path, "권한토큰", project="Alpha", limit=1)
+    assert first["ok"] and first["next_cursor"]
+    deny_access.clear()
+    again = _search(tmp_path, "권한토큰", project="Alpha", limit=1, cursor=first["next_cursor"])
+    assert again["error"]["code"] == "cursor_stale"
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="root는 디렉터리 권한을 무시한다 — 결정적 재현은 DenyAccess 테스트가 맡는다")
+def test_real_chmod_registry_folders_do_not_abort_search(tmp_path):
+    """실제 파일 권한으로도 같은지 — SessionHandoffs 000, 30_Projects/Secret r--(실행 권한 없음)."""
+    _perm_vault(tmp_path)
+    handoffs, secret = tmp_path / "60_Candidates/SessionHandoffs", tmp_path / "30_Projects/Secret"
+    os.chmod(handoffs, 0)
+    os.chmod(secret, 0o444)
+    try:
+        resp = _search(tmp_path, "권한토큰", project="Alpha", limit=20)
+        whole = _search(tmp_path, "권한토큰", limit=20)
+    finally:
+        os.chmod(handoffs, 0o755)
+        os.chmod(secret, 0o755)
+    assert resp["ok"] and set(_paths(resp)) == _ALPHA_OWN and resp["partial"] is True
+    assert {w["path"] for w in resp["warnings"] if w["code"] == "registry_unreadable"} == {
+        "60_Candidates/SessionHandoffs/", "30_Projects/Secret/"}
+    assert whole["ok"] and whole["partial"] is True
+
+
+def test_non_utf8_project_map_is_ignored_and_search_continues(tmp_path):
+    """UTF-8이 아닌 매핑 파일은 인코딩을 추정하지 않고 경고 후 무시한다 — canonical 식별·검색은 계속된다."""
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "30_Projects/Alpha/Plans/p.md", "매핑토큰 계획\n")
+    map_path = tmp_path / "project-map.json"
+    map_path.write_bytes(json.dumps({"projects": {"Alpha": {"aliases": ["알파"]}}}, ensure_ascii=False).encode("cp949"))
+    settings = _settings(tmp_path, str(map_path))
+    resp = vault_tools.search_evidence("매핑토큰", project="Alpha", settings=settings)
+    assert resp["ok"] and _paths(resp) == ["30_Projects/Alpha/Plans/p.md"]
+    assert resp["scope"]["project_resolution"]["method"] == "canonical"
+    assert any(w["code"] == "registry" and "UTF-8이 아니라" in w["message"] for w in resp["warnings"])
+    alias = vault_tools.search_evidence("매핑토큰", project="알파", settings=settings)  # 잘못 읽은 별칭을 쓰지 않는다
+    assert not alias["ok"] and alias["error"]["code"] == "project_unresolved"
+
+
+_SURROGATE_MARKERS = [
+    '{"scope": "project", "project": "\\ud800"}',
+    '{"scope": "project", "project": "Alpha\\ud800"}',  # 앞부분이 Alpha여도 Alpha로 보지 않는다
+    '{"scope": "global", "project": "\\udfff"}',
+    '{"scope": "\\ud800", "project": "Alpha"}',
+]
+
+
+@pytest.mark.parametrize("payload", _SURROGATE_MARKERS)
+def test_marker_with_lone_surrogate_is_a_corrupt_marker(tmp_path, payload):
+    """marker JSON의 이스케이프된 짝 없는 surrogate는 손상 marker(unknown, invalid_marker)다.
+
+    수정 전: 그 값이 블록 소속 project가 되어 커서 지문(sha256)에서 UnicodeEncodeError로 검색 전체가 멈췄다.
+    """
+    _projects(tmp_path, "Alpha", "한글팀")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md",
+       "# Lessons\n\n"
+       '<!-- devtrail-memory-patch: {"scope": "project", "project": "Alpha"} -->\n'
+       "Alpha 교훈: 서로게이트토큰 알파\n\n"
+       f"<!-- devtrail-memory-patch: {payload} -->\n"
+       "손상 블록: 서로게이트토큰 손상\n\n"
+       '<!-- devtrail-memory-patch: {"scope": "project", "project": "한글팀"} -->\n'
+       "한글 교훈: 서로게이트토큰 한글\n")
+    whole = _search(tmp_path, "서로게이트토큰", limit=1)
+    assert whole["ok"], whole
+    json.dumps(whole, ensure_ascii=False).encode("utf-8")  # MCP 응답 직렬화와 같은 UTF-8 인코딩
+    blocks = whole["results"][0]["attribution"]["blocks"]
+    assert [(b["scope"], b["project"], b.get("invalid_marker", False)) for b in blocks] == [
+        ("common", "", False), ("project", "Alpha", False), ("unknown", "", True), ("project", "한글팀", False)]
+    assert blocks[2]["evidence"] == ["marker:6행 유효하지 않은 문자"]
+    assert any("유효하지 않은 문자" in w for w in whole["results"][0]["warnings"])
+    if whole["next_cursor"]:
+        page2 = _search(tmp_path, "서로게이트토큰", limit=1, cursor=whole["next_cursor"])
+        assert page2["ok"], page2
+
+    alpha = _search(tmp_path, "서로게이트토큰", project="Alpha")
+    assert alpha["ok"] and _paths(alpha) == ["40_AgentMemory/06_Lessons.md"]
+    texts = " ".join(e["text"] for e in alpha["results"][0]["excerpts"])
+    assert "알파" in texts and "손상" not in texts and "한글" not in texts  # 손상·타 프로젝트 블록이 새지 않는다
+    assert alpha["filtered"]["blocks"] == {"invalid_marker": 1, "other_project": 1, "common": 1}
+    korean = _search(tmp_path, "서로게이트토큰", project="한글팀")
+    assert korean["ok"] and "한글 교훈" in korean["results"][0]["excerpts"][0]["text"]  # 정상 한글 이름은 그대로
+    opted = _search(tmp_path, "서로게이트토큰", project="Alpha", include_unattributed=True)
+    assert opted["ok"]
+    json.dumps(opted, ensure_ascii=False).encode("utf-8")
+    opted_blocks = opted["results"][0]["attribution"]["blocks"]
+    assert [b["scope"] for b in opted_blocks] == ["project", "unknown"]  # 손상 블록은 unknown으로만 포함된다
+
+
+def test_frontmatter_project_with_lone_surrogate_is_not_evidence(tmp_path, monkeypatch):
+    """YAML "\\ud800"도 같은 규칙(project_field) — 소속 근거로 쓰지 않고 경고, 직렬화도 멈추지 않는다.
+
+    libyaml(CSafeLoader)은 이 이스케이프를 문법 오류로 거부하지만, libyaml 없이 설치된 PyYAML의 SafeLoader는 받아들인다.
+    그 환경을 재현하려고 순수 Python 로더로 바꿔 본다.
+    """
+    import yaml
+
+    monkeypatch.setattr(evidence_search, "_YAML_LOADER", yaml.SafeLoader)
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "10_Worklog/Sessions/s.md", '---\nproject: "\\ud800"\n---\n깨진이름토큰 세션\n')
+    whole = _search(tmp_path, "깨진이름토큰")
+    assert whole["ok"] and whole["results"][0]["attribution"]["scope"] == "unknown"
+    assert any("유효하지 않은 문자" in w for w in whole["results"][0]["warnings"])
+    json.dumps(whole, ensure_ascii=False).encode("utf-8")
+
+
+@pytest.mark.parametrize(("mode", "rel", "folder"), [
+    ("none", "60_Candidates/SessionHandoffs", "Beta"),
+    ("none", "30_Projects/Secret", "Hidden"),  # 못 읽은 Context.md가 어떤 이름을 선언했는지 모른다
+])
+def test_knowledge_folder_hidden_by_unreadable_registry_is_not_attributed(tmp_path, deny_access, mode, rel, folder):
+    """리뷰 재현: 20_Knowledge/<P>/는 P가 등록돼 있어야 경로 근거다. 등록부를 못 읽어 P를 모르게 됐다고
+    선언(project: Alpha)만으로 Alpha로 확정하면, 정상일 때 conflict로 빠지던 문서가 Alpha 검색에 들어온다."""
+    _perm_vault(tmp_path)
+    _w(tmp_path, f"20_Knowledge/{folder}/k.md", _fm(project="Alpha") + "권한토큰 지식\n")
+    _w(tmp_path, "20_Knowledge/Topic/t.md", _fm(scope="global") + "권한토큰 주제\n")
+    normal = _search(tmp_path, "권한토큰", project="Alpha", limit=20)
+    assert f"20_Knowledge/{folder}/k.md" not in _paths(normal)
+    getattr(deny_access, mode)(rel)
+    resp = _search(tmp_path, "권한토큰", project="Alpha", limit=20)
+    assert deny_access.hits and resp["ok"] and resp["partial"]
+    assert f"20_Knowledge/{folder}/k.md" not in _paths(resp)  # 범위가 넓어지지 않는다
+    whole = {r["path"]: r["attribution"] for r in _search(tmp_path, "권한토큰", limit=20)["results"]}
+    assert whole[f"20_Knowledge/{folder}/k.md"]["scope"] == "unknown"
+    assert whole["20_Knowledge/Topic/t.md"]["scope"] == "common"  # 선언 프로젝트가 없는 문서는 그대로
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="root는 파일 권한을 무시한다")
+def test_real_chmod_unreadable_context_file_does_not_attribute(tmp_path):
+    _perm_vault(tmp_path)
+    ctx = tmp_path / "30_Projects/Secret/Context.md"
+    os.chmod(ctx, 0)
+    try:
+        whole = _search(tmp_path, "권한토큰", limit=20)
+        hidden = _search(tmp_path, "권한토큰", project="Hidden")
+        secret = _search(tmp_path, "권한토큰", project="Secret")
+    finally:
+        os.chmod(ctx, 0o644)
+    assert whole["ok"] and whole["partial"]
+    by_path = {r["path"]: r["attribution"] for r in whole["results"]}
+    assert by_path["30_Projects/Secret/Plans/p.md"]["scope"] == "unknown"
+    assert {"code": "read_failed", "path": "30_Projects/Secret/Context.md"}.items() <= next(
+        w for w in whole["warnings"] if w.get("path") == "30_Projects/Secret/Context.md").items()
+    assert hidden["error"]["code"] == "project_unresolved" and secret["error"]["code"] == "project_unresolved"
+
+
+def test_map_with_lone_surrogates_is_ignored_without_encode_error(tmp_path):
+    """리뷰 재현: UTF-8로는 정상인 매핑에 JSON 이스케이프로 짝 없는 surrogate가 든 이름·별칭이 있어도 검색이 멈추지 않는다."""
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "10_Worklog/Sessions/s.md", _fm(project="Beta") + "매핑토큰 세션\n")
+    map_path = tmp_path / "project-map.json"
+    map_path.write_text('{"projects": {"\\ud800": {"aliases": ["Beta"]}, "Alpha": {"aliases": ["al", "\\udfff"]}}}',
+                        encoding="utf-8")
+    settings = _settings(tmp_path, str(map_path))
+    resp = vault_tools.search_evidence("매핑토큰", settings=settings)
+    assert resp["ok"]
+    json.dumps(resp, ensure_ascii=False).encode("utf-8")
+    assert resp["results"][0]["attribution"]["project"] == "Beta"  # 손상 매핑의 별칭이 소속을 바꾸지 않는다
+    assert sum("유효하지 않은 문자" in w["message"] for w in resp["warnings"] if w["code"] == "registry") == 2
+    assert vault_tools.search_evidence("매핑토큰", project="al", settings=settings)["error"]["code"] == "project_unresolved"

@@ -30,7 +30,15 @@ from typing import Any
 
 import yaml
 
-from app.services.project_identity import ProjectRegistry, ProjectResolution, load_registry, project_field, resolve_project
+from app.services.project_identity import (
+    ProjectRegistry,
+    ProjectResolution,
+    is_valid_text,
+    load_registry,
+    project_field,
+    project_field_issue,
+    resolve_project,
+)
 from app.services.vault_source import (
     ALLOWED_READ_PREFIXES,
     SourceText,
@@ -251,13 +259,26 @@ def _path_project(rel: str, reg: ProjectRegistry) -> tuple[list[str], str] | Non
 
 def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warnings: list[str]) -> _Unit:
     evidence: list[str] = []
+    blocked = reg.unreadable_prefix(rel)
+    if blocked:
+        # 등록부가 이 폴더의 선언(Context.md 등)을 확인하지 못했다 — 폴더명·frontmatter로 소속을 추측하지 않는다
+        warnings.append(f"프로젝트 등록부가 {blocked}를 읽지 못해 이 문서의 소속을 확정하지 않습니다.")
+        return _Unit(0, 0, "unknown", "", [f"registry_unreadable:{blocked}"])
     path_hit = _path_project(rel, reg)
     # 식별(Context.md 등록부)과 같은 규칙 — 숫자·날짜 project는 "123" 같은 이름으로 바꾸지 않고 근거에서 뺀다
     meta_project, unsupported = project_field(meta)
     if unsupported:
-        warnings.append("frontmatter project가 문자열이 아니라 소속 근거로 쓰지 않았습니다.")
+        warnings.append(f"frontmatter project가 {project_field_issue(meta)} 소속 근거로 쓰지 않았습니다.")
     meta_cands = _name_candidates(reg, meta_project) if meta_project else []
     meta_evidence = _with_candidates(f"meta:project={meta_project}", meta_project, meta_cands) if meta_project else ""
+    parts = rel.split("/")
+    if path_hit is None and meta_cands and parts[0] == "20_Knowledge" and len(parts) >= 3:
+        # 20_Knowledge/<P>/는 P가 등록 프로젝트일 때만 경로 근거다. 등록부 일부를 못 읽어 P를 모르는 것일 수 있으면
+        # 선언만으로 확정하지 않는다 — 정상이면 경로와 선언이 충돌(conflict)했을 문서가 선언 프로젝트로 들어오지 않게
+        hidden = reg.may_hide(parts[1])
+        if hidden:
+            warnings.append(f"프로젝트 등록부가 {hidden}를 읽지 못해 20_Knowledge/{parts[1]}/의 소속을 확정하지 않습니다.")
+            return _Unit(0, 0, "unknown", "", [f"registry_unreadable:{hidden} (path:20_Knowledge/{parts[1]}/ 미확인)", meta_evidence])
     scope_value = (_str_meta(meta, "scope") or "").casefold()
 
     if path_hit and meta_cands:
@@ -311,6 +332,13 @@ def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: 
             continue
         scope = str(data.get("scope") or "").strip().casefold()
         project, _ = project_field(data)  # 문자열이 아닌 project는 빈 값 — 아래에서 해석 불가 marker가 된다
+        raw_project = data.get("project")
+        if not is_valid_text(scope) or (isinstance(raw_project, str) and not is_valid_text(raw_project)):
+            # curator의 json.dumps는 짝 없는 surrogate를 만들지 않는다 — 있으면 marker가 손상된 것이다. scope와 무관하게
+            # 손상으로 보고, 값은 근거·경고 문자열에 싣지 않는다(지문·응답 직렬화가 UTF-8 인코딩에서 멈추지 않게)
+            warnings.append(f"{line_no}행 marker의 scope/project에 유효하지 않은 문자(짝 없는 surrogate 등)가 있어 손상 marker로 보고 unknown으로 둡니다.")
+            units.append(_Unit(line_no, end, "unknown", "", [f"marker:{line_no}행 유효하지 않은 문자"], invalid_marker=True))
+            continue
         if scope == "project" and project:
             cands = _name_candidates(reg, project)
             units.append(_decide(line_no, end, cands, [_with_candidates(f"marker:{line_no}행 project={project}", project, cands)]))
@@ -437,11 +465,23 @@ def scan_vault(vault_dir: Path, reg: ProjectRegistry) -> _Scan:
     warnings: list[dict] = []
     partial = False
     tops = sorted({p.split("/")[0] for p in ALLOWED_READ_PREFIXES})
+
+    # 폴더·파일 하나의 권한 오류(실행 권한 없는 폴더 안 stat 등)는 그 경로만 read_failed로 남기고 스캔을 계속한다
+    def _stat_failed(rel: str, exc: OSError) -> None:
+        nonlocal partial
+        partial = True
+        warnings.append({"code": "read_failed", "path": rel, "message": f"경로를 확인하지 못했습니다: {exc.strerror or exc}"})
+
     for top in tops:
         top_path = vault_dir / top
-        if not top_path.is_dir():
+        try:
+            if not top_path.is_dir():
+                continue
+            outside_link = top_path.is_symlink() and real_scoped_rel(vault_dir, top_path) is None
+        except OSError as exc:
+            _stat_failed(top + "/", exc)
             continue
-        if top_path.is_symlink() and real_scoped_rel(vault_dir, top_path) is None:
+        if outside_link:
             warnings.append({"code": "outside_scope_link", "path": top + "/", "message": "실제 경로가 read_scope 밖인 링크라 읽지 않았습니다."})
             continue
 
@@ -455,7 +495,14 @@ def scan_vault(vault_dir: Path, reg: ProjectRegistry) -> _Scan:
             for d in list(dirnames):
                 if d.startswith("."):
                     dirnames.remove(d)
-                elif (here / d).is_symlink():
+                    continue
+                try:
+                    is_link = (here / d).is_symlink()
+                except OSError as exc:
+                    dirnames.remove(d)  # 링크인지 모르는 폴더를 따라 들어가지 않는다
+                    _stat_failed(_rel_of(vault_dir, here / d) + "/", exc)
+                    continue
+                if is_link:
                     warnings.append({"code": "symlink_dir_skipped", "path": _rel_of(vault_dir, here / d) + "/", "message": "링크된 디렉터리는 따라가지 않습니다."})
             dirnames.sort()
             for name in sorted(filenames):
@@ -465,7 +512,12 @@ def scan_vault(vault_dir: Path, reg: ProjectRegistry) -> _Scan:
                 rel = _rel_of(vault_dir, path)
                 if not rel.startswith(ALLOWED_READ_PREFIXES):
                     continue
-                if path.is_symlink() or real_scoped_rel(vault_dir, path) != rel:
+                try:
+                    is_link = path.is_symlink()
+                except OSError as exc:
+                    _stat_failed(rel, exc)
+                    continue
+                if is_link or real_scoped_rel(vault_dir, path) != rel:
                     # 링크 파일은 경로 소속이 실제 위치와 달라 읽지 않는다. 대상이 범위 안이면 대상 경로로 따로 검색된다.
                     if real_scoped_rel(vault_dir, path) is None:
                         warnings.append({"code": "outside_scope_link", "path": rel, "message": "실제 경로가 read_scope 밖인 링크라 읽지 않았습니다."})
@@ -776,9 +828,9 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
-def _corpus_digest(kept: list[tuple[_Doc, list[_Unit]]], scan: "_Scan") -> str:
+def _corpus_digest(kept: list[tuple[_Doc, list[_Unit]]], scan: "_Scan", reg: ProjectRegistry) -> str:
     """cursor가 묶는 스캔 상태 — 범위 필터를 통과한 **모든** 문서(일치 여부와 무관)의 경로·내용 버전·
-    상태 class·파일/블록 소속, 그리고 읽기 실패 목록.
+    상태 class·파일/블록 소속, 그리고 읽기 실패 목록(스캔·등록부).
 
     일치 문서만 묶으면 범위 안 다른 문서가 새로 일치하게 되는 변화는 잡지만, 소속 등록부(Context.md·매핑)나
     상태 분류만 바뀐 경우와 앞 페이지가 partial이었다가 회복된 경우를 놓친다. 범위 밖(다른 프로젝트 등) 문서의
@@ -787,7 +839,8 @@ def _corpus_digest(kept: list[tuple[_Doc, list[_Unit]]], scan: "_Scan") -> str:
     docs = [[d.rel, d.source.version, d.status_class, d.file_unit.signature(), [u.signature() for u in units]]
             for d, units in kept]
     failed = sorted(w.get("path", "") for w in scan.warnings if w.get("code") == "read_failed")
-    return _digest({"docs": docs, "failed": failed, "partial": scan.partial})
+    # 등록부 미확인 경로가 회복되면 소속이 바뀔 수 있다 — 앞 페이지와 섞지 않게 cursor를 낡게 만든다
+    return _digest({"docs": docs, "failed": failed, "partial": scan.partial, "registry_unreadable": sorted(reg.unreadable)})
 
 
 def _encode_cursor(fingerprint: str, corpus: str, offset: int) -> str:
@@ -967,6 +1020,8 @@ def search(
     scope = SearchScope(resolved_project, include_common, include_unattributed, include_history, wanted_kinds)
 
     scan = scan_vault(vault_dir, reg)
+    # 등록부를 다 읽지 못하면 소속(=범위 안 문서 집합)이 불완전하다 — 스캔 읽기 실패와 같이 partial로 알린다
+    partial = scan.partial or bool(reg.unreadable)
     kept, filtered = _filter(scan.docs, scope)
     phrase = _phrase(query)
     scored = [s for doc, units in kept if (s := _score(doc, units, tokens, phrase)) is not None]
@@ -975,7 +1030,7 @@ def search(
 
     fingerprint = _digest({"q": " ".join(query.split()), "p": resolved_project.casefold(), "c": include_common,
                            "u": include_unattributed, "h": include_history, "k": list(wanted_kinds)})
-    corpus = _corpus_digest(kept, scan)
+    corpus = _corpus_digest(kept, scan, reg)
     offset = 0
     if cursor_data is not None:
         if cursor_data.get("f") != fingerprint:
@@ -984,7 +1039,9 @@ def search(
             return _error("cursor_stale", "cursor 이후 일치 문서 집합이나 내용 버전이 바뀌었습니다. 순위가 달라졌을 수 있어 이어 주지 않습니다 — cursor 없이 다시 검색하세요.")
         offset = cursor_data["o"]
 
-    warnings = list(scan.warnings) + [{"code": "registry", "message": w} for w in reg.warnings]
+    unreadable_messages = set(reg.unreadable.values())
+    warnings = [{"code": "registry_unreadable", "path": rel, "message": msg} for rel, msg in reg.unreadable.items()]
+    warnings += list(scan.warnings) + [{"code": "registry", "message": w} for w in reg.warnings if w not in unreadable_messages]
     if resolution is not None:
         warnings += [{"code": "project_resolution", "message": w} for w in resolution.warnings if w not in reg.warnings]
     if not ranked:
@@ -1009,10 +1066,10 @@ def search(
         "offset": offset,
         "returned": 0,
         # 스캔이 완전하지 않으면(읽기 실패) 전체 일치 수를 모른다 — 숫자를 만들지 않는다
-        "total_matches": None if scan.partial else len(ranked),
+        "total_matches": None if partial else len(ranked),
         "has_more": False,
         "next_cursor": None,
-        "partial": scan.partial,
+        "partial": partial,
         "warnings": warnings,
         "warnings_omitted": omitted_warnings,
         "budget": {"max_chars": max_chars, "used_chars": 0, "stopped_by": "end", "excerpt_max_chars": EXCERPT_MAX_CHARS,
