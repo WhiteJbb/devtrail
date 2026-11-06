@@ -987,9 +987,11 @@ def test_docs_under_unconfirmed_registry_folder_are_not_attributed(tmp_path, den
         w for w in whole["warnings"] if w.get("path") == "30_Projects/Secret/Context.md").items()
     scoped = _search(tmp_path, "권한토큰", project="Alpha", limit=20)
     assert "30_Projects/Secret/Plans/p.md" not in _paths(scoped)  # frontmatter project=Alpha여도 Alpha로 넣지 않는다
-    assert scoped["filtered"]["documents"].get("unknown") == 1
+    assert scoped["filtered"]["documents"].get("registry_unreadable") == 1  # 근거 없음(unknown)과 구분해 센다
+    # include_unattributed로도 넣지 않는다 — 같은 폴더에 project: Hidden 문서가 있으면 정상일 때 다른 프로젝트로 걸러졌을 수 있다
     opted = _search(tmp_path, "권한토큰", project="Alpha", include_unattributed=True, limit=20)
-    assert {r["path"]: r["attribution"]["scope"] for r in opted["results"]}["30_Projects/Secret/Plans/p.md"] == "unknown"
+    assert "30_Projects/Secret/Plans/p.md" not in _paths(opted) and opted["partial"] is True
+    assert opted["filtered"]["documents"].get("registry_unreadable") == 1
 
 
 def test_cursor_stale_when_registry_folder_recovers(tmp_path, deny_access):
@@ -1210,8 +1212,10 @@ def test_unreadable_registry_does_not_resolve_alias_conflict(tmp_path, deny_acce
     assert not set(_ALIAS_DOCS) & set(alpha_paths())  # 범위가 넓어지지 않는다
     assert deny_access.hits
     after = attributions()
+    # 못 읽은 30_Projects 폴더는 Alpha를 선언했을 수도 있다 — 그 가능성도 후보로 남는다(SessionHandoffs만 못 읽으면 없다)
+    expected = ["Alpha", "Alpha (30_Projects/Beta/ 미확인)", "Beta"] if beta_where == "projects" else ["Alpha", "Beta"]
     for path in _ALIAS_DOCS:
-        assert after[path]["scope"] == "conflict" and after[path]["conflict_with"] == ["Alpha", "Beta"], (path, after[path])
+        assert after[path]["scope"] == "conflict" and after[path]["conflict_with"] == expected, (path, after[path])
     res = vault_tools.resolve_project_identity("Beta", settings=settings)
     assert res.status == "ambiguous" and any(e.startswith("registry_unreadable:") for e in res.evidence)
     # 정상 등록 프로젝트 검색은 계속된다
@@ -1322,3 +1326,165 @@ def test_handoff_only_name_is_not_shadowed_by_one_unreadable_project_folder(tmp_
     assert {p: u["scope"] for p, u in whole.items()} == {
         "60_Candidates/SessionHandoffs/Gamma/h.md": "conflict", "10_Worklog/Sessions/g.md": "conflict"}
     assert _search(tmp_path, "감마토큰", project="Gamma")["results"] == []
+
+
+# ── 최종 재리뷰 반영 ──────────────────────────────────────────────────────────
+
+
+def _intersect_vault(vault: Path) -> str:
+    """Alpha·AlphaOld가 모두 Alpha를 선언(정상이면 Alpha는 모호) + 매핑이 Beta를 Alpha의 별칭으로, Beta handoff 폴더도 있다.
+    경로 후보와 선언 후보의 교집합으로 소속을 정하는 문서 둘 — 정상이면 둘 다 conflict다."""
+    _projects(vault, "Alpha")
+    _w(vault, "30_Projects/Alpha/Plans/own.md", "교집합토큰 알파 경로\n")
+    _w(vault, "30_Projects/AlphaOld/Context.md", _fm(project="Alpha") + "# AlphaOld\n")
+    _w(vault, "60_Candidates/SessionHandoffs/Beta/h.md", _fm(project="Alpha") + "교집합토큰 베타 폴더\n")
+    _w(vault, "20_Knowledge/Alpha/k.md", _fm(project="Beta") + "교집합토큰 지식\n")
+    map_path = vault.parent / "intersect-map.json"
+    map_path.write_text(json.dumps({"projects": {"Alpha": {"aliases": ["Beta"]}}}), encoding="utf-8")
+    return str(map_path)
+
+
+_INTERSECT_DOCS = {"60_Candidates/SessionHandoffs/Beta/h.md", "20_Knowledge/Alpha/k.md"}
+
+
+def _check_intersect(settings) -> None:
+    alpha = vault_tools.search_evidence("교집합토큰", project="Alpha", limit=20, settings=settings)
+    assert alpha["ok"] and alpha["partial"] is True
+    assert set(_paths(alpha)) == {"30_Projects/Alpha/Plans/own.md"}  # 경로가 직접 정하는 문서만
+    whole = vault_tools.search_evidence("교집합토큰", limit=20, settings=settings)
+    json.dumps(whole, ensure_ascii=False).encode("utf-8")
+    by_path = {r["path"]: r["attribution"] for r in whole["results"]}
+    for path in _INTERSECT_DOCS:
+        unit = by_path[path]
+        assert unit["scope"] == "conflict", (path, unit)
+        assert {"Alpha", "Alpha (30_Projects/AlphaOld/ 미확인)"} <= set(unit["conflict_with"]), (path, unit)
+    opted = vault_tools.search_evidence("교집합토큰", project="Alpha", include_unattributed=True, limit=20, settings=settings)
+    for r in opted["results"]:
+        assert r["attribution"]["scope"] == ("project" if r["path"] == "30_Projects/Alpha/Plans/own.md" else "conflict"), r
+
+
+@pytest.mark.parametrize("mode", ["none", "no_exec"])
+def test_unreadable_context_does_not_confirm_path_meta_intersection(tmp_path, deny_access, mode):
+    """최종 재리뷰 재현: 경로 이름(Beta 폴더 → Alpha·Beta)이 이미 모호하면 가려진 후보가 한쪽에만 붙어, 교집합이 Alpha
+    하나로 줄며 정상이면 conflict인 문서가 Alpha로 확정됐다. 가려진 후보는 후보 수와 무관하게 양쪽에 붙어야 한다."""
+    vault = tmp_path / "v"
+    settings = _settings(vault, _intersect_vault(vault))
+    normal = vault_tools.search_evidence("교집합토큰", project="Alpha", settings=settings)
+    assert not normal["ok"] and normal["error"]["code"] == "project_ambiguous"
+    whole = {r["path"]: r["attribution"] for r in vault_tools.search_evidence("교집합토큰", limit=20, settings=settings)["results"]}
+    assert all(whole[p]["scope"] == "conflict" for p in _INTERSECT_DOCS)
+    getattr(deny_access, mode)("v/30_Projects/AlphaOld")
+    _check_intersect(settings)
+    assert deny_access.hits
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="root는 파일 권한을 무시한다")
+def test_real_chmod_unreadable_context_does_not_confirm_path_meta_intersection(tmp_path):
+    vault = tmp_path / "v"
+    settings = _settings(vault, _intersect_vault(vault))
+    ctx = vault / "30_Projects/AlphaOld/Context.md"
+    os.chmod(ctx, 0)
+    try:
+        _check_intersect(settings)
+    finally:
+        os.chmod(ctx, 0o644)
+
+
+def test_folder_without_context_is_name_attribution_under_unreadable_registry(tmp_path, deny_access):
+    """Context.md 없는 30_Projects/<이름>/은 폴더 이름으로 소속을 정한다 — 이름만으로 정하는 다른 근거와 같이, 등록부 일부를
+    못 읽어 그 이름이 정말 하나인지 모르면 확정하지 않는다. 정상 등록부에서는 전처럼 폴더명 하나로 확정한다."""
+    _w(tmp_path, "30_Projects/X/Context.md", _fm(project="Foo") + "# X\n")
+    _w(tmp_path, "30_Projects/Y/Context.md", _fm(project="Foo") + "# Y\n")
+    _w(tmp_path, "30_Projects/Foo/Plans/p.md", "폴더명토큰 계획\n")
+    _w(tmp_path, "30_Projects/Bar/Plans/q.md", "폴더명토큰 미등록 폴더\n")
+    assert _search(tmp_path, "폴더명토큰", project="Foo")["error"]["code"] == "project_ambiguous"
+    normal = {r["path"]: r["attribution"] for r in _search(tmp_path, "폴더명토큰", limit=20)["results"]}
+    assert normal["30_Projects/Foo/Plans/p.md"]["project"] == "Foo"  # 기존 동작 보존
+    assert normal["30_Projects/Bar/Plans/q.md"]["project"] == "Bar"
+
+    deny_access.none("30_Projects/X")
+    foo = _search(tmp_path, "폴더명토큰", project="Foo", include_unattributed=True, limit=20)
+    assert foo["ok"] and foo["partial"] is True and deny_access.hits
+    assert all(r["attribution"]["scope"] == "conflict" for r in foo["results"])
+    assert _search(tmp_path, "폴더명토큰", project="Foo")["results"] == []
+    whole = {r["path"]: r["attribution"] for r in _search(tmp_path, "폴더명토큰", limit=20)["results"]}
+    assert whole["30_Projects/Foo/Plans/p.md"]["scope"] == "conflict"
+    assert whole["30_Projects/Foo/Plans/p.md"]["conflict_with"] == ["Foo", "Foo (30_Projects/X/ 미확인)"]
+    assert whole["30_Projects/Bar/Plans/q.md"]["project"] == "Bar"  # 등록되지 않은 이름은 가려질 동명이 없다
+
+
+def _link_vault(tmp_path: Path) -> Path:
+    vault = tmp_path / "v"
+    _projects(vault, "Alpha")
+    _w(vault, "60_Candidates/SessionHandoffs/Alpha/h.md", "링크토큰 알파 handoff\n")
+    _w(tmp_path, "out/Context.md", _fm(project="Alpha") + "# 밖\n")
+    os.symlink(tmp_path / "out", vault / "30_Projects" / "Ext")
+    return vault
+
+
+def _check_link_not_unreadable(vault: Path) -> None:
+    resp = _search(vault, "링크토큰", project="Alpha")
+    assert resp["ok"] and resp["partial"] is False
+    assert _paths(resp) == ["60_Candidates/SessionHandoffs/Alpha/h.md"]
+    assert not any(w["code"] == "registry_unreadable" for w in resp["warnings"])
+
+
+def test_symlinked_project_folder_with_unenterable_target_is_not_unreadable_registry(tmp_path, deny_access):
+    """최종 재리뷰 재현(과잉 보호): 등록부는 링크 폴더를 원래 등록하지 않는다. 대상에 못 들어가는 링크를 등록부 미확인으로
+    만들면 정상 프로젝트 handoff까지 conflict가 되고 partial이 켜졌다 — 변경 전처럼 그 링크만 빼고 계속한다."""
+    vault = _link_vault(tmp_path)
+    _check_link_not_unreadable(vault)  # 정상
+    deny_access.no_exec("v/30_Projects/Ext")  # 링크 자체는 보이지만 그 아래 stat이 거부된다
+    _check_link_not_unreadable(vault)
+    assert deny_access.hits
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="root는 디렉터리 권한을 무시한다")
+def test_real_chmod_symlinked_project_folder_target_is_not_unreadable_registry(tmp_path):
+    vault = _link_vault(tmp_path)
+    os.chmod(tmp_path / "out", 0o600)
+    try:
+        _check_link_not_unreadable(vault)
+    finally:
+        os.chmod(tmp_path / "out", 0o755)
+
+
+def _check_unattributed_excludes_unreadable(resp: dict) -> None:
+    assert resp["ok"] and resp["partial"] is True
+    leaked = [r["path"] for r in resp["results"] if r["path"].startswith(("30_Projects/Secret/", "20_Knowledge/Hidden/"))]
+    assert leaked == []
+    assert resp["filtered"]["documents"].get("registry_unreadable", 0) >= 1
+
+
+def test_include_unattributed_does_not_add_docs_under_unreadable_registry(tmp_path, deny_access):
+    """최종 재리뷰 재현: include_unattributed는 근거 없는 문서를 더한다. 등록부를 못 읽어 판정을 못 한 문서(정상이면 다른 프로젝트로
+    걸러졌을 수 있다)까지 프로젝트 검색에 들어오면 안 된다. 범위 없는 검색에서는 unknown으로 계속 보인다."""
+    _perm_vault(tmp_path)
+    _w(tmp_path, "30_Projects/Secret/Plans/q.md", _fm(project="Hidden") + "권한토큰 숨은 프로젝트 계획\n")
+    _w(tmp_path, "20_Knowledge/Hidden/k.md", _fm(project="Beta") + "권한토큰 숨은 지식\n")
+    deny_access.stat("30_Projects/Secret/Context.md")
+    opted = _search(tmp_path, "권한토큰", project="Alpha", include_unattributed=True, include_history=True, limit=20)
+    _check_unattributed_excludes_unreadable(opted)
+    assert deny_access.hits
+    whole = {r["path"]: r["attribution"] for r in _search(tmp_path, "권한토큰", limit=20)["results"]}
+    assert whole["30_Projects/Secret/Plans/q.md"]["scope"] == "unknown"
+
+    deny_access.clear()
+    deny_access.none("30_Projects/Secret")  # 폴더 전체를 못 읽으면 20_Knowledge/Hidden/도 판정하지 못한다
+    opted = _search(tmp_path, "권한토큰", project="Alpha", include_unattributed=True, include_history=True, limit=20)
+    _check_unattributed_excludes_unreadable(opted)
+    whole = {r["path"]: r["attribution"] for r in _search(tmp_path, "권한토큰", limit=20)["results"]}
+    assert whole["20_Knowledge/Hidden/k.md"]["scope"] == "unknown"
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="root는 파일 권한을 무시한다")
+def test_real_chmod_include_unattributed_does_not_add_docs_under_unreadable_context(tmp_path):
+    _perm_vault(tmp_path)
+    _w(tmp_path, "30_Projects/Secret/Plans/q.md", _fm(project="Hidden") + "권한토큰 숨은 프로젝트 계획\n")
+    ctx = tmp_path / "30_Projects/Secret/Context.md"
+    os.chmod(ctx, 0)
+    try:
+        opted = _search(tmp_path, "권한토큰", project="Alpha", include_unattributed=True, include_history=True, limit=20)
+    finally:
+        os.chmod(ctx, 0o644)
+    _check_unattributed_excludes_unreadable(opted)

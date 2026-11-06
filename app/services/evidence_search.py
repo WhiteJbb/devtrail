@@ -125,6 +125,9 @@ class _Unit:
     evidence: list[str] = field(default_factory=list)
     conflict_with: list[str] = field(default_factory=list)
     invalid_marker: bool = False  # marker가 깨졌거나 scope를 해석할 수 없다 — "근거 없음"과 다른 unknown
+    # 등록부가 확인하지 못한 경로 때문에 소속을 정하지 못한 unknown — 정상이면 다른 프로젝트였을 수 있다.
+    # 지문(signature)에는 넣지 않는다: 등록부 미확인 목록이 이미 cursor 지문에 들어가고, 넣으면 기존 cursor가 깨진다
+    registry_unreadable: bool = False
 
     def signature(self) -> list:
         return [self.start, self.end, self.scope, self.project.casefold(), sorted(c.casefold() for c in self.conflict_with),
@@ -238,7 +241,13 @@ def _path_project(rel: str, reg: ProjectRegistry) -> tuple[list[str], str] | Non
     폴더 이름이 곧 프로젝트 이름인 SessionHandoffs·20_Knowledge는 식별과 같은 이름 규칙(충돌 보존)을 거친다."""
     parts = rel.split("/")
     if parts[0] == "30_Projects" and len(parts) >= 3:
-        return [reg.dir_to_project.get(parts[1], parts[1])], f"path:30_Projects/{parts[1]}/"
+        if parts[1] in reg.dir_to_project:
+            return [reg.dir_to_project[parts[1]]], f"path:30_Projects/{parts[1]}/"
+        # Context.md 없는 폴더는 선언이 아니라 폴더 **이름**으로 소속을 정한다. 등록부 일부를 못 읽어 그 이름이 정말
+        # 하나인지 모르면 다른 이름 근거와 같이 가려졌을 수 있는 후보를 남긴다(정상 등록부에서는 그대로 폴더명 하나)
+        shadow = reg.may_shadow(parts[1])
+        cands = [parts[1]] + ([f"{parts[1]} ({shadow} 미확인)"] if shadow else [])
+        return cands, _with_candidates(f"path:30_Projects/{parts[1]}/", parts[1], cands)
     handoff_at = None
     if parts[:2] == ["60_Candidates", "SessionHandoffs"]:
         handoff_at = 2
@@ -263,7 +272,7 @@ def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warn
     if blocked:
         # 등록부가 이 폴더의 선언(Context.md 등)을 확인하지 못했다 — 폴더명·frontmatter로 소속을 추측하지 않는다
         warnings.append(f"프로젝트 등록부가 {blocked}를 읽지 못해 이 문서의 소속을 확정하지 않습니다.")
-        return _Unit(0, 0, "unknown", "", [f"registry_unreadable:{blocked}"])
+        return _Unit(0, 0, "unknown", "", [f"registry_unreadable:{blocked}"], registry_unreadable=True)
     path_hit = _path_project(rel, reg)
     # 식별(Context.md 등록부)과 같은 규칙 — 숫자·날짜 project는 "123" 같은 이름으로 바꾸지 않고 근거에서 뺀다
     meta_project, unsupported = project_field(meta)
@@ -278,7 +287,8 @@ def _file_attribution(rel: str, meta: dict[str, Any], reg: ProjectRegistry, warn
         hidden = reg.may_hide(parts[1])
         if hidden:
             warnings.append(f"프로젝트 등록부가 {hidden}를 읽지 못해 20_Knowledge/{parts[1]}/의 소속을 확정하지 않습니다.")
-            return _Unit(0, 0, "unknown", "", [f"registry_unreadable:{hidden} (path:20_Knowledge/{parts[1]}/ 미확인)", meta_evidence])
+            return _Unit(0, 0, "unknown", "", [f"registry_unreadable:{hidden} (path:20_Knowledge/{parts[1]}/ 미확인)", meta_evidence],
+                         registry_unreadable=True)
     scope_value = (_str_meta(meta, "scope") or "").casefold()
 
     if path_hit and meta_cands:
@@ -319,7 +329,8 @@ def _marker_units(doc_lines: list[str], body_start: int, file_unit: _Unit, reg: 
     units: list[_Unit] = []
     if marks[0][0] > body_start:
         units.append(_Unit(body_start, marks[0][0] - 1, file_unit.scope, file_unit.project,
-                           [*file_unit.evidence, "block:marker 앞"], list(file_unit.conflict_with)))
+                           [*file_unit.evidence, "block:marker 앞"], list(file_unit.conflict_with),
+                           registry_unreadable=file_unit.registry_unreadable))
     for i, (line_no, payload) in enumerate(marks):
         end = marks[i + 1][0] - 1 if i + 1 < len(marks) else total
         try:
@@ -431,7 +442,8 @@ def load_doc(vault_dir: Path, rel: str, path: Path, reg: ProjectRegistry) -> _Do
         units = _marker_units(source.lines, body_start, file_unit, reg, warnings)
         has_markers = bool(units)
     if not units:
-        whole = _Unit(body_start, total, file_unit.scope, file_unit.project, list(file_unit.evidence), list(file_unit.conflict_with))
+        whole = _Unit(body_start, total, file_unit.scope, file_unit.project, list(file_unit.evidence), list(file_unit.conflict_with),
+                      registry_unreadable=file_unit.registry_unreadable)
         units = [whole] if total >= body_start else []
     title, title_line = _title(meta, source.lines, body_start, rel)
     status_declared, status_class, status_reason = _status(rel, meta)
@@ -563,6 +575,10 @@ class SearchScope:
             if self.include_unattributed and key in {c.casefold() for c in unit.conflict_with}:
                 return ""
             return "conflict"
+        if unit.registry_unreadable:
+            # include_unattributed는 "근거가 없는" 문서를 더하는 것이다. 이 unknown은 근거(경로·선언)가 있는데 등록부를 못 읽어
+            # 판정을 못 했을 뿐이라, 정상이면 다른 프로젝트로 걸러졌을 문서가 이 프로젝트 검색에 섞일 수 있다
+            return "registry_unreadable"
         if self.include_unattributed:
             return ""
         return "invalid_marker" if unit.invalid_marker else "unknown"

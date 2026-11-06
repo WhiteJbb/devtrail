@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -159,13 +160,14 @@ class ProjectRegistry:
         등록부 일부를 못 읽어 이름이 정말 하나인지 모르면(may_shadow) 가려졌을 수 있는 쪽을 후보로 더한다 — 이름만으로
         소속을 정하는 문서는 conflict가 된다. 식별은 이 후보를 쓰지 않는다: 프로젝트 검색은 계속되고, 경로가 직접 소속을
         정하는 문서(30_Projects/<dir>/)는 그대로 그 프로젝트다.
+
+        후보가 이미 둘 이상이어도 후보마다 더한다. 경로 후보와 선언 후보의 교집합으로 소속을 정하는 문서(예:
+        별칭이 겹친 SessionHandoffs/Beta/ 아래 `project: Alpha`)는, 한쪽에만 가려진 후보가 있으면 교집합이 Alpha 하나로
+        줄어 정상이면 conflict였을 문서가 Alpha로 확정된다.
         """
         _, _, targets = _resolve_name(self, name)
-        if len(targets) == 1:
-            shadow = self.may_shadow(name)
-            if shadow:
-                targets = {*targets, f"{name.strip()} ({shadow} 미확인)"}
-        return sorted(targets, key=str.casefold)
+        shadowed = {f"{t} ({s} 미확인)" for t in targets if (s := self.may_shadow(t))}
+        return sorted({*targets, *shadowed}, key=str.casefold)
 
     def is_known(self, name: str) -> bool:
         key = name.strip().casefold()
@@ -206,6 +208,14 @@ def _list_dir(reg: ProjectRegistry, vault_dir: Path, path: Path) -> list[Path]:
         return []
 
 
+def _exists_quiet(path: Path, check: Callable[[Path], bool]) -> bool:
+    """링크 대상 확인용 — 대상을 못 읽으면 없는 것으로 본다(링크는 어차피 등록하지 않는다, 경고 문장만 달라진다)."""
+    try:
+        return check(path)
+    except OSError:
+        return False
+
+
 def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
     reg = ProjectRegistry()
     # 30_Projects/*/Context.md — glob은 하위 폴더의 PermissionError를 경고 없이 삼키거나(3.11 pathlib) 그대로 올린다.
@@ -216,6 +226,12 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
         ctx_path = child / "Context.md"
         rel = ctx_path.relative_to(vault_dir).as_posix()
         try:
+            if child.is_symlink():
+                # 링크 폴더는 대상이 무엇이든 등록하지 않는다(아래 링크 검사와 같은 결과) — 대상에 못 들어가는 링크를
+                # 등록부 미확인으로 만들면 등록부와 무관한 경로 때문에 정상 프로젝트 문서까지 conflict·partial이 된다
+                if _exists_quiet(ctx_path, Path.exists):
+                    reg.warnings.append(f"{rel}: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
+                continue
             if not ctx_path.exists():
                 continue
         except OSError as exc:
@@ -250,6 +266,10 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
             continue
         rel = d.relative_to(vault_dir).as_posix()
         try:
+            if d.is_symlink():
+                if _exists_quiet(d, Path.is_dir):  # 30_Projects와 같은 이유로 링크 대상의 권한은 미확인으로 보지 않는다
+                    reg.warnings.append(f"{rel}/: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
+                continue
             if not d.is_dir():
                 continue
         except OSError as exc:
