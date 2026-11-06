@@ -160,7 +160,8 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 |---|---|---|
 | 수정 전 baseline (`88288b4`) | 673 passed, 3 failed, 0 skipped | 673 passed, 3 deselected |
 | 수정 후 (1차 `b7745c0`) | 698 passed, 3 failed, 0 skipped | 698 passed, 3 deselected |
-| 병합 차단 리뷰 반영 후 | 703 passed, 3 failed, 0 skipped | 703 passed, 3 deselected |
+| 병합 차단 리뷰 반영 후 (`793417e`) | 703 passed, 3 failed, 0 skipped | 703 passed, 3 deselected |
+| 2번째 병합 차단 리뷰 반영 후 | 708 passed, 3 failed, 0 skipped | 708 passed, 3 deselected |
 
 실패 3건은 두 시점이 같다(새 실패 0건): `test_ancestor_pids_starts_with_self_and_includes_parent`,
 `test_marker_for_current_session_picks_own_among_concurrent`, `test_get_recent_sessions_groups_plan_and_process` — 이 컨테이너 환경
@@ -245,12 +246,12 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 
 | 기준 | 확인 방법 | 결과 |
 |---|---|---|
-| 등록부 폴더·하위 폴더 순회 PermissionError | `DenyAccess` 결정적 테스트 4종 + 소속 미추측·cursor·20_Knowledge 테스트, 실제 chmod 테스트 2건 | 통과. 검색은 계속, `registry_unreadable`·`partial`, 정상 프로젝트 결과 유지, 못 읽은 프로젝트는 `project_unresolved` |
+| 등록부 폴더·하위 폴더 순회 PermissionError | `DenyAccess` 결정적 테스트 4종 + 소속 미추측·cursor·20_Knowledge·별칭 충돌·동명 충돌 테스트, 실제 chmod 테스트 3건 | 통과. 검색은 계속, `registry_unreadable`·`partial`, 경로 근거 문서 유지, 못 읽은 프로젝트는 `project_unresolved`, 별칭·동명 충돌은 정상 상태처럼 `ambiguous`/`conflict` |
 | UTF-8이 아닌 매핑 | 식별·검색·MCP `call_tool` 테스트 | 통과. 경고 후 무시, canonical 유지, 잘못 읽은 별칭 미사용 |
 | marker lone surrogate | marker 4종·frontmatter·`.claude/vault.json`·매핑·MCP 테스트, UTF-8 인코딩 직렬화 확인 | 통과. 손상 marker, 정상 한글 이름 유지, 타 프로젝트 블록 미노출 |
 | 예산 테스트 이식성 | 경로 길이 단언 포함 재작성, 짧은 경로 대조군 | 이 컨테이너에서 통과. **macOS에서는 실행하지 않음** |
-| 네이티브 Python 전체 실행 | CPython 3.11.2 venv, baseline 비교 | 673 → 698 passed, 실패 3건 동일, skip 0 |
-| 호환성·문서·재검사·비밀값·리뷰 | 평가 Vault 재실행, 기존 테스트 무수정 통과, 이 문서 | 순위·근거·분량 동일. 비밀값 일치 없음. 리뷰 F1·F3·F6 반영, F2 정책 보류, F4·F5 범위 밖 |
+| 네이티브 Python 전체 실행 | CPython 3.11.2 venv, baseline 비교 | 673 → 708 passed, 실패 3건 동일, skip 0 |
+| 호환성·문서·재검사·비밀값·리뷰 | 평가 Vault 재실행, 변경 전 cursor 고정값 테스트, 이 문서 | 순위·근거·분량·cursor 동일. 비밀값 일치 없음. 독립 리뷰 F1·F3·F6과 병합 차단 리뷰 2회(별칭 충돌, 동명 충돌·F2) 반영, F4·F5 범위 밖 |
 
 ## 병합 차단 리뷰(BLOCK) 반영 — 등록부 미확인으로 별칭 충돌이 풀리던 문제
 
@@ -263,6 +264,25 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 `88288b4`에서는 권한 테스트 4건이 `PermissionError`·별칭 누출로 실패하고, cursor 테스트는 그 코드가 발급한 값이라 통과한다.
 평가 Vault 7개 사례의 순위·근거·분량은 다시 돌려도 같다.
 
-남은 정책 지점: 못 읽은 30_Projects 폴더가 **등록 표기와 같은 이름**을 선언했을 가능성(위 리뷰 F2)은 계속 판정하지 않는다 — 막으면
-폴더 하나 권한 오류로 모든 프로젝트 검색이 거부된다. 별칭은 그 이름을 직접 선언한 등록 근거가 없어서 이번에 막았고, 등록 표기는 읽은
-Context.md가 직접 선언한 근거가 있어서 남겼다. `evidence-search.md` "알려진 한계"에 적었다.
+이때 남긴 정책 지점(못 읽은 30_Projects 폴더가 등록 표기와 같은 이름을 선언했을 가능성, 위 리뷰 F2)은 다음 리뷰에서 계약 위반으로 판정돼
+아래에서 고쳤다.
+
+## 2번째 병합 차단 리뷰(BLOCK) 반영 — 동명 Context 충돌이 등록부 미확인으로 풀리던 문제
+
+| # | 지적 | 판단 | 조치 |
+|---|---|---|---|
+| 1 (높음) | 두 Context가 `Alpha`를 선언하면 정상일 때 Alpha 식별은 `ambiguous`, 이름만 선언한 문서는 `conflict`다. 하나를 못 읽으면 식별이 `resolved`, 문서 후보가 `['Alpha']`로 바뀌어 세션·marker가 Alpha 검색에 들어온다. 별칭만 보호하고 등록 표기(`is_known` 조기 반환)는 보호하지 않았다. F2 보류 설명은 계약 예외가 아니다 | 확인함 — 실제 chmod(AlphaOld 000)로 세션·marker가 conflict→project로 바뀌어 Alpha 결과에 들어오는 것을 재현. 앞서 정책 판단으로 남긴 부분이 계약의 "소속 미추측·범위 보호" 위반이라는 지적이 맞다 | 식별과 소속을 나눴다. `ProjectRegistry.may_shadow` — 이미 등록된 이름이 못 읽은 등록부 때문에 하나로 보이는 것일 수 있는가(등록 표기: 못 읽은 30_Projects 폴더 하나 이상, handoff 이름: 둘 이상 또는 30_Projects 전체, 또는 대소문자만 다른 같은 handoff 폴더). 그러면 **소속 후보**(`attribution_targets`)에 `Alpha (<경로> 미확인)`을 더해 이름만으로 소속이 정해지는 문서를 `conflict`로 둔다. **식별**은 `resolved`로 두고 유일성 미확인 경고를 붙인다 — 리뷰가 요구한 대로 경로 근거 문서(`30_Projects/<읽은 폴더>/`)는 계속 검색된다 |
+
+새 테스트 5건: 검색 3(AlphaOld 000·r-- 결정적 재현, 실제 chmod — 세션 frontmatter·메모리 marker·handoff·보관 handoff·20_Knowledge 폴더
+다섯 종류 모두 conflict, 경로 근거 문서만 Alpha 결과, `include_unattributed`로도 conflict로만 포함), 과잉 보호 방지 1(handoff 이름은
+못 읽은 30_Projects 폴더 하나로는 그대로, 30_Projects 전체를 못 읽으면 conflict), 판정 규칙 단위 1. 5건 모두 병합 차단된 커밋(`b633128`)과
+`88288b4`에서 실패한다(이름만 선언한 문서 누출 4, 새 함수 없음 1).
+
+바뀐 기존 테스트 기대값 2곳(완화가 아니라 더 엄격해졌다):
+- `test_registry_folder_permission_error_does_not_abort_search`의 30_Projects 사례 2건 — `SessionHandoffs/Alpha/h.md`는 폴더 **이름**으로
+  소속이 정해지므로 못 읽은 30_Projects 폴더가 있으면 Alpha 결과에서 빠진다. 그 문서가 `conflict`이고 후보가
+  `["Alpha", "Alpha (30_Projects/Secret/ 미확인)"]`임을 새로 단언한다.
+- `test_cursor_stale_when_registry_folder_recovers` — 위 변화로 Alpha 일치 문서가 1건이 되어 첫 페이지 뒤 cursor가 없었다. 경로 근거 문서를
+  하나 더 두어 같은 검사(회복 후 `cursor_stale`)를 유지했다.
+
+평가 Vault 7개 사례의 순위·근거·분량과 변경 전 cursor 호환은 다시 확인해도 같다.

@@ -347,6 +347,7 @@ vault 일부가 손상되거나 권한이 없어도 structured 검색 전체가 
 | 스캔 중 폴더·파일 stat이 실패한다 (실행 권한 없는 폴더 안 파일 등) | `is_symlink()`의 `PermissionError`로 중단 | 그 경로만 `read_failed`, `partial=true`. 링크인지 모르는 폴더는 따라 들어가지 않는다 |
 | 식별 매핑 파일·`.claude/vault.json`이 UTF-8이 아니다 | `UnicodeDecodeError` 전파 | 경고(`registry` / `project_resolution`) 후 무시. canonical·handoff·remote 식별은 계속된다 |
 | 이름이 별칭으로만 등록부에 남았는데, 못 읽은 등록부 경로가 그 이름 자체를 가렸을 수 있다 (예: Alpha의 별칭 `Beta`, SessionHandoffs/Beta를 못 읽음) | (등록부 미확인 개념 없음) | 정상이면 그 이름은 별칭과 겹쳐 모호하다. 별칭 대상 하나로 확정하지 않고 그 이름 자체를 후보로 남긴다 — 식별은 `ambiguous`(evidence `registry_unreadable:<경로>`), frontmatter·marker·보관 handoff의 소속은 `conflict`. SessionHandoffs는 폴더명이 곧 이름이라 그 이름만, 30_Projects 아래 폴더는 선언명을 몰라 **모든 별칭**이 해당한다. 등록 표기(canonical)·handoff 이름은 계속 확정된다 |
+| 등록된 이름인데, 못 읽은 등록부 경로가 같은 이름을 선언했을 수 있다 (예: `30_Projects/Alpha`와 `30_Projects/AlphaOld`가 둘 다 `project: Alpha`, AlphaOld를 못 읽음) | 정상이면 `ambiguous`인 Alpha가 `resolved`가 되고, 이름만 선언한 문서가 Alpha 소속으로 바뀌어 Alpha 검색에 들어왔다 | 식별은 `resolved`로 두되 `project_resolution` 경고로 유일성을 확인하지 못했다고 알린다. **경로가 직접 소속을 정하는 문서**(`30_Projects/<읽은 폴더>/`)만 그 프로젝트이고, **이름만으로 소속이 정해지는 문서**(frontmatter·marker `project`, SessionHandoffs·보관 handoff·20_Knowledge 폴더 이름)는 `conflict`(`conflict_with`에 `Alpha (30_Projects/AlphaOld/ 미확인)`)라 기본 검색에서 빠진다. 등록 표기는 못 읽은 30_Projects 폴더가 하나만 있어도 해당한다. SessionHandoffs로만 등록된 이름은 30_Projects 폴더 둘 이상(또는 30_Projects 전체)을 못 읽었을 때만 해당한다 — 폴더 하나가 같은 이름을 선언해도 같은 프로젝트이기 때문이다(등록 표기가 우선) |
 | 매핑 파일은 UTF-8인데 JSON 이스케이프로 짝 없는 surrogate가 든 프로젝트 이름·`aliases`·`repos` | 그 값이 소속 후보가 되어 커서 지문에서 `UnicodeEncodeError` | 그 프로젝트 항목(이름이 손상) 또는 그 목록 전체(값 하나가 손상)를 경고 후 무시 |
 | marker JSON의 scope/project에 짝 없는 surrogate | 그 값이 블록 소속이 되어 커서 지문에서 `UnicodeEncodeError` | 손상 marker(`unknown`, `invalid_marker`) + 경고. 값은 응답에 싣지 않는다 |
 | frontmatter·`.claude/vault.json`의 `project`에 짝 없는 surrogate | 그 값이 소속·식별 이름이 됐다 | `project_field`가 형식 미지원으로 본다 — 숫자 `project`와 같은 규칙(근거에서 빼고 경고) |
@@ -396,11 +397,11 @@ legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 기능 �
 | 시점 | 결과 |
 |---|---|
 | 수정 전(`88288b4`) | 673 passed, 3 failed |
-| 수정 후 | 703 passed, 3 failed — 실패 목록이 같다(새 실패 0건), skip 0건 |
+| 수정 후 | 708 passed, 3 failed — 실패 목록이 같다(새 실패 0건), skip 0건 |
 
 같은 실패 3건(이 컨테이너 환경 — 등록 검사에서도 deselect한다): `test_session_markers.py`의
 `test_ancestor_pids_starts_with_self_and_includes_parent`·`test_marker_for_current_session_picks_own_among_concurrent`,
-`test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process`. 새 테스트 30건 중 29건은 수정 전 코드에서 실패한다(보호 테스트 1건은 새 API가 없어서). 나머지 1건(변경 전 cursor 호환)은
+`test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process`. 새 테스트 35건 중 34건은 수정 전 코드에서 실패한다(보호 테스트 1건은 새 API가 없어서). 나머지 1건(변경 전 cursor 호환)은
 수정 전 코드가 발급한 cursor를 쓰는 호환 테스트라 수정 전 코드에서도 통과하고, 병합 차단된 중간 커밋에서 실패한다.
 상세는 [`evidence-search-verification.md`](./evidence-search-verification.md) "2026-11-06".
 
@@ -448,13 +449,15 @@ mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위�
 - 별칭이 다른 프로젝트 이름과 겹치는 매핑을 두면, 그 이름만 선언한 문서는 양쪽 프로젝트 검색 기본값에서 모두 빠진다(`conflict`).
   매핑을 고치거나 `include_unattributed=True`로 본다.
 - `get_project_briefing`, `get_recent_sessions` 등 다른 도구의 프로젝트 판정은 바꾸지 않았다 (briefing은 여전히 basename 매칭을 쓴다).
-- 등록부에서 읽지 못한 30_Projects 폴더가 이미 등록된 **등록 표기(canonical)와 같은 이름**을 선언했는지는 알 수 없다. 그 경우 원래는
-  `ambiguous`였을 이름이 `resolved`로 나오고, 그 이름을 선언한 문서는 conflict가 아니라 그 프로젝트 소속이 된다 — `partial=true`와
-  `registry_unreadable` 경고로 알릴 뿐 판정하지 못한다. 막으려면 30_Projects 폴더 하나만 못 읽어도 모든 등록 이름의 식별·소속을 거부해야
-  해서 "정상 등록부의 검색은 계속"과 부딪친다(정책 판단이 필요한 지점). 별칭으로만 남은 이름은 위 표처럼 확정하지 않는다 — 별칭에는 그
-  이름을 직접 선언한 등록 근거가 없기 때문이다.
-- 30_Projects 아래 폴더를 하나라도 못 읽으면 모든 별칭이 `ambiguous`가 된다(그 폴더의 선언명을 모르므로). 별칭으로 검색하던 호출은
-  등록 표기로 다시 검색해야 하고, 별칭만 선언한 문서는 그동안 `conflict`라 프로젝트 검색 기본값에서 빠진다.
+- 등록부를 못 읽는 동안에는 보수적으로 판정한다. 30_Projects 아래 폴더를 하나라도 못 읽으면 그 폴더의 선언명을 모르므로:
+  - 모든 등록 프로젝트에서 **이름만으로 소속이 정해지는 문서**(세션 frontmatter, 메모리 marker, SessionHandoffs·보관 handoff·20_Knowledge
+    폴더)가 `conflict`가 되어 프로젝트 검색 기본값에서 빠진다. `include_unattributed=True`로 보면 `conflict`로 함께 나온다.
+  - 모든 별칭 식별이 `ambiguous`가 된다. 별칭으로 검색하던 호출은 등록 표기로 다시 검색한다.
+  - 등록 표기 식별은 `resolved`로 계속되고, `30_Projects/<P>/` 아래 문서는 계속 검색된다.
+
+  등록부가 회복되면 정상 판정으로 돌아온다(그 사이 발급한 cursor는 `cursor_stale`). 막으려면 폴더 하나 권한 오류로 모든 프로젝트 검색을
+  거부해야 해서, 식별은 계속하고 소속만 보수적으로 두는 쪽을 택했다. 그래서 정상이었다면 `project_ambiguous`로 거부됐을 검색이 이 동안에는
+  경로 근거 문서만으로 성공한다 — 경고(`project_resolution`)와 `partial=true`가 그 사실을 알린다.
 - 권한 회귀 테스트의 결정적 재현은 OS 호출(`os.scandir`·`os.listdir`·`os.stat`·`os.lstat`)을 가로채는 대역(`tests/conftest.py`
   `DenyAccess`)이다. 실제 chmod 테스트도 하나 있지만 root에서는 skip된다(root는 디렉터리 권한을 무시한다). macOS 실제 권한·경로 한도에서는
   돌려 보지 않았다 — 예산 테스트는 경로를 만들기 전에 절대 경로 1024바이트·이름 255바이트 미만을 테스트 안에서 확인한다.
