@@ -287,3 +287,155 @@ def test_project_field_rule():
     assert project_field({"project": ""}) == ("", False) and project_field("x") == ("", False)
     for value in (123, 1.5, True, date(2026, 10, 1), ["a"], {"a": 1}):
         assert project_field({"project": value}) == ("", True)
+
+
+# ── 권한·인코딩·손상 문자열 회귀 (2026-11-06) ──────────────────────────────────
+
+
+def test_project_field_rejects_lone_surrogates_but_keeps_unicode():
+    from app.services.project_identity import project_field, project_field_issue
+
+    assert project_field({"project": "\ud800"}) == ("", True)
+    assert project_field({"project": "Alpha\udfff"}) == ("", True)
+    assert project_field({"project": " 한글팀 "}) == ("한글팀", False)
+    assert project_field({"project": "😀 팀"}) == ("😀 팀", False)  # 짝이 맞는 비BMP 문자는 정상이다
+    assert "유효하지 않은 문자" in project_field_issue({"project": "\ud800"})
+    assert project_field_issue({"project": 123}) == "문자열이 아니라"
+
+
+def test_non_utf8_map_file_is_ignored_with_warning(tmp_path):
+    """UTF-8이 아닌 매핑은 다른 인코딩으로 추정해 읽지 않는다 — 경고 후 무시하고 canonical 식별은 계속한다."""
+    vault = tmp_path / "vault"
+    _ctx(vault, "Alpha", "Alpha")
+    bad = tmp_path / "map-cp949.json"
+    bad.write_bytes(json.dumps({"projects": {"Alpha": {"aliases": ["알파"], "repos": ["o/alpha"]}}},
+                               ensure_ascii=False).encode("cp949"))
+    res = resolve_project(vault, "Alpha", str(bad))
+    assert (res.status, res.project, res.method) == ("resolved", "Alpha", "canonical")
+    assert any("UTF-8이 아니라 무시합니다" in w for w in res.warnings)
+    assert resolve_project(vault, "알파", str(bad)).status == "unresolved"
+    assert resolve_project(vault, "o/alpha", str(bad)).status == "unresolved"
+
+
+def test_non_utf8_vault_json_is_ignored_with_warning(tmp_path):
+    vault = tmp_path / "vault"
+    _ctx(vault, "Alpha", "Alpha")
+    repo = _repo(tmp_path, "r", remote="git@github.com:o/alpha.git")
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "vault.json").write_bytes('{"project": "알파"}'.encode("cp949"))
+    res = resolve_project(vault, str(repo), _map(tmp_path, {"Alpha": {"repos": ["o/alpha"]}}))
+    assert (res.status, res.project, res.method) == ("resolved", "Alpha", "repo_mapping")  # remote 근거는 계속 쓴다
+    assert any(".claude/vault.json이 UTF-8이 아니라" in w for w in res.warnings)
+
+
+def test_vault_json_with_lone_surrogate_is_not_evidence(tmp_path):
+    vault = tmp_path / "vault"
+    _ctx(vault, "Alpha", "Alpha")
+    repo = tmp_path / "repos" / "r"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "vault.json").write_text('{"project": "\\ud800"}', encoding="utf-8")
+    res = resolve_project(vault, str(repo))
+    assert res.status == "unresolved" and any("유효하지 않은 문자" in w for w in res.warnings)
+
+
+def test_registry_permission_errors_are_warnings_not_exceptions(tmp_path, deny_access):
+    """등록부 순회의 PermissionError는 그 경로만 미확인으로 남긴다. 나머지 등록·식별은 계속된다."""
+    from app.services.project_identity import load_registry
+
+    _ctx(tmp_path, "Alpha", "Alpha")
+    _ctx(tmp_path, "Secret", "Hidden")
+    (tmp_path / "60_Candidates/SessionHandoffs/Beta").mkdir(parents=True)
+    deny_access.none("30_Projects/Secret")
+    deny_access.none("60_Candidates/SessionHandoffs")
+    reg = load_registry(tmp_path)
+    assert deny_access.hits
+    assert set(reg.unreadable) == {"30_Projects/Secret/", "60_Candidates/SessionHandoffs/"}
+    assert reg.known_projects() == ["Alpha"]
+    assert reg.unreadable_prefix("30_Projects/Secret/Plans/p.md") == "30_Projects/Secret/"
+    assert reg.unreadable_prefix("30_Projects/SecretOther/p.md") == ""
+    res = resolve_project(tmp_path, "Alpha")
+    assert res.status == "resolved" and any("30_Projects/Secret/" in w for w in res.warnings)
+    assert resolve_project(tmp_path, "Hidden").status == "unresolved"  # 못 읽은 선언을 추측하지 않는다
+
+
+def test_unreadable_context_file_is_not_registered_by_folder_name(tmp_path, monkeypatch):
+    """Context.md 자체를 못 읽으면 폴더명으로 등록하지 않는다 — 선언명이 폴더명과 다를 수 있다.
+    (frontmatter 형식 오류는 전처럼 폴더명으로 식별한다.)"""
+    from app.services import project_identity
+
+    _ctx(tmp_path, "Secret", "Hidden")
+    _ctx(tmp_path, "Broken", None)
+    (tmp_path / "30_Projects/Broken/Context.md").write_text("---\nproject: [닫히지\n---\n", encoding="utf-8")
+    real = Path.read_text
+
+    def guarded(self, *args, **kwargs):
+        if self.parent.name == "Secret" and self.name == "Context.md":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(project_identity.Path, "read_text", guarded)
+    reg = project_identity.load_registry(tmp_path)
+    assert "30_Projects/Secret/" in reg.unreadable and not reg.is_known("Secret") and not reg.is_known("Hidden")
+    assert reg.is_known("Broken")
+
+
+def test_context_path_that_is_not_readable_as_file_keeps_folder_fallback(tmp_path):
+    """권한 오류가 아닌 읽기 실패(Context.md가 폴더)는 전처럼 폴더명으로 식별한다 — 등록부 미확인(partial)으로 만들지 않는다."""
+    from app.services.project_identity import load_registry
+
+    (tmp_path / "30_Projects/Odd/Context.md").mkdir(parents=True)
+    reg = load_registry(tmp_path)
+    assert reg.is_known("Odd") and not reg.unreadable
+    assert any("폴더명으로 식별합니다" in w for w in reg.warnings)
+
+
+def test_alias_only_name_is_not_confirmed_while_registry_may_hide_it(tmp_path, deny_access):
+    """별칭만 남은 이름은 못 읽은 등록부가 그 이름을 가렸을 수 있으면 확정하지 않는다(식별 ambiguous, 소속 후보 둘).
+    SessionHandoffs 폴더는 이름이 곧 폴더명이라 그 이름만, 30_Projects 아래 폴더는 선언명을 몰라 모든 별칭이 해당한다."""
+    from app.services.project_identity import load_registry
+
+    _ctx(tmp_path, "Alpha", "Alpha")
+    _ctx(tmp_path, "Gamma", "Gamma")
+    (tmp_path / "60_Candidates/SessionHandoffs/Beta").mkdir(parents=True)
+    map_path = _map(tmp_path, {"Alpha": {"aliases": ["Beta", "al"]}})
+
+    deny_access.none("60_Candidates/SessionHandoffs/Beta")
+    deny_access.no_exec("60_Candidates/SessionHandoffs")
+    reg = load_registry(tmp_path, map_path)
+    assert reg.attribution_targets("Beta") == ["Alpha", "Beta"]
+    assert resolve_project(tmp_path, "Beta", map_path).status == "ambiguous"
+    assert resolve_project(tmp_path, "al", map_path).project == "Alpha"  # 가려질 수 없는 별칭은 그대로 확정
+    assert resolve_project(tmp_path, "Alpha", map_path).status == "resolved"
+
+    deny_access.clear()
+    deny_access.none("30_Projects/Gamma")
+    reg = load_registry(tmp_path, map_path)
+    # Gamma의 선언명이 al일 수도, Alpha일 수도 있다
+    assert reg.attribution_targets("al") == ["al", "Alpha", "Alpha (30_Projects/Gamma/ 미확인)"]
+    assert resolve_project(tmp_path, "al", map_path).status == "ambiguous"
+    assert resolve_project(tmp_path, "Alpha", map_path).status == "resolved"  # canonical 이름은 계속 확정
+
+
+def test_may_shadow_rule(tmp_path, deny_access):
+    """등록된 이름이 못 읽은 등록부 때문에 하나로 보이는 것일 수 있는가 — 식별은 계속 확정(경고), 소속 후보에는 가려진 쪽을 더한다."""
+    from app.services.project_identity import load_registry
+
+    _ctx(tmp_path, "Alpha", "Alpha")
+    _ctx(tmp_path, "Old", "Alpha")
+    _ctx(tmp_path, "Other", "Other")
+    (tmp_path / "60_Candidates/SessionHandoffs/Gamma").mkdir(parents=True)
+    assert resolve_project(tmp_path, "Alpha").status == "ambiguous"
+
+    deny_access.none("30_Projects/Old")
+    reg = load_registry(tmp_path)
+    assert reg.may_shadow("alpha") == "30_Projects/Old/" and reg.may_shadow("Other") == "30_Projects/Old/"
+    assert reg.may_shadow("Gamma") == ""  # handoff 이름 — 못 읽은 폴더 하나로는 모호해지지 않는다
+    assert reg.may_shadow("Nobody") == ""  # 등록되지 않은 이름은 may_hide가 다룬다
+    assert reg.attribution_targets("Alpha") == ["Alpha", "Alpha (30_Projects/Old/ 미확인)"]
+    assert reg.attribution_targets("Gamma") == ["Gamma"]
+    res = resolve_project(tmp_path, "Alpha")
+    assert res.status == "resolved" and any("같은 이름을 선언한 다른 Context.md" in w for w in res.warnings)
+
+    deny_access.clear()
+    reg = load_registry(tmp_path)
+    assert not reg.unreadable and reg.may_shadow("Other") == "" and reg.attribution_targets("Other") == ["Other"]

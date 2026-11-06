@@ -462,3 +462,23 @@ def test_read_note_structured_long_line_through_call_tool(vault_env, monkeypatch
                                          "start_line": 2, "expected_version": page["next"]["expected_version"]})
     err = second["result"]["error"]
     assert err["code"] == "line_too_long" and err["line_chars"] == 500 and err["next"]["start_line"] == 3
+
+
+def test_search_vault_structured_survives_corrupt_marker_and_non_utf8_map(vault_env, monkeypatch, tmp_path):
+    """실제 call_tool 경로 — 손상 marker(짝 없는 surrogate)·UTF-8이 아닌 매핑이 있어도 응답이 직렬화되어 돌아온다."""
+    _note(vault_env, "30_Projects/Devtrail/Context.md", "---\nproject: Devtrail\n---\n# Devtrail\n")
+    _note(vault_env, "40_AgentMemory/06_Lessons.md",
+          '# L\n<!-- devtrail-memory-patch: {"scope": "project", "project": "\\ud800"} -->\n손상토큰 블록\n'
+          '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n손상토큰 정상\n')
+    map_path = tmp_path / "map.json"
+    map_path.write_bytes('{"projects": {"Devtrail": {"aliases": ["데브"]}}}'.encode("cp949"))
+    monkeypatch.setenv("DEVTRAIL_PROJECT_MAP", str(map_path))
+    get_settings.cache_clear()
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    content, structured = _call(mod, "search_vault", {"query": "손상토큰", "structured": True})
+    resp = structured["result"]
+    assert resp["ok"] and resp["returned"] == 1
+    assert [b.get("invalid_marker", False) for b in resp["results"][0]["attribution"]["blocks"]] == [False, True, False]
+    assert all(c.text.encode("utf-8") for c in content)
+    _, scoped = _call(mod, "search_vault", {"query": "손상토큰", "structured": True, "project": "devtrail"})
+    assert scoped["result"]["ok"] and "정상" in scoped["result"]["results"][0]["excerpts"][0]["text"]

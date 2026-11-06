@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,7 +40,7 @@ def project_field(mapping: object) -> tuple[str, bool]:
     문자열만 프로젝트 이름으로 인정한다. 반환은 (이름, 형식 미지원 여부):
     - 키가 없거나 None·빈 문자열 → ("", False)
     - 문자열 → (앞뒤 공백을 뺀 값, False)
-    - 숫자·날짜·목록·불리언 등 → ("", True) — 근거로 쓰지 않는다(호출 측이 경고를 남긴다)
+    - 숫자·날짜·목록·불리언 등, 짝 없는 surrogate가 든 문자열 → ("", True) — 근거로 쓰지 않는다(호출 측이 경고를 남긴다)
     한쪽은 숫자를 버리고 다른 쪽은 "123"으로 바꾸면, 식별로 확정한 프로젝트가 자기 Context.md를 충돌로 잃는다.
     """
     if not isinstance(mapping, dict):
@@ -47,8 +49,28 @@ def project_field(mapping: object) -> tuple[str, bool]:
     if value is None:
         return "", False
     if isinstance(value, str):
+        if not is_valid_text(value):
+            return "", True
         return value.strip(), False
     return "", True
+
+
+def is_valid_text(value: str) -> bool:
+    """UTF-8로 내보낼 수 있는 문자열인가. JSON `"\\ud800"`·YAML `"\\ud800"` 이스케이프는 짝 없는 surrogate를 만든다 —
+    그런 이름을 근거로 쓰면 지문(sha256)·응답 직렬화에서 UnicodeEncodeError로 검색 전체가 멈춘다."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def project_field_issue(mapping: object) -> str:
+    """project_field가 형식 미지원으로 본 이유 — 경고 문장에 넣는다 ("project가 <이유> …")."""
+    value = mapping.get("project") if isinstance(mapping, dict) else None
+    if isinstance(value, str) and not is_valid_text(value):
+        return "유효하지 않은 문자(짝 없는 surrogate 등)를 포함해"
+    return "문자열이 아니라"
 
 
 @dataclass(frozen=True)
@@ -77,6 +99,45 @@ class ProjectRegistry:
     aliases: dict[str, set[str]] = field(default_factory=dict)  # casefold alias → canonical 표기들
     repos: dict[str, set[str]] = field(default_factory=dict)  # casefold owner/repo → canonical 표기들
     warnings: list[str] = field(default_factory=list)
+    # 권한 등으로 확인하지 못한 등록부 경로(vault 기준, 폴더는 '/'로 끝난다) → 경고 문장. 이 아래 문서는 경로로 소속을 정하지 않는다
+    unreadable: dict[str, str] = field(default_factory=dict)
+
+    def unreadable_prefix(self, rel: str) -> str:
+        """rel이 확인하지 못한 등록부 경로 아래면 그 경로, 아니면 빈 문자열."""
+        return next((p for p in self.unreadable if rel.startswith(p)), "")
+
+    def may_hide(self, name: str) -> str:
+        """등록되지 않은 이름이 확인하지 못한 등록부 경로 때문에 안 보이는 것일 수 있으면 그 경로, 아니면 빈 문자열.
+
+        30_Projects 아래 폴더를 못 읽으면 그 Context.md가 어떤 이름을 선언했는지 모르므로 어떤 이름이든 가릴 수 있다.
+        SessionHandoffs는 폴더명이 곧 이름이라, 그 폴더(또는 SessionHandoffs 전체)를 못 읽었을 때만 해당한다.
+        """
+        key = name.strip().casefold()
+        if not self.unreadable or self.is_known(name):
+            return ""
+        for p in self.unreadable:
+            if p.startswith("30_Projects/") or p == f"{_HANDOFF_ROOT}/" or p.casefold() == f"{_HANDOFF_ROOT}/{key}/".casefold():
+                return p
+        return ""
+
+    def may_shadow(self, name: str) -> str:
+        """이미 등록된 이름이 확인하지 못한 등록부 경로 때문에 하나로 보이는 것일 수 있으면 그 경로, 아니면 빈 문자열.
+
+        정상이면 같은 이름을 선언한 Context.md가 둘 이상이라 모호(ambiguous/conflict)했을 수 있다:
+        - 등록 표기(canonical): 못 읽은 30_Projects 폴더가 하나만 있어도 같은 이름을 선언했을 수 있다
+        - SessionHandoffs 폴더로만 등록된 이름: 못 읽은 폴더가 등록 표기 하나로 선언해도 같은 프로젝트다(등록 표기가
+          우선한다). 모호해지려면 30_Projects 폴더 둘 이상(또는 30_Projects 전체)이 같은 이름을 선언하거나, 대소문자만
+          다른 같은 이름의 SessionHandoffs 폴더가 가려져 있어야 한다
+        """
+        key = name.strip().casefold()
+        if not self.unreadable or not self.is_known(name):
+            return ""
+        projects = [p for p in self.unreadable if p.startswith("30_Projects/")]
+        if key in self.canonical:
+            return projects[0] if projects else ""
+        if "30_Projects/" in projects or len(projects) >= 2:
+            return projects[0]
+        return next((p for p in self.unreadable if p.casefold() == f"{_HANDOFF_ROOT}/{key}/".casefold()), "")
 
     def canonical_name(self, name: str) -> str:
         """등록 표기로 바꾼다. 등록이 없으면 입력 표기 그대로 — 소속 비교는 casefold로 한다."""
@@ -95,9 +156,18 @@ class ProjectRegistry:
         모두 보고, 같은 이름이 둘 이상을 가리키면(동명 Context.md, 다른 프로젝트의 별칭과 겹침) 후보를 전부 돌려준다.
         빈 목록은 등록 근거가 없는 이름이다. 식별에서는 모호한 이름을 소속 판정에서만 하나로 확정하면, 다른 근거로
         확정한 프로젝트 검색에 모호한 문서가 섞인다.
+
+        등록부 일부를 못 읽어 이름이 정말 하나인지 모르면(may_shadow) 가려졌을 수 있는 쪽을 후보로 더한다 — 이름만으로
+        소속을 정하는 문서는 conflict가 된다. 식별은 이 후보를 쓰지 않는다: 프로젝트 검색은 계속되고, 경로가 직접 소속을
+        정하는 문서(30_Projects/<dir>/)는 그대로 그 프로젝트다.
+
+        후보가 이미 둘 이상이어도 후보마다 더한다. 경로 후보와 선언 후보의 교집합으로 소속을 정하는 문서(예:
+        별칭이 겹친 SessionHandoffs/Beta/ 아래 `project: Alpha`)는, 한쪽에만 가려진 후보가 있으면 교집합이 Alpha 하나로
+        줄어 정상이면 conflict였을 문서가 Alpha로 확정된다.
         """
         _, _, targets = _resolve_name(self, name)
-        return sorted(targets, key=str.casefold)
+        shadowed = {f"{t} ({s} 미확인)" for t in targets if (s := self.may_shadow(t))}
+        return sorted({*targets, *shadowed}, key=str.casefold)
 
     def is_known(self, name: str) -> bool:
         key = name.strip().casefold()
@@ -118,42 +188,97 @@ class ProjectRegistry:
         return sorted(names, key=str.casefold)
 
 
+def _mark_unreadable(reg: ProjectRegistry, rel: str, exc: OSError, what: str) -> None:
+    message = (f"{rel}: {what} 읽지 못해({exc.strerror or exc}) 프로젝트 등록부에서 뺐습니다 — "
+               "이 경로 아래 문서는 경로로 소속을 정하지 않습니다.")
+    reg.unreadable[rel] = message
+    reg.warnings.append(message)
+
+
+def _list_dir(reg: ProjectRegistry, vault_dir: Path, path: Path) -> list[Path]:
+    """등록부 폴더의 항목들(이름순). 권한 등으로 목록을 못 읽으면 경고·미확인 표시를 남기고 빈 목록 —
+    폴더 하나 때문에 등록부 전체(그리고 검색 전체)가 멈추지 않게 한다."""
+    try:
+        if not path.is_dir():
+            return []
+        with os.scandir(path) as it:
+            return sorted((Path(e.path) for e in it), key=lambda p: p.name)
+    except OSError as exc:
+        _mark_unreadable(reg, path.relative_to(vault_dir).as_posix() + "/", exc, "폴더를")
+        return []
+
+
+def _exists_quiet(path: Path, check: Callable[[Path], bool]) -> bool:
+    """링크 대상 확인용 — 대상을 못 읽으면 없는 것으로 본다(링크는 어차피 등록하지 않는다, 경고 문장만 달라진다)."""
+    try:
+        return check(path)
+    except OSError:
+        return False
+
+
 def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
     reg = ProjectRegistry()
-    projects_dir = vault_dir / "30_Projects"
-    if projects_dir.is_dir():
-        for ctx_path in sorted(projects_dir.glob("*/Context.md")):
-            if ctx_path.parent.name.startswith("."):
-                continue  # 숨김 폴더(.trash 등)는 검색 스캔도 보지 않는다 — 링크 경고로 오인하게 하지 않는다
-            rel = ctx_path.relative_to(vault_dir).as_posix()
-            # 검색 스캔과 같은 읽기 경계 — 링크로 금지 prefix·vault 밖을 가리키면 내용을 읽지 않는다.
-            # 범위 안 다른 위치로의 링크도 읽지 않는다(스캔도 링크 폴더·파일을 따라가지 않으니 소속 근거가 어긋난다).
-            if real_scoped_rel(vault_dir, ctx_path) != rel:
-                reg.warnings.append(f"{rel}: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
+    # 30_Projects/*/Context.md — glob은 하위 폴더의 PermissionError를 경고 없이 삼키거나(3.11 pathlib) 그대로 올린다.
+    # 폴더마다 직접 확인해 못 읽은 폴더를 등록부 미확인으로 남긴다.
+    for child in _list_dir(reg, vault_dir, vault_dir / "30_Projects"):
+        if child.name.startswith("."):
+            continue  # 숨김 폴더(.trash 등)는 검색 스캔도 보지 않는다 — 링크 경고로 오인하게 하지 않는다
+        ctx_path = child / "Context.md"
+        rel = ctx_path.relative_to(vault_dir).as_posix()
+        try:
+            if child.is_symlink():
+                # 링크 폴더는 대상이 무엇이든 등록하지 않는다(아래 링크 검사와 같은 결과) — 대상에 못 들어가는 링크를
+                # 등록부 미확인으로 만들면 등록부와 무관한 경로 때문에 정상 프로젝트 문서까지 conflict·partial이 된다
+                if _exists_quiet(ctx_path, Path.exists):
+                    reg.warnings.append(f"{rel}: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
                 continue
-            name = ctx_path.parent.name
-            try:
-                meta = frontmatter.loads(ctx_path.read_text(encoding="utf-8")).metadata
-                declared, unsupported = project_field(meta)
-                if unsupported:
-                    reg.warnings.append(f"{rel}: frontmatter project가 문자열이 아니라 폴더명으로 식별합니다.")
-            except Exception:
-                declared = ""
-                reg.warnings.append(f"{rel}: frontmatter를 읽지 못해 폴더명으로 식별합니다.")
-            name = declared or name
-            key = name.casefold()
-            reg.canonical.setdefault(key, []).append(rel)
-            reg.display.setdefault(key, name)
-            reg.dir_to_project[ctx_path.parent.name] = name
-    handoff_root = vault_dir / _HANDOFF_ROOT
-    if handoff_root.is_dir():
-        for d in sorted(handoff_root.iterdir()):
-            if d.is_dir() and not d.name.startswith((".", "_")):
-                rel = d.relative_to(vault_dir).as_posix()
-                if real_scoped_rel(vault_dir, d) != rel:
+            if not ctx_path.exists():
+                continue
+        except OSError as exc:
+            _mark_unreadable(reg, child.relative_to(vault_dir).as_posix() + "/", exc, "폴더를")
+            continue
+        # 검색 스캔과 같은 읽기 경계 — 링크로 금지 prefix·vault 밖을 가리키면 내용을 읽지 않는다.
+        # 범위 안 다른 위치로의 링크도 읽지 않는다(스캔도 링크 폴더·파일을 따라가지 않으니 소속 근거가 어긋난다).
+        if real_scoped_rel(vault_dir, ctx_path) != rel:
+            reg.warnings.append(f"{rel}: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
+            continue
+        name = child.name
+        try:
+            meta = frontmatter.loads(ctx_path.read_text(encoding="utf-8")).metadata
+            declared, unsupported = project_field(meta)
+            if unsupported:
+                reg.warnings.append(f"{rel}: frontmatter project가 {project_field_issue(meta)} 폴더명으로 식별합니다.")
+        except PermissionError as exc:
+            # 선언명을 모르는 채 폴더명으로 등록하면 다른 이름을 선언한 프로젝트의 문서를 폴더명 프로젝트로 확정하게 된다.
+            # 그 밖의 읽기 실패(Context.md가 폴더 등)는 전처럼 아래에서 폴더명으로 식별한다
+            _mark_unreadable(reg, child.relative_to(vault_dir).as_posix() + "/", exc, "Context.md를")
+            continue
+        except Exception:
+            declared = ""
+            reg.warnings.append(f"{rel}: frontmatter를 읽지 못해 폴더명으로 식별합니다.")
+        name = declared or name
+        key = name.casefold()
+        reg.canonical.setdefault(key, []).append(rel)
+        reg.display.setdefault(key, name)
+        reg.dir_to_project[child.name] = name
+    for d in _list_dir(reg, vault_dir, vault_dir / _HANDOFF_ROOT):
+        if d.name.startswith((".", "_")):
+            continue
+        rel = d.relative_to(vault_dir).as_posix()
+        try:
+            if d.is_symlink():
+                if _exists_quiet(d, Path.is_dir):  # 30_Projects와 같은 이유로 링크 대상의 권한은 미확인으로 보지 않는다
                     reg.warnings.append(f"{rel}/: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
-                    continue
-                reg.handoff_folders.setdefault(d.name.casefold(), []).append(d.name)
+                continue
+            if not d.is_dir():
+                continue
+        except OSError as exc:
+            _mark_unreadable(reg, rel + "/", exc, "폴더를")
+            continue
+        if real_scoped_rel(vault_dir, d) != rel:
+            reg.warnings.append(f"{rel}/: 실제 경로가 다른 곳(링크)이라 프로젝트 등록부에서 뺐습니다.")
+            continue
+        reg.handoff_folders.setdefault(d.name.casefold(), []).append(d.name)
     if map_path.strip():
         _load_map(reg, Path(map_path.strip()).expanduser())
     return reg
@@ -161,11 +286,15 @@ def load_registry(vault_dir: Path, map_path: str = "") -> ProjectRegistry:
 
 def _load_map(reg: ProjectRegistry, path: Path) -> None:
     """식별 매핑 파일을 읽는다. 형식이 틀리면 무시하고 경고만 남긴다 — 매핑 없이 canonical 식별은 계속된다."""
-    if not path.is_file():
-        reg.warnings.append(f"프로젝트 식별 매핑 파일이 없습니다: {path}")
-        return
     try:
+        if not path.is_file():
+            reg.warnings.append(f"프로젝트 식별 매핑 파일이 없습니다: {path}")
+            return
         data = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        # 다른 인코딩을 추정해 읽지 않는다 — 잘못 읽은 별칭·repo가 프로젝트를 잘못 확정할 수 있다
+        reg.warnings.append(f"프로젝트 식별 매핑 파일이 UTF-8이 아니라 무시합니다 ({exc.start}바이트 위치): {path}")
+        return
     except (OSError, json.JSONDecodeError) as exc:
         reg.warnings.append(f"프로젝트 식별 매핑 파일을 읽지 못했습니다: {exc}")
         return
@@ -174,6 +303,9 @@ def _load_map(reg: ProjectRegistry, path: Path) -> None:
         reg.warnings.append("프로젝트 식별 매핑 파일에 projects 객체가 없습니다.")
         return
     for project, spec in projects.items():
+        if not is_valid_text(project):
+            reg.warnings.append(f"매핑 {project!r}: 프로젝트 이름에 유효하지 않은 문자(짝 없는 surrogate 등)가 있어 무시합니다.")
+            continue
         if not isinstance(spec, dict):
             reg.warnings.append(f"매핑 {project!r}: 객체가 아니라 무시합니다.")
             continue
@@ -198,6 +330,10 @@ def _str_list(reg: ProjectRegistry, project: str, spec: dict, key: str) -> list[
         return []
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         reg.warnings.append(f"매핑 {project!r}: {key}는 문자열 목록이어야 해서 무시합니다.")
+        return []
+    if not all(is_valid_text(v) for v in value):
+        # 이름 하나만 빼면 나머지로 다른 프로젝트를 확정할 수 있다 — 그 목록 전체를 쓰지 않는다
+        reg.warnings.append(f"매핑 {project!r}: {key}에 유효하지 않은 문자(짝 없는 surrogate 등)가 있어 무시합니다.")
         return []
     return [v.strip() for v in value if v.strip()]
 
@@ -268,13 +404,15 @@ def _local_mapping(repo_dir: Path) -> tuple[str, str]:
         return "", ""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError:
+        return "", ".claude/vault.json이 UTF-8이 아니라 무시합니다."
     except (OSError, json.JSONDecodeError):
         return "", ".claude/vault.json을 해석하지 못했습니다."
     if not isinstance(data, dict):
         return "", ".claude/vault.json이 객체가 아닙니다."
     project, unsupported = project_field(data)
     if unsupported:
-        return "", ".claude/vault.json의 project가 문자열이 아니라 식별 근거로 쓰지 않았습니다."
+        return "", f".claude/vault.json의 project가 {project_field_issue(data)} 식별 근거로 쓰지 않았습니다."
     return project, ""
 
 
@@ -300,6 +438,13 @@ def _resolve_name(reg: ProjectRegistry, name: str) -> tuple[str, list[str], set[
         hits.setdefault(target, []).append(f"alias:{name.strip()}→{target}")
         if "alias" not in methods:
             methods.append("alias")
+    if hits and methods[0] not in ("canonical", "handoff_folder"):
+        # 별칭만으로 가리키는 이름이 못 읽은 등록부에 그 이름 자체로 있을 수 있다 — 정상이면 별칭과 겹쳐 모호했을 이름을
+        # 별칭 대상 하나로 확정하지 않는다. 그 이름 자체를 후보로 남겨 식별은 ambiguous, 소속은 conflict가 된다
+        hidden = reg.may_hide(name)
+        if hidden:
+            hits.setdefault(name.strip(), []).append(f"registry_unreadable:{hidden}")
+            methods.append("registry_unreadable")
     if not hits:
         return "", [], set()
     return (methods[0] if len(hits) == 1 else "+".join(methods)), [e for v in hits.values() for e in v], set(hits)
@@ -316,6 +461,10 @@ def _finalize(reg: ProjectRegistry, raw: str, target: str, method: str, evidence
     if not reg.is_known(target):
         return ProjectResolution(input=raw, status="unregistered", project=target, method=method, evidence=evidence,
                                  warnings=warnings, hint=unregistered_hint)
+    shadow = reg.may_shadow(target)
+    if shadow:
+        warnings = [*warnings, f"프로젝트 등록부가 {shadow}를 읽지 못해 '{target}'과 같은 이름을 선언한 다른 Context.md가 없는지 "
+                    "확인하지 못했습니다. 경로로 소속이 정해지는 문서만 이 프로젝트로 보고, 이름만 선언한 문서는 conflict로 둡니다."]
     return ProjectResolution(input=raw, status="resolved", project=target, method=method, evidence=evidence, warnings=warnings)
 
 
