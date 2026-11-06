@@ -159,7 +159,8 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 | 시점 | 전체 | 등록 검사 |
 |---|---|---|
 | 수정 전 baseline (`88288b4`) | 673 passed, 3 failed, 0 skipped | 673 passed, 3 deselected |
-| 수정 후 | 698 passed, 3 failed, 0 skipped | 698 passed, 3 deselected |
+| 수정 후 (1차 `b7745c0`) | 698 passed, 3 failed, 0 skipped | 698 passed, 3 deselected |
+| 병합 차단 리뷰 반영 후 | 703 passed, 3 failed, 0 skipped | 703 passed, 3 deselected |
 
 실패 3건은 두 시점이 같다(새 실패 0건): `test_ancestor_pids_starts_with_self_and_includes_parent`,
 `test_marker_for_current_session_picks_own_among_concurrent`, `test_get_recent_sessions_groups_plan_and_process` — 이 컨테이너 환경
@@ -250,3 +251,18 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 | 예산 테스트 이식성 | 경로 길이 단언 포함 재작성, 짧은 경로 대조군 | 이 컨테이너에서 통과. **macOS에서는 실행하지 않음** |
 | 네이티브 Python 전체 실행 | CPython 3.11.2 venv, baseline 비교 | 673 → 698 passed, 실패 3건 동일, skip 0 |
 | 호환성·문서·재검사·비밀값·리뷰 | 평가 Vault 재실행, 기존 테스트 무수정 통과, 이 문서 | 순위·근거·분량 동일. 비밀값 일치 없음. 리뷰 F1·F3·F6 반영, F2 정책 보류, F4·F5 범위 밖 |
+
+## 병합 차단 리뷰(BLOCK) 반영 — 등록부 미확인으로 별칭 충돌이 풀리던 문제
+
+| # | 지적 | 판단 | 조치 |
+|---|---|---|---|
+| P1 (차단) | Alpha가 정상 등록돼 있고 SessionHandoffs의 `Beta`가 Alpha의 별칭이기도 하면, 정상일 때 `project: Beta` 문서는 conflict(Alpha, Beta)다. SessionHandoffs 등록부가 권한 오류로 빠지면 별칭만 남아 Alpha로 확정되고 Alpha 검색에 들어온다(보관 handoff 경로도 같다) | 확인함 — 세션 frontmatter·메모리 marker·보관 handoff 세 문서가 SessionHandoffs 000에서 Alpha 결과에 들어오고, `Beta` 식별이 `ambiguous`→`resolved`로 바뀌는 것을 실제 chmod로 재현 | 식별과 소속이 함께 쓰는 이름 판정(`_resolve_name`)을 고쳤다. 별칭으로만 가리키는 이름을 못 읽은 등록부가 가렸을 수 있으면(`ProjectRegistry.may_hide`), 그 이름 자체를 후보로 남긴다 → 식별 `ambiguous`, 소속 `conflict`(정상 상태와 같은 결과). 결정적 권한 회귀 테스트: SessionHandoffs 000·r--, 30_Projects/Beta 000 × (세션 frontmatter, 메모리 marker, 보관 handoff), 식별 수준 테스트(가려질 수 있는 별칭만 ambiguous, 다른 별칭·등록 표기는 계속 확정) |
+| (비차단) | 지문 구조 변경으로 변경 전에 발급된 정상 cursor도 모두 만료된다 | 확인함 — 요구하지 않은 호환성 회귀 | 등록부 미확인이 없으면 `registry_unreadable` 키를 지문에 넣지 않는다. 변경 전 코드(`88288b4`)가 실제로 발급한 cursor를 고정값으로 넣고 이어지는지 확인하는 테스트 — 변경 전·후 코드가 같은 Vault에 같은 cursor를 낸다 |
+
+새 테스트 5건(검색 3·식별 1·cursor 1)은 병합 차단된 커밋(`523f8ef`) 코드에서 모두 실패한다(별칭 누출 3, 식별 후보 1, cursor 불일치 1).
+`88288b4`에서는 권한 테스트 4건이 `PermissionError`·별칭 누출로 실패하고, cursor 테스트는 그 코드가 발급한 값이라 통과한다.
+평가 Vault 7개 사례의 순위·근거·분량은 다시 돌려도 같다.
+
+남은 정책 지점: 못 읽은 30_Projects 폴더가 **등록 표기와 같은 이름**을 선언했을 가능성(위 리뷰 F2)은 계속 판정하지 않는다 — 막으면
+폴더 하나 권한 오류로 모든 프로젝트 검색이 거부된다. 별칭은 그 이름을 직접 선언한 등록 근거가 없어서 이번에 막았고, 등록 표기는 읽은
+Context.md가 직접 선언한 근거가 있어서 남겼다. `evidence-search.md` "알려진 한계"에 적었다.
