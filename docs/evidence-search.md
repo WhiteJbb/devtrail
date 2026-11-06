@@ -127,7 +127,7 @@ memory_patch blog_idea career_bullet session_handoff session_log worklog output 
 
 | 근거 | 판정 |
 |---|---|
-| `30_Projects/<dir>/…` | `<dir>`의 Context.md가 선언한 프로젝트 (없으면 폴더명). 등록부가 그 폴더나 Context.md를 권한 등으로 읽지 못했으면 `unknown`(evidence `registry_unreadable:<경로>`) — 폴더명·frontmatter로 추측하지 않는다 |
+| `30_Projects/<dir>/…` | `<dir>`의 Context.md가 선언한 프로젝트 (Context.md가 없으면 폴더명 — 이 경우는 폴더 **이름**이 근거라 아래 "권한 오류·손상 입력"의 이름 규칙을 똑같이 거친다). 등록부가 그 폴더나 Context.md를 권한 등으로 읽지 못했으면 `unknown`(evidence `registry_unreadable:<경로>`) — 폴더명·frontmatter로 추측하지 않는다 |
 | `60_Candidates/SessionHandoffs/<P>/…` (`_Archive` 아래 포함) | `<P>` |
 | `20_Knowledge/<P>/…` | `<P>`가 등록 프로젝트(Context.md 또는 SessionHandoffs 폴더 — 프로젝트 식별과 같은 기준)일 때만 (curator가 프로젝트 knowledge를 두는 곳). `20_Knowledge/AI/` 같은 주제 폴더는 근거가 아니다 |
 | frontmatter `project:` | 그 프로젝트. **문자열만** 근거다 — 숫자·날짜·목록·불리언(`project: 123`, `project: 2026-10-01`)은 이름으로 바꾸지 않고 근거에서 빼며 경고를 남긴다. Context.md 등록부·`.claude/vault.json`·marker도 같은 함수(`project_field`)로 읽어, 식별과 소속 판정이 같은 값을 본다(그래서 `project: 123`인 `30_Projects/Alpha/Context.md`는 식별에서도 소속에서도 Alpha다). 값은 식별과 **같은 근거·같은 순서로만** 정규화한다 — 등록 표기 → SessionHandoffs 폴더 → 매핑 별칭(가리키는 프로젝트가 하나일 때만). 식별이 인정하지 않는 이름(예: 선언명과 다른 30_Projects 폴더명)은 바꾸지 않는다 — 식별로 확정한 프로젝트가 자기 문서를 다른 프로젝트로 판정하지 않게. 정규화했으면 evidence가 `meta:project=dt→Devtrail` 꼴이다. marker의 `project`도 같다 |
@@ -152,7 +152,9 @@ update_open_loops가 쓰는 형식). marker 앞은 파일 소속(보통 공통),
 
 - 기본: 그 프로젝트 소속 파일·블록만. 공통·타 프로젝트·unknown·conflict 제외.
 - `include_common=True`: 공통을 더한다. 타 프로젝트는 여전히 제외.
-- `include_unattributed=True`: unknown과 **그 프로젝트가 한쪽인** conflict를 더한다.
+- `include_unattributed=True`: unknown과 **그 프로젝트가 한쪽인** conflict를 더한다. 등록부를 못 읽어 판정하지 못한 unknown
+  (evidence `registry_unreadable:…`)은 더하지 않는다 — 근거가 없는 것이 아니라 정상이면 다른 프로젝트로 걸러졌을 수 있는 문서다.
+  `filtered`에는 `registry_unreadable`로 센다.
 - 제외된 블록은 점수·발췌 계산에 들어가지 않는다(같은 파일의 다른 블록만 본다). `attribution.blocks`는 포함된
   블록만, `blocks_excluded`는 뺀 블록 수.
 - 0건이어도 범위를 자동으로 넓히지 않는다(`no_match_in_scope` 경고).
@@ -348,6 +350,9 @@ vault 일부가 손상되거나 권한이 없어도 structured 검색 전체가 
 | 식별 매핑 파일·`.claude/vault.json`이 UTF-8이 아니다 | `UnicodeDecodeError` 전파 | 경고(`registry` / `project_resolution`) 후 무시. canonical·handoff·remote 식별은 계속된다 |
 | 이름이 별칭으로만 등록부에 남았는데, 못 읽은 등록부 경로가 그 이름 자체를 가렸을 수 있다 (예: Alpha의 별칭 `Beta`, SessionHandoffs/Beta를 못 읽음) | (등록부 미확인 개념 없음) | 정상이면 그 이름은 별칭과 겹쳐 모호하다. 별칭 대상 하나로 확정하지 않고 그 이름 자체를 후보로 남긴다 — 식별은 `ambiguous`(evidence `registry_unreadable:<경로>`), frontmatter·marker·보관 handoff의 소속은 `conflict`. SessionHandoffs는 폴더명이 곧 이름이라 그 이름만, 30_Projects 아래 폴더는 선언명을 몰라 **모든 별칭**이 해당한다. 등록 표기(canonical)·handoff 이름은 계속 확정된다 |
 | 등록된 이름인데, 못 읽은 등록부 경로가 같은 이름을 선언했을 수 있다 (예: `30_Projects/Alpha`와 `30_Projects/AlphaOld`가 둘 다 `project: Alpha`, AlphaOld를 못 읽음) | 정상이면 `ambiguous`인 Alpha가 `resolved`가 되고, 이름만 선언한 문서가 Alpha 소속으로 바뀌어 Alpha 검색에 들어왔다 | 식별은 `resolved`로 두되 `project_resolution` 경고로 유일성을 확인하지 못했다고 알린다. **경로가 직접 소속을 정하는 문서**(`30_Projects/<읽은 폴더>/`)만 그 프로젝트이고, **이름만으로 소속이 정해지는 문서**(frontmatter·marker `project`, SessionHandoffs·보관 handoff·20_Knowledge 폴더 이름)는 `conflict`(`conflict_with`에 `Alpha (30_Projects/AlphaOld/ 미확인)`)라 기본 검색에서 빠진다. 등록 표기는 못 읽은 30_Projects 폴더가 하나만 있어도 해당한다. SessionHandoffs로만 등록된 이름은 30_Projects 폴더 둘 이상(또는 30_Projects 전체)을 못 읽었을 때만 해당한다 — 폴더 하나가 같은 이름을 선언해도 같은 프로젝트이기 때문이다(등록 표기가 우선) |
+| 경로 후보와 선언 후보의 교집합으로 소속을 정하는 문서인데, 한쪽 이름이 이미 모호하다 (예: 위 Alpha·AlphaOld에 더해 Beta가 Alpha의 별칭이면서 SessionHandoffs/Beta도 있고, `SessionHandoffs/Beta/h.md`가 `project: Alpha`) | (2026-11-06 중간 수정) 가려진 후보가 후보 하나인 이름에만 붙어, 교집합이 Alpha 하나로 줄며 Alpha로 확정됐다 | 가려진 후보(`Alpha (… 미확인)`)는 후보 수와 무관하게 가려질 수 있는 후보마다 붙는다. 교집합이 둘 이상이 되어 `conflict` |
+| Context.md 없는 `30_Projects/<이름>/` 폴더인데, 그 이름이 위처럼 가려졌을 수 있다 | 폴더명으로 확정 | 이름만으로 소속을 정하는 다른 문서와 같이 `conflict`. 정상 등록부(못 읽은 경로 없음)에서는 전처럼 폴더명 하나 |
+| `30_Projects/<dir>`·SessionHandoffs 폴더가 링크인데 대상에 들어갈 수 없다 | 링크라 등록하지 않았다 | 그대로 — 링크는 대상과 무관하게 등록하지 않으므로 등록부 미확인으로 보지 않는다(대상이 보이면 전처럼 링크 경고) |
 | 매핑 파일은 UTF-8인데 JSON 이스케이프로 짝 없는 surrogate가 든 프로젝트 이름·`aliases`·`repos` | 그 값이 소속 후보가 되어 커서 지문에서 `UnicodeEncodeError` | 그 프로젝트 항목(이름이 손상) 또는 그 목록 전체(값 하나가 손상)를 경고 후 무시 |
 | marker JSON의 scope/project에 짝 없는 surrogate | 그 값이 블록 소속이 되어 커서 지문에서 `UnicodeEncodeError` | 손상 marker(`unknown`, `invalid_marker`) + 경고. 값은 응답에 싣지 않는다 |
 | frontmatter·`.claude/vault.json`의 `project`에 짝 없는 surrogate | 그 값이 소속·식별 이름이 됐다 | `project_field`가 형식 미지원으로 본다 — 숫자 `project`와 같은 규칙(근거에서 빼고 경고) |
@@ -397,11 +402,13 @@ legacy는 파일을 열기 전 실제 경로 검사(realpath)를 더해 기능 �
 | 시점 | 결과 |
 |---|---|
 | 수정 전(`88288b4`) | 673 passed, 3 failed |
-| 수정 후 | 708 passed, 3 failed — 실패 목록이 같다(새 실패 0건), skip 0건 |
+| 수정 후(2번째 병합 차단 리뷰 반영) | 708 passed, 3 failed — 실패 목록이 같다(새 실패 0건), skip 0건 |
+| 최종 재리뷰 반영 후 | 716 passed, 3 failed — 실패 목록이 같다(새 실패 0건), skip 0건 |
 
 같은 실패 3건(이 컨테이너 환경 — 등록 검사에서도 deselect한다): `test_session_markers.py`의
 `test_ancestor_pids_starts_with_self_and_includes_parent`·`test_marker_for_current_session_picks_own_among_concurrent`,
-`test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process`. 새 테스트 35건 중 34건은 수정 전 코드에서 실패한다(보호 테스트 1건은 새 API가 없어서). 나머지 1건(변경 전 cursor 호환)은
+`test_vault_tools.py::test_get_recent_sessions_groups_plan_and_process`. 최종 재리뷰 반영 테스트 8건은 반영 전 커밋(`c2166cb`)에서 모두
+실패한다. 그 전 새 테스트 35건 중 34건은 수정 전 코드에서 실패한다(보호 테스트 1건은 새 API가 없어서). 나머지 1건(변경 전 cursor 호환)은
 수정 전 코드가 발급한 cursor를 쓰는 호환 테스트라 수정 전 코드에서도 통과하고, 병합 차단된 중간 커밋에서 실패한다.
 상세는 [`evidence-search-verification.md`](./evidence-search-verification.md) "2026-11-06".
 
@@ -435,6 +442,8 @@ mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위�
 - 평가 Vault는 합성이고 사례 7개다. 실제 사용자 vault에서의 순위·분량·시간은 재지 않았다(이 작업은 사용자 vault를 읽지도 바꾸지도 않는다).
   사례는 legacy가 실패하는 유형을 일부러 담았으므로 "개선 비율"로 일반화하면 안 된다.
 - 측정 환경은 Pyodide(wasm) 위 CPython이다 — 이 컨테이너에 네이티브 Python과 PyPI 접근이 없었다. 절대 ms는 네이티브와 다르고, 두 방식의 상대 비교만 의미가 있다.
+  2026-11-06에 네이티브 CPython 3.11.2로 다시 돌렸을 때(최종 재리뷰 반영 후 포함) 7개 사례의 순위·근거 적중·호출 수·문자 수·타 프로젝트 수는
+  위 표와 같고 ms만 다르다(네이티브는 사례당 1.3~2.3ms).
 - 매 호출마다 read_scope 전체를 읽고 해시한다(legacy도 매번 전체를 읽는다). 색인·캐시는 없다. 구간 읽기도 페이지마다 파일 전체를 읽고 해시한다
   (버전 확인 때문). 수십 MB 원문을 페이지로 넘기면 페이지 수 × 파일 크기만큼 든다.
 - 16000자보다 긴 한 줄은 structured 읽기로 받을 수 없다(`line_too_long`, `readable_with_max_chars=false`). 줄을 쪼개 주는 방식은
@@ -451,7 +460,10 @@ mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위�
 - `get_project_briefing`, `get_recent_sessions` 등 다른 도구의 프로젝트 판정은 바꾸지 않았다 (briefing은 여전히 basename 매칭을 쓴다).
 - 등록부를 못 읽는 동안에는 보수적으로 판정한다. 30_Projects 아래 폴더를 하나라도 못 읽으면 그 폴더의 선언명을 모르므로:
   - 모든 등록 프로젝트에서 **이름만으로 소속이 정해지는 문서**(세션 frontmatter, 메모리 marker, SessionHandoffs·보관 handoff·20_Knowledge
-    폴더)가 `conflict`가 되어 프로젝트 검색 기본값에서 빠진다. `include_unattributed=True`로 보면 `conflict`로 함께 나온다.
+    폴더, Context.md 없는 30_Projects 폴더)가 `conflict`가 되어 프로젝트 검색 기본값에서 빠진다. `include_unattributed=True`로 보면
+    `conflict`로 함께 나온다.
+  - 못 읽은 경로 아래 문서(예: Context.md만 못 읽은 폴더의 다른 문서)는 범위 없는 검색에서만 `unknown`으로 보이고, 프로젝트 검색에서는
+    `include_unattributed=True`여도 빠진다.
   - 모든 별칭 식별이 `ambiguous`가 된다. 별칭으로 검색하던 호출은 등록 표기로 다시 검색한다.
   - 등록 표기 식별은 `resolved`로 계속되고, `30_Projects/<P>/` 아래 문서는 계속 검색된다.
 
@@ -461,8 +473,8 @@ mcp 1.30.0 + pydantic 2.12.5(소스) + pydantic_core 2.41.5(emscripten 휠) 위�
 - 권한 회귀 테스트의 결정적 재현은 OS 호출(`os.scandir`·`os.listdir`·`os.stat`·`os.lstat`)을 가로채는 대역(`tests/conftest.py`
   `DenyAccess`)이다. 실제 chmod 테스트도 하나 있지만 root에서는 skip된다(root는 디렉터리 권한을 무시한다). macOS 실제 권한·경로 한도에서는
   돌려 보지 않았다 — 예산 테스트는 경로를 만들기 전에 절대 경로 1024바이트·이름 255바이트 미만을 테스트 안에서 확인한다.
-- 이번 범위 밖으로 남긴 것: ⓪ `project`에 사용자가 넘긴 repo 디렉터리 경로 자체를 권한 때문에 볼 수 없으면 식별 단계의 `PermissionError`가
-  검색 밖으로 올라간다(등록부·스캔이 아니라 입력 경로다). ① structured `read_note`가 실행 권한 없는 폴더 안 파일을 읽으면 `PermissionError`가 그대로 올라간다(검색은
+- 이번 범위 밖으로 남긴 것: ⓪ `project`에 사용자가 넘긴 repo 디렉터리 경로 자체, 또는 그 안의 `.claude/`·`.git/`을 권한 때문에 볼 수
+  없으면 식별 단계의 `PermissionError`가 검색 밖으로 올라간다(등록부·스캔이 아니라 사용자가 넘긴 입력 경로다. 변경 전 코드도 같다). ① structured `read_note`가 실행 권한 없는 폴더 안 파일을 읽으면 `PermissionError`가 그대로 올라간다(검색은
   아니고 그 호출 하나만 실패한다). ② libyaml 없이 설치된 PyYAML(순수 Python 로더)은 frontmatter `"\ud800"`을 받아들인다 — `project`는
   위 규칙으로 막지만 `title` 등 다른 값에 들어 있으면 검색이 여전히 `UnicodeEncodeError`로 멈춘다. libyaml 로더(이 venv 기본)는 그런
   frontmatter를 해석 실패로 보고 본문으로 읽으므로 이 문제가 없다. ③ Linux에서 UTF-8이 아닌 바이트가 든 파일·폴더 이름은 surrogateescape

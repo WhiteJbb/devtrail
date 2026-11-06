@@ -1,5 +1,9 @@
 # 근거 검색·원문 구간 읽기 — 검증 기록 (2026-11-05)
 
+> **최종 판정 (2026-11-06): 통과.** 마지막 독립 재리뷰에서 차단 사유 0건. 네이티브 CPython 3.11.2 전체 716 passed, 실패 3건은
+> baseline과 같은 환경 실패(새 실패 0건), skip 0건. 등록 검사 716 passed / 3 deselected. **macOS에서는 실행하지 않았다**(아래
+> "2026-11-06 — 최종 재리뷰"). 아래 2026-11-05 절의 Pyodide 기록은 당시 근거로 보존한다.
+
 [`evidence-search.md`](./evidence-search.md)의 structured 모드를 마무리하면서 돌린 검사, 리뷰 근거, 수용 기준별 결과를 남긴다.
 작업 보고가 길이 제한으로 잘려도 근거가 사라지지 않도록 여기에 둔다.
 
@@ -130,6 +134,8 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 
 [`evidence-search.md`](./evidence-search.md) "권한 오류·손상 입력"의 검증 기록. 이번에는 Pyodide가 아니라 **네이티브 CPython**으로 돌렸다.
 
+**최종 판정: 통과** — 이 절 끝 "최종 재리뷰"에서 남은 차단 1건과 비차단 3건을 고쳤고, 같은 리뷰어의 재판정에서 차단 사유가 없었다.
+
 ## 검증 환경
 
 | 항목 | 내용 |
@@ -161,7 +167,8 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
 | 수정 전 baseline (`88288b4`) | 673 passed, 3 failed, 0 skipped | 673 passed, 3 deselected |
 | 수정 후 (1차 `b7745c0`) | 698 passed, 3 failed, 0 skipped | 698 passed, 3 deselected |
 | 병합 차단 리뷰 반영 후 (`793417e`) | 703 passed, 3 failed, 0 skipped | 703 passed, 3 deselected |
-| 2번째 병합 차단 리뷰 반영 후 | 708 passed, 3 failed, 0 skipped | 708 passed, 3 deselected |
+| 2번째 병합 차단 리뷰 반영 후 (`4feb174`) | 708 passed, 3 failed, 0 skipped | 708 passed, 3 deselected |
+| 최종 재리뷰 반영 후 | 716 passed, 3 failed, 0 skipped | 716 passed, 3 deselected |
 
 실패 3건은 두 시점이 같다(새 실패 0건): `test_ancestor_pids_starts_with_self_and_includes_parent`,
 `test_marker_for_current_session_picks_own_among_concurrent`, `test_get_recent_sessions_groups_plan_and_process` — 이 컨테이너 환경
@@ -286,3 +293,103 @@ cursor 지문의 입력 범위(다른 프로젝트 파일의 읽기 실패도 st
   하나 더 두어 같은 검사(회복 후 `cursor_stale`)를 유지했다.
 
 평가 Vault 7개 사례의 순위·근거·분량과 변경 전 cursor 호환은 다시 확인해도 같다.
+
+## 2026-11-06 — 최종 재리뷰 (사용 한도로 멈췄던 검증 재개)
+
+앞 작업은 2번째 병합 차단 리뷰를 반영해 커밋한 뒤 사용 한도로 최종 재판정을 받지 못했다. 이어서 커밋 `c2166cb`의 상태를 다시 확인한 뒤,
+결론을 주지 않은 독립 리뷰어에게 `88288b4..c2166cb` diff와 요구사항만 주고 병합 판정을 받았다.
+
+### 시작 상태 확인
+
+| 항목 | 내용 |
+|---|---|
+| Python | CPython 3.11.2 (GCC 12.2.0), 프로젝트 venv(`venv/bin/python`) |
+| 플랫폼 | `Linux-7.0.14-orbstack-00380-ga7e0a2dc9535-aarch64-with-glibc2.36` (컨테이너), uid 501(비 root). sudo 없음 — root 실행은 못 했다 |
+| 대체 | 없음 — Pyodide·`fcntl` 대체·프로세스 생성 대체 미사용 |
+| `c2166cb` 전체 | 708 passed, 3 failed, 0 skipped — 위 표의 기록과 같다 |
+| baseline `88288b4` 전체 (같은 venv에서 다시 실행) | 673 passed, 3 failed, 0 skipped |
+
+### 리뷰 지적과 조치
+
+리뷰어는 1,900개 무작위 Vault(못 읽는 폴더를 바꿔 가며)로 "정상 등록부에서 근거 없는 확정 소속"을 찾았고, 찾은 사례를 스크립트로 재현했다.
+
+| # | 지적 | 판단 | 조치 |
+|---|---|---|---|
+| F1 (차단) | 경로 후보와 선언 후보의 교집합으로 소속을 정하는 문서에서, 한쪽 이름이 이미 모호하면(별칭이 겹친 `SessionHandoffs/Beta/`) 가려진 후보(`may_shadow`)가 붙지 않는다. `attribution_targets`가 후보가 하나일 때만 붙였기 때문이다. 그러면 교집합이 Alpha 하나로 줄어, 정상이면 `project_ambiguous`인 Alpha 검색이 `AlphaOld/Context.md` 000에서 성공하고 `SessionHandoffs/Beta/h.md`(`project: Alpha`)·`20_Knowledge/Alpha/k.md`(`project: Beta`)가 Alpha로 들어왔다 | 확인함(재현). `88288b4`도 새는데, 그때는 못 읽은 폴더를 폴더명으로 등록했기 때문이다 | 가려진 후보를 후보 수와 무관하게, 가려질 수 있는 후보마다 붙인다. 교집합이 둘 이상이 되어 `conflict` |
+| F2 | Context.md 없는 `30_Projects/Foo/`는 폴더 **이름**으로 소속을 정하는데 `_path_project`가 이름 규칙을 거치지 않아, 같은 상황에서 Foo로 확정됐다 | 확인함 — `88288b4`도 같다 | 그 경우에만 `may_shadow(폴더명)` 후보를 더한다. 못 읽은 경로가 없으면 아무 효과가 없어 정상 동작은 그대로다(보호 단언 포함) |
+| F3 | (이번 변경이 만든 과잉 보호) `30_Projects/Ext`가 들어갈 수 없는 밖 폴더로의 링크면 `ctx_path.exists()`가 링크 검사보다 먼저 `PermissionError`를 내 등록부 미확인이 됐다. 그 결과 Alpha handoff까지 `conflict`, `partial=true`, 0건(`88288b4`는 1건) | 확인함 | 링크인지 먼저 본다. 링크는 대상과 무관하게 원래 등록하지 않으므로 그 링크만 건너뛴다(대상이 보이면 전처럼 링크 경고). SessionHandoffs 폴더도 같다 |
+| F4 | `include_unattributed=True`면 등록부 미확인 때문에 생긴 `unknown`이 들어온다. Context.md만 못 읽은 `30_Projects/X/` 아래 `project: Hidden` 문서는 정상이면 `other_project`로 빠진다. `88288b4`도 `conflict`로 뺐다 | 확인함 — "타 프로젝트 근거가 섞이지 않는다"에 어긋난다 | `_Unit.registry_unreadable` 표시. 프로젝트 검색에서는 `include_unattributed`여도 빼고 `filtered`에 `registry_unreadable`로 센다. 범위 없는 검색에서는 전처럼 `unknown`으로 보인다. 표시는 cursor 지문(signature)에 넣지 않는다 — 등록부 미확인 목록이 이미 지문에 들어가고, 넣으면 변경 전 cursor가 깨진다 |
+| (범위 밖) | repo 경로 안 `.claude/`·`.git/`에 실행 권한이 없으면 식별 단계 `PermissionError`, Linux의 UTF-8 아닌 파일 이름, `query`의 surrogate, 순수 Python YAML 로더의 `title` surrogate | 모두 `88288b4`와 같다. 사용자가 넘긴 입력 경로이거나 이미 적은 한계 ②③·F5 | "알려진 한계" ⓪에 `.claude/`·`.git/`을 더했다 |
+
+### 테스트
+
+새 테스트 8건(`tests/test_evidence_search.py` "최종 재리뷰 반영"). 권한은 결정적 대역(`DenyAccess`)과 실제 chmod를 각각 둔다.
+
+| 테스트 | `c2166cb`(반영 전)에서 실패 내용 |
+|---|---|
+| `test_unreadable_context_does_not_confirm_path_meta_intersection` ×2 (000·r--) | 두 문서가 Alpha 결과에 들어온다 |
+| `test_real_chmod_unreadable_context_does_not_confirm_path_meta_intersection` (실제 chmod) | 같다 |
+| `test_folder_without_context_is_name_attribution_under_unreadable_registry` | `30_Projects/Foo/Plans/p.md`가 `conflict`가 아니다 |
+| `test_symlinked_project_folder_with_unenterable_target_is_not_unreadable_registry` | `partial=true` |
+| `test_real_chmod_symlinked_project_folder_target_is_not_unreadable_registry` (실제 chmod) | 같다 |
+| `test_include_unattributed_does_not_add_docs_under_unreadable_registry` | Secret·20_Knowledge/Hidden 문서 3건이 들어온다 |
+| `test_real_chmod_include_unattributed_does_not_add_docs_under_unreadable_context` (실제 chmod) | 2건이 들어온다 |
+
+바뀐 기존 테스트 기대값 3곳은 모두 이 브랜치에서 만든 테스트다. 셋 다 더 엄격해졌다(리뷰어도 따로 확인했다).
+- `test_unreadable_registry_does_not_resolve_alias_conflict[projects-…]` — 못 읽은 곳이 30_Projects 폴더일 때 `conflict_with`에
+  `Alpha (30_Projects/Beta/ 미확인)`이 더해진 정확한 목록을 단언한다. SessionHandoffs 사례는 그대로 `["Alpha", "Beta"]`다.
+- `test_alias_only_name_is_not_confirmed_while_registry_may_hide_it` — `attribution_targets("al")`에 Alpha의 가려진 후보가 더해진다.
+  `ambiguous`·`resolved` 단언은 그대로다.
+- `test_docs_under_unconfirmed_registry_folder_are_not_attributed` — 전에는 `include_unattributed`에서 그 문서가 `unknown`으로
+  **포함**되기를 요구했다. 지금은 **제외**와 `partial=true`, `filtered.documents.registry_unreadable == 1`을 요구한다.
+
+| 실행 | 명령 | 결과 |
+|---|---|---|
+| 관련 테스트 | `venv/bin/python -m pytest -q -p no:cacheprovider tests/test_evidence_search.py tests/test_project_identity.py tests/test_mcp_server.py` | 173 passed |
+| 같은 테스트를 `c2166cb` 코드에 | `git archive c2166cb` 사본 + 현재 테스트 파일 | 11 failed(새 8 + 바뀐 기대값 3), 162 passed |
+| 전체 | `venv/bin/python -m pytest -q -p no:cacheprovider -rfEs` | 716 passed, 3 failed, 0 skipped — 실패 목록이 baseline과 같다 |
+| 등록 검사 | `venv/bin/python -m pytest -q --deselect …(3건)` | 716 passed, 3 deselected |
+
+### 호환성
+
+- 정상 Vault의 응답 동일성: 별칭·동명 Context·Context 없는 폴더·범위 안 링크 폴더·손상 marker·보관 handoff를 섞은 Vault에서 28개
+  검색(프로젝트 9종 × 플래그 3종 + cursor 이어받기)의 JSON이 `c2166cb`와 이번 수정 후 같다(`elapsed_ms`만 다르다). 리뷰어는 21개
+  검색 Vault와 링크 폴더(범위 안·밖·끊어진 링크) Vault에서 `88288b4`·`c2166cb`·수정 후가 바이트 단위로 같음을 따로 확인했다.
+- 평가 Vault(`python -m tests.evidence_eval`): 7개 사례의 순위·근거·호출 수·문자 수·타 프로젝트 수가 `c2166cb`와 같다(ms만 다르다).
+- cursor: 변경 전 코드가 발급한 고정 cursor 테스트가 계속 통과한다. 리뷰어가 Context.md 회복 뒤 낡은 cursor가 `cursor_stale`인 것을
+  범위 없는 검색과 `include_unattributed` Alpha 검색 양쪽에서 확인했다.
+- 응답 형태: `filtered.documents`/`blocks`에 새 이유 값 `registry_unreadable`이 생길 수 있다(등록부 일부를 못 읽을 때만). 필드 추가·삭제는 없다.
+
+### 예산 테스트 이식성 (추가 확인)
+
+`test_budget_never_returns_oversized_success`를 macOS 기본 형태의 긴 basetemp(107바이트,
+`…/private/var/folders/zz/<28자>/T/pytest-of-<이름>/pytest-1234`)와 약 370바이트 basetemp로 각각 돌렸다 — 둘 다 통과했다.
+응답은 vault 기준 상대 경로만 담아 절대 경로 길이에 영향을 받지 않는다. 테스트 안의 경로 단언(절대 경로 < 1024바이트) 때문에
+basetemp가 약 540바이트를 넘으면 파일을 만들기 전에 실패한다. 이 수치는 Linux에서 흉내 낸 것이고 **macOS에서 실행한 것은 아니다**.
+
+### 비밀값 검사
+
+`git diff 88288b4..` 추가 줄에서 `sk-…`·`ghp_…`·`github_pat_`·`xox?-`·`AKIA…`·개인키 헤더·`api_key/token/password/secret = "…"`·
+Telegram 봇 토큰 꼴을 찾았다 — 0건. 민감한 이름의 파일 변경 0건.
+
+### 재판정
+
+같은 리뷰어가 F1–F4 재현 스크립트와 무작위 검사를 수정 후 코드에 다시 돌렸다.
+- 재현 4건 모두 해결됐다.
+- 무작위 검사(기본 플래그 1,200개, `include_common`·`include_unattributed` 1,200개)에서 위반 0건이었다. 반영 전에는 400개에서 21건이었다.
+- 정상 Vault 동일성과 cursor 호환을 확인했고, 바뀐 기대값은 약화가 아니라고 판정했다.
+- **차단 사유 없음.** 비차단 메모는 새 필터 이유 값 하나이고, 문서에 적었다.
+
+남은 설계상 선택(바뀌지 않았다): 30_Projects 아래 폴더를 하나라도 못 읽는 동안에는 모든 등록 프로젝트의 이름만 선언한 문서가
+`conflict`가 되고, 별칭 식별은 `ambiguous`가 된다 — `evidence-search.md` "알려진 한계".
+
+### 수용 기준별 결과 (최종)
+
+| 기준 | 근거 | 결과 |
+|---|---|---|
+| 등록부 PermissionError·검색 지속·경고·partial·소속 미추측·별칭/동명 충돌 보존·회복 후 cursor 무효화 | 위 2026-11-06 표의 테스트 + 이번 8건(교집합·Context 없는 폴더·링크 대상·include_unattributed), 결정적 대역과 실제 chmod 양쪽 | 통과 |
+| UTF-8 아닌 매핑 | `test_non_utf8_project_map_is_ignored_and_search_continues`, `test_non_utf8_map_file_is_ignored_with_warning`, MCP `call_tool` 테스트 | 통과 |
+| surrogate marker 격리·한글 보존·지문·경고·직렬화 | `test_marker_with_lone_surrogate_is_a_corrupt_marker` ×4, 매핑·frontmatter·`.claude/vault.json` surrogate 테스트, MCP 테스트 | 통과 |
+| 짧은 경로 예산 테스트 | 삭제·skip·단언 약화 없이 단언 추가, 경로 길이 단언, 긴 basetemp 2종 실행 | 통과. macOS 직접 실행은 하지 않음 |
+| 네이티브 Python 관련·전체 결과 | 위 실행 표, baseline 673 → 716 passed, 실패 3건 동일, skip 0 | 통과 |
+| 최종 리뷰·재검사·비밀값·호환성 | 독립 리뷰 → 수정 → 재판정 차단 0건, 응답 동일성·평가 Vault·cursor 호환, 비밀값 0건 | 통과 |
