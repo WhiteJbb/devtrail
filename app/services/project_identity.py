@@ -119,6 +119,25 @@ class ProjectRegistry:
                 return p
         return ""
 
+    def may_shadow(self, name: str) -> str:
+        """이미 등록된 이름이 확인하지 못한 등록부 경로 때문에 하나로 보이는 것일 수 있으면 그 경로, 아니면 빈 문자열.
+
+        정상이면 같은 이름을 선언한 Context.md가 둘 이상이라 모호(ambiguous/conflict)했을 수 있다:
+        - 등록 표기(canonical): 못 읽은 30_Projects 폴더가 하나만 있어도 같은 이름을 선언했을 수 있다
+        - SessionHandoffs 폴더로만 등록된 이름: 못 읽은 폴더가 등록 표기 하나로 선언해도 같은 프로젝트다(등록 표기가
+          우선한다). 모호해지려면 30_Projects 폴더 둘 이상(또는 30_Projects 전체)이 같은 이름을 선언하거나, 대소문자만
+          다른 같은 이름의 SessionHandoffs 폴더가 가려져 있어야 한다
+        """
+        key = name.strip().casefold()
+        if not self.unreadable or not self.is_known(name):
+            return ""
+        projects = [p for p in self.unreadable if p.startswith("30_Projects/")]
+        if key in self.canonical:
+            return projects[0] if projects else ""
+        if "30_Projects/" in projects or len(projects) >= 2:
+            return projects[0]
+        return next((p for p in self.unreadable if p.casefold() == f"{_HANDOFF_ROOT}/{key}/".casefold()), "")
+
     def canonical_name(self, name: str) -> str:
         """등록 표기로 바꾼다. 등록이 없으면 입력 표기 그대로 — 소속 비교는 casefold로 한다."""
         key = name.strip().casefold()
@@ -136,8 +155,16 @@ class ProjectRegistry:
         모두 보고, 같은 이름이 둘 이상을 가리키면(동명 Context.md, 다른 프로젝트의 별칭과 겹침) 후보를 전부 돌려준다.
         빈 목록은 등록 근거가 없는 이름이다. 식별에서는 모호한 이름을 소속 판정에서만 하나로 확정하면, 다른 근거로
         확정한 프로젝트 검색에 모호한 문서가 섞인다.
+
+        등록부 일부를 못 읽어 이름이 정말 하나인지 모르면(may_shadow) 가려졌을 수 있는 쪽을 후보로 더한다 — 이름만으로
+        소속을 정하는 문서는 conflict가 된다. 식별은 이 후보를 쓰지 않는다: 프로젝트 검색은 계속되고, 경로가 직접 소속을
+        정하는 문서(30_Projects/<dir>/)는 그대로 그 프로젝트다.
         """
         _, _, targets = _resolve_name(self, name)
+        if len(targets) == 1:
+            shadow = self.may_shadow(name)
+            if shadow:
+                targets = {*targets, f"{name.strip()} ({shadow} 미확인)"}
         return sorted(targets, key=str.casefold)
 
     def is_known(self, name: str) -> bool:
@@ -414,6 +441,10 @@ def _finalize(reg: ProjectRegistry, raw: str, target: str, method: str, evidence
     if not reg.is_known(target):
         return ProjectResolution(input=raw, status="unregistered", project=target, method=method, evidence=evidence,
                                  warnings=warnings, hint=unregistered_hint)
+    shadow = reg.may_shadow(target)
+    if shadow:
+        warnings = [*warnings, f"프로젝트 등록부가 {shadow}를 읽지 못해 '{target}'과 같은 이름을 선언한 다른 Context.md가 없는지 "
+                    "확인하지 못했습니다. 경로로 소속이 정해지는 문서만 이 프로젝트로 보고, 이름만 선언한 문서는 conflict로 둡니다."]
     return ProjectResolution(input=raw, status="resolved", project=target, method=method, evidence=evidence, warnings=warnings)
 
 

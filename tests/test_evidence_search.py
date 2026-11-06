@@ -955,8 +955,13 @@ def test_registry_folder_permission_error_does_not_abort_search(tmp_path, deny_a
     resp = _search(tmp_path, "권한토큰", project="Alpha", limit=20)
     assert deny_access.hits, "PermissionError가 실제로 재현되지 않았다"
     assert resp["ok"], resp
-    expected = set(_ALPHA_OWN) | (set() if "SessionHandoffs" in rel else {_ALPHA_HANDOFF})
-    assert set(_paths(resp)) == expected  # 정상 프로젝트 문서는 계속 검색된다
+    # 정상 프로젝트의 경로 근거 문서(30_Projects/Alpha/)는 계속 검색된다. SessionHandoffs/Alpha/는 폴더 **이름**으로 소속이
+    # 정해지는데, 30_Projects 폴더를 못 읽으면 그 폴더도 Alpha를 선언했을 수 있어(정상이면 모호) conflict로 빠진다
+    assert set(_paths(resp)) == _ALPHA_OWN
+    if rel.startswith("30_Projects/"):
+        whole_attr = {r["path"]: r["attribution"] for r in _search(tmp_path, "권한토큰", limit=20)["results"]}
+        assert whole_attr[_ALPHA_HANDOFF]["scope"] == "conflict"
+        assert whole_attr[_ALPHA_HANDOFF]["conflict_with"] == ["Alpha", "Alpha (30_Projects/Secret/ 미확인)"]
     assert resp["partial"] is True and resp["total_matches"] is None
     flagged = [w for w in resp["warnings"] if w["code"] == "registry_unreadable"]
     assert [w["path"] for w in flagged] == unreadable
@@ -989,6 +994,7 @@ def test_docs_under_unconfirmed_registry_folder_are_not_attributed(tmp_path, den
 
 def test_cursor_stale_when_registry_folder_recovers(tmp_path, deny_access):
     _perm_vault(tmp_path)
+    _w(tmp_path, "30_Projects/Alpha/Plans/p2.md", "권한토큰 알파 계획\n")  # 경로 근거 문서 2건 — 첫 페이지 뒤에 cursor가 남게
     deny_access.no_exec("30_Projects/Secret")
     first = _search(tmp_path, "권한토큰", project="Alpha", limit=1)
     assert first["ok"] and first["next_cursor"]
@@ -1226,3 +1232,93 @@ def test_cursor_issued_before_this_change_still_continues(tmp_path):
     assert _search(tmp_path, "호환토큰", limit=1)["next_cursor"] == legacy
     page2 = _search(tmp_path, "호환토큰", limit=1, cursor=legacy)
     assert page2["ok"] and page2["offset"] == 1 and _paths(page2) == ["20_Knowledge/k1.md"]
+
+
+# ── 2번째 병합 차단 리뷰 반영: 동명 Context 충돌 (2026-11-06) ─────────────────────
+
+
+_DUP_NAME_ONLY = (
+    "10_Worklog/Sessions/s.md",  # 세션 frontmatter
+    "40_AgentMemory/L.md",  # 메모리 marker
+    "60_Candidates/SessionHandoffs/Alpha/h.md",  # handoff 폴더 이름
+    "60_Candidates/_Archive/SessionHandoffs/Alpha/a.md",  # 보관 handoff 폴더 이름
+    "20_Knowledge/Alpha/k.md",  # knowledge 폴더 이름
+)
+_DUP_PATH = {"30_Projects/Alpha/Context.md", "30_Projects/Alpha/Plans/p.md"}
+
+
+def _dup_vault(vault: Path) -> None:
+    """30_Projects/Alpha와 30_Projects/AlphaOld가 둘 다 project: Alpha를 선언한다 — 정상이면 Alpha는 모호하다."""
+    _w(vault, "30_Projects/Alpha/Context.md", _fm(project="Alpha") + "# Alpha\n동명토큰 배경\n")
+    _w(vault, "30_Projects/Alpha/Plans/p.md", "동명토큰 계획\n")
+    _w(vault, "30_Projects/AlphaOld/Context.md", _fm(project="Alpha") + "# Old\n")
+    _w(vault, "10_Worklog/Sessions/s.md", _fm(project="Alpha") + "동명토큰 세션\n")
+    _w(vault, "40_AgentMemory/L.md",
+       '# L\n<!-- devtrail-memory-patch: {"scope": "project", "project": "Alpha"} -->\n동명토큰 메모리\n')
+    _w(vault, "60_Candidates/SessionHandoffs/Alpha/h.md", "동명토큰 handoff\n")
+    _w(vault, "60_Candidates/_Archive/SessionHandoffs/Alpha/a.md", "동명토큰 보관\n")
+    _w(vault, "20_Knowledge/Alpha/k.md", "동명토큰 지식\n")
+
+
+def _unit_scopes(resp: dict) -> dict[str, dict]:
+    """문서별 소속 — marker 문서는 마지막(프로젝트) 블록."""
+    return {r["path"]: (r["attribution"].get("blocks") or [r["attribution"]])[-1] for r in resp["results"]}
+
+
+def _check_dup_denied(vault: Path) -> None:
+    alpha = _search(vault, "동명토큰", project="Alpha", include_history=True, limit=20)
+    assert alpha["ok"] and alpha["partial"] is True
+    # 경로가 직접 소속을 정하는 문서는 계속 검색된다. 이름만으로 소속이 정해지는 문서는 들어오지 않는다
+    assert set(_paths(alpha)) == _DUP_PATH
+    assert any(w["code"] == "project_resolution" and "같은 이름을 선언한 다른 Context.md" in w["message"]
+               for w in alpha["warnings"])
+    whole = _unit_scopes(_search(vault, "동명토큰", include_history=True, limit=20))
+    for path in _DUP_NAME_ONLY:
+        assert whole[path]["scope"] == "conflict", (path, whole[path])
+        assert whole[path]["conflict_with"] == ["Alpha", "Alpha (30_Projects/AlphaOld/ 미확인)"]
+    opted = _search(vault, "동명토큰", project="Alpha", include_history=True, include_unattributed=True, limit=20)
+    for path, unit in _unit_scopes(opted).items():  # 포함하더라도 conflict로만 들어온다
+        assert unit["scope"] == ("project" if path in _DUP_PATH else "conflict"), (path, unit)
+
+
+@pytest.mark.parametrize("mode", ["none", "no_exec"])
+def test_unreadable_context_does_not_dissolve_duplicate_name_conflict(tmp_path, deny_access, mode):
+    """2번째 병합 차단 리뷰 재현: 두 Context가 Alpha를 선언하면 정상일 때 Alpha 식별은 ambiguous, 이름만 선언한 문서는 conflict다.
+    하나를 못 읽어도 그 문서들(세션·marker·handoff·보관 handoff·knowledge 폴더)이 Alpha 확정 소속으로 바뀌면 안 된다."""
+    _dup_vault(tmp_path)
+    normal = _search(tmp_path, "동명토큰", project="Alpha")
+    assert not normal["ok"] and normal["error"]["code"] == "project_ambiguous"
+    assert all(u["scope"] == "conflict" for p, u in _unit_scopes(_search(tmp_path, "동명토큰", include_history=True,
+                                                                          limit=20)).items() if p in _DUP_NAME_ONLY)
+    getattr(deny_access, mode)("30_Projects/AlphaOld")
+    _check_dup_denied(tmp_path)
+    assert deny_access.hits
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="root는 디렉터리 권한을 무시한다")
+def test_real_chmod_unreadable_context_does_not_dissolve_duplicate_name_conflict(tmp_path):
+    _dup_vault(tmp_path)
+    old = tmp_path / "30_Projects/AlphaOld"
+    os.chmod(old, 0)
+    try:
+        _check_dup_denied(tmp_path)
+    finally:
+        os.chmod(old, 0o755)
+
+
+def test_handoff_only_name_is_not_shadowed_by_one_unreadable_project_folder(tmp_path, deny_access):
+    """보수 판정이 넘치지 않는지: SessionHandoffs로만 등록된 이름(Gamma)은 못 읽은 30_Projects 폴더 하나가 Gamma를 선언해도
+    같은 프로젝트다(등록 표기가 우선) — 그대로 확정한다. 30_Projects 전체를 못 읽으면 둘 이상이 선언했을 수 있어 conflict."""
+    _projects(tmp_path, "Alpha")
+    _w(tmp_path, "30_Projects/Secret/Context.md", _fm(project="Hidden") + "# S\n")
+    _w(tmp_path, "60_Candidates/SessionHandoffs/Gamma/h.md", "감마토큰 handoff\n")
+    _w(tmp_path, "10_Worklog/Sessions/g.md", _fm(project="Gamma") + "감마토큰 세션\n")
+    deny_access.none("30_Projects/Secret")
+    one = _search(tmp_path, "감마토큰", project="Gamma")
+    assert one["ok"] and set(_paths(one)) == {"60_Candidates/SessionHandoffs/Gamma/h.md", "10_Worklog/Sessions/g.md"}
+    deny_access.clear()
+    deny_access.none("30_Projects")
+    whole = _unit_scopes(_search(tmp_path, "감마토큰", limit=20))
+    assert {p: u["scope"] for p, u in whole.items()} == {
+        "60_Candidates/SessionHandoffs/Gamma/h.md": "conflict", "10_Worklog/Sessions/g.md": "conflict"}
+    assert _search(tmp_path, "감마토큰", project="Gamma")["results"] == []

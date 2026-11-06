@@ -413,3 +413,28 @@ def test_alias_only_name_is_not_confirmed_while_registry_may_hide_it(tmp_path, d
     assert reg.attribution_targets("al") == ["al", "Alpha"]  # Gamma의 선언명이 al일 수도 있다
     assert resolve_project(tmp_path, "al", map_path).status == "ambiguous"
     assert resolve_project(tmp_path, "Alpha", map_path).status == "resolved"  # canonical 이름은 계속 확정
+
+
+def test_may_shadow_rule(tmp_path, deny_access):
+    """등록된 이름이 못 읽은 등록부 때문에 하나로 보이는 것일 수 있는가 — 식별은 계속 확정(경고), 소속 후보에는 가려진 쪽을 더한다."""
+    from app.services.project_identity import load_registry
+
+    _ctx(tmp_path, "Alpha", "Alpha")
+    _ctx(tmp_path, "Old", "Alpha")
+    _ctx(tmp_path, "Other", "Other")
+    (tmp_path / "60_Candidates/SessionHandoffs/Gamma").mkdir(parents=True)
+    assert resolve_project(tmp_path, "Alpha").status == "ambiguous"
+
+    deny_access.none("30_Projects/Old")
+    reg = load_registry(tmp_path)
+    assert reg.may_shadow("alpha") == "30_Projects/Old/" and reg.may_shadow("Other") == "30_Projects/Old/"
+    assert reg.may_shadow("Gamma") == ""  # handoff 이름 — 못 읽은 폴더 하나로는 모호해지지 않는다
+    assert reg.may_shadow("Nobody") == ""  # 등록되지 않은 이름은 may_hide가 다룬다
+    assert reg.attribution_targets("Alpha") == ["Alpha", "Alpha (30_Projects/Old/ 미확인)"]
+    assert reg.attribution_targets("Gamma") == ["Gamma"]
+    res = resolve_project(tmp_path, "Alpha")
+    assert res.status == "resolved" and any("같은 이름을 선언한 다른 Context.md" in w for w in res.warnings)
+
+    deny_access.clear()
+    reg = load_registry(tmp_path)
+    assert not reg.unreadable and reg.may_shadow("Other") == "" and reg.attribution_targets("Other") == ["Other"]
