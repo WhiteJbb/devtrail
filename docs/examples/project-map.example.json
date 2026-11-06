@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "projects": {
+    "Devtrail": {
+      "aliases": ["devtrail-cli", "dt"],
+      "repos": ["WhiteJbb/devtrail"]
+    },
+    "rpg-game-web": {
+      "aliases": ["rpg"],
+      "repos": ["WhiteJbb/rpg-game-web"]
+    }
+  }
+}

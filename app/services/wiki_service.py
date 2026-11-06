@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import frontmatter
 
@@ -229,13 +229,22 @@ class WikiService:
         limit: int = 10,
         prefixes: tuple[str, ...] | None = None,
         exclude_prefixes: tuple[str, ...] = (),
+        path_filter: Callable[[Path], bool] | None = None,
     ) -> list[WikiSearchResult]:
         """Simple keyword search over parsed vault notes.
 
         prefixes가 주어지면 점수화·절단 전에 해당 경로 접두사로만 필터링한다 —
         전역 top-N을 먼저 뽑은 뒤 걸러내면, 노트가 많은 폴더(예: 세션 로그)가
         허용된 스코프 밖 결과로 top-N을 채워 스코프 안 결과가 잘려나갈 수 있다.
+
+        path_filter가 주어지면 파일을 **열기 전에** 그 경로를 거른다(실제 경로 검증용). 이때는 prefixes도
+        읽기 전에 적용하고, 읽을 수 없는 파일은 검색 전체를 멈추지 않고 건너뛴다. 기본(None)은 기존 동작 그대로다.
         """
+        if path_filter is not None:
+            notes = self.scan_notes(path_filter=path_filter, prefixes=prefixes, skip_unreadable=True)
+            if exclude_prefixes:
+                notes = [n for n in notes if not n.path.startswith(exclude_prefixes)]
+            return self._search_notes(notes, query, limit=limit)
         notes = self.scan_notes()
         if prefixes:
             notes = [n for n in notes if n.path.startswith(prefixes)]
@@ -257,8 +266,16 @@ class WikiService:
         results.sort(key=lambda r: (-r.score, r.note.path))
         return results[:limit]
 
-    def scan_notes(self) -> list[WikiNote]:
-        """Read markdown notes with YAML frontmatter, tags, and wiki links."""
+    def scan_notes(
+        self,
+        path_filter: Callable[[Path], bool] | None = None,
+        prefixes: tuple[str, ...] | None = None,
+        skip_unreadable: bool = False,
+    ) -> list[WikiNote]:
+        """Read markdown notes with YAML frontmatter, tags, and wiki links.
+
+        path_filter·prefixes는 파일을 열기 전에 적용한다. 인자를 주지 않으면 기존 동작과 같다.
+        """
         if not self.vault_dir.exists():
             return []
 
@@ -266,7 +283,17 @@ class WikiService:
         for path in sorted(self.vault_dir.rglob("*.md")):
             if self._should_skip_note(path):
                 continue
-            note = self._parse_note(path)
+            if prefixes and not path.relative_to(self.vault_dir).as_posix().startswith(prefixes):
+                continue
+            if path_filter is not None and not path_filter(path):
+                continue
+            if skip_unreadable:
+                try:
+                    note = self._parse_note(path)
+                except OSError:
+                    continue
+            else:
+                note = self._parse_note(path)
             if note is not None:
                 notes.append(note)
         return notes

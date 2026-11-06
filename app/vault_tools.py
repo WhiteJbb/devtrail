@@ -38,16 +38,25 @@ from app.services.candidate_writer import (
     candidate_write_lock,
     handoff_project_dir,
 )
+from app.services import evidence_search, source_reader
 from app.services.note_excerpt import excerpt_sections as _excerpt_sections
+from app.services.project_identity import ProjectResolution
+from app.services.project_identity import resolve_project as _resolve_project
 from app.services.review_question import HEADING_AI_LED, HEADING_QUESTIONS, HEADING_RELATED, HEADING_UNCLEAR
+from app.services.vault_source import (
+    ALLOWED_READ_PREFIXES as _ALLOWED_READ_PREFIXES,
+    CANDIDATE_PREFIX as _CANDIDATE_PREFIX,
+    RAW_PREFIXES as _RAW_PREFIXES,
+    STABLE_PREFIXES as _STABLE_PREFIXES,
+    VaultScopeError,
+    normalize_scoped_path as _normalize_scoped_path,
+    real_scoped_rel as _real_scoped_rel,
+)
 from app.services.wiki_service import WikiService
 
-_STABLE_PREFIXES = ("20_Knowledge/", "30_Projects/", "40_AgentMemory/")
-_CANDIDATE_PREFIX = "60_Candidates/"
-# 원문 기록 — 검증된 지식이 아니라 "언제 무엇을 했는가"의 근거다. 읽기만 허용하고
-# 검색 순위는 stable/candidate 뒤로 민다. 00_Inbox/는 캡처 노이즈라 제외한다.
-_RAW_PREFIXES = ("10_Worklog/", "50_Outputs/", "70_Tasks/")
-_ALLOWED_READ_PREFIXES = _STABLE_PREFIXES + (_CANDIDATE_PREFIX,) + _RAW_PREFIXES
+# 읽기 범위 상수·경로 검증은 app/services/vault_source.py가 정본이다 (structured 검색·읽기와 공유).
+# 원문 기록(10_Worklog/50_Outputs/70_Tasks)은 검증된 지식이 아니라 "언제 무엇을 했는가"의 근거다.
+# 읽기만 허용하고 legacy 검색 순위는 stable/candidate 뒤로 민다. 00_Inbox/는 캡처 노이즈라 제외한다.
 
 _STATUS_RANK = {"stable": 0, "candidate": 1, "raw": 2}
 _SEARCH_FETCH_ALL = 1_000_000  # 사실상 무제한 — status 우선순위 재정렬을 vault_tools가 직접 한다
@@ -80,11 +89,6 @@ _MEMORY_APPEND_FILES = (
 _MEMORY_FILE_MAX_CHARS = 2000  # CurrentFocus (head)
 _MEMORY_APPEND_MAX_CHARS = 6000  # OpenLoops·Lessons (tail)
 _MEMORY_STALE_DAYS = 30  # CurrentFocus/OpenLoops가 이보다 오래되면 briefing에 경고
-_DRIVE_RE = re.compile(r"^[A-Za-z]:")
-
-
-class VaultScopeError(ValueError):
-    """read_scope/write_scope를 벗어난 요청."""
 
 
 # ── 공용 데이터 타입 ─────────────────────────────────────────────────────────
@@ -125,22 +129,6 @@ def _vault_dir(settings: Settings | None) -> Path:
     if not s.obsidian_vault_root:
         raise RuntimeError("OBSIDIAN_VAULT_PATH is not configured.")
     return Path(s.obsidian_vault_root)
-
-
-def _normalize_scoped_path(rel_path: str) -> str:
-    """rel_path를 vault 기준 상대경로로 정규화하고 read_scope를 벗어나면 거부한다."""
-    if not rel_path or not rel_path.strip():
-        raise VaultScopeError("rel_path가 비어 있습니다.")
-    candidate = rel_path.strip().replace("\\", "/")
-    if candidate.startswith("/") or _DRIVE_RE.match(candidate):
-        raise VaultScopeError(f"절대경로는 허용되지 않습니다: {rel_path}")
-    parts = [p for p in candidate.split("/") if p not in ("", ".")]
-    if any(p == ".." for p in parts):
-        raise VaultScopeError(f"vault를 벗어나는 경로는 허용되지 않습니다: {rel_path}")
-    normalized = "/".join(parts)
-    if not any(normalized.startswith(prefix) for prefix in _ALLOWED_READ_PREFIXES):
-        raise VaultScopeError(f"read_scope 밖의 경로입니다: {rel_path}")
-    return normalized
 
 
 def _status_of(rel_path: str) -> str:
@@ -335,7 +323,13 @@ def search_vault(query: str, limit: int = 10, settings: Settings | None = None) 
     # 절단 없이 다 받아 여기서 status 우선순위로 재정렬한 뒤 자른다 — raw(10_Worklog 등)는
     # 노트 수가 압도적이라 wiki 쪽에서 limit으로 자르면 stable이 재정렬 전에 이미 사라진다.
     # 점수화는 어차피 스코프 안 전 노트에 대해 일어나므로 늘어나는 비용은 리스트 길이뿐이다.
-    results = wiki.search(query, limit=_SEARCH_FETCH_ALL, prefixes=_ALLOWED_READ_PREFIXES)
+    # 실제 경로 검증은 파일을 **열기 전에** 한다 — 링크로 금지 prefix·vault 밖을 가리키는 파일은 읽지도 않는다.
+    # 숨김 대상은 허용한다(기존 검색 범위 보존). 순위 계산은 그대로, 빠지는 건 범위 밖 파일뿐이다.
+    # 읽을 수 없는 파일(깨진 링크 등)은 건너뛰어 검색 전체가 멈추지 않게 한다.
+    results = wiki.search(
+        query, limit=_SEARCH_FETCH_ALL, prefixes=_ALLOWED_READ_PREFIXES,
+        path_filter=lambda p: _real_scoped_rel(vault_dir, p, allow_hidden=True) is not None,
+    )
 
     hits = [
         SearchHit(path=r.note.path, title=r.note.title, status=_status_of(r.note.path), score=r.score, summary=r.note.summary)
@@ -372,6 +366,9 @@ def read_note(rel_path: str, settings: Settings | None = None) -> str:
     resolved = path.resolve()
     if not resolved.is_relative_to(vault_dir.resolve()):
         raise VaultScopeError(f"vault를 벗어나는 경로입니다: {rel_path}")
+    # vault 안이어도 링크 대상이 금지 prefix(00_Inbox 등)면 거부한다. 숨김 폴더는 원래 읽을 수 있었다
+    if _real_scoped_rel(vault_dir, path, allow_hidden=True) is None:
+        raise VaultScopeError(f"실제 경로가 read_scope 밖입니다(심볼릭 링크를 푼 위치 기준): {rel_path}")
     if not resolved.exists() or not resolved.is_file():
         raise VaultScopeError(f"노트를 찾지 못했습니다: {rel_path}")
     try:
@@ -380,6 +377,53 @@ def read_note(rel_path: str, settings: Settings | None = None) -> str:
         # 외부 도구가 UTF-8이 아닌 인코딩으로 저장한 노트도 있을 수 있다
         # (WikiService._parse_note는 이미 이 폴백을 쓴다).
         return resolved.read_text(encoding="utf-8", errors="replace")
+
+
+def _project_map_path(settings: Settings | None) -> str:
+    s = settings or get_settings()
+    return str(getattr(s, "devtrail_project_map", "") or "")
+
+
+def search_evidence(
+    query: str,
+    *,
+    project: str = "",
+    include_common: bool = False,
+    include_unattributed: bool = False,
+    include_history: bool = False,
+    kinds: list[str] | None = None,
+    limit: int | None = None,
+    cursor: str = "",
+    max_chars: int | None = None,
+    settings: Settings | None = None,
+) -> dict:
+    """structured 근거 검색 — 계약은 app/services/evidence_search.py, 사용법은 docs/evidence-search.md."""
+    return evidence_search.search(
+        _vault_dir(settings), query, project=project, include_common=include_common,
+        include_unattributed=include_unattributed, include_history=include_history, kinds=kinds,
+        limit=limit, cursor=cursor, max_chars=max_chars, project_map=_project_map_path(settings),
+    )
+
+
+def read_source(
+    rel_path: str,
+    *,
+    start_line: int | None = None,
+    max_lines: int | None = None,
+    max_chars: int | None = None,
+    expected_version: str = "",
+    settings: Settings | None = None,
+) -> dict:
+    """structured 원문 구간 읽기 — 줄 기준은 검색 발췌와 같다 (frontmatter 포함 파일 전체, 1부터)."""
+    return source_reader.read_range(
+        _vault_dir(settings), rel_path, start_line=start_line, max_lines=max_lines,
+        max_chars=max_chars, expected_version=expected_version,
+    )
+
+
+def resolve_project_identity(identifier: str, settings: Settings | None = None) -> ProjectResolution:
+    """명시적 근거(canonical·별칭·.claude/vault.json·owner/repo 매핑)로만 프로젝트를 확정한다. basename은 쓰지 않는다."""
+    return _resolve_project(_vault_dir(settings), identifier, _project_map_path(settings))
 
 
 def get_briefing(settings: Settings | None = None) -> str:

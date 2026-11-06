@@ -278,8 +278,8 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 | Tool | 역할 |
 |------|------|
 | `get_project_briefing` | 세션 시작 시 프로젝트 컨텍스트 · 최근 handoff · decision · Open Loops 반환 |
-| `search_vault` | read_scope 안 노트 검색 (status=stable/candidate 포함) |
-| `read_note` | scope 안 노트 전문 읽기 |
+| `search_vault` | read_scope 안 노트 검색 (status=stable/candidate 포함). `structured=True`면 프로젝트 범위 근거 검색 — 원문 줄 발췌·소속 근거·상태·`source_version`·cursor |
+| `read_note` | scope 안 노트 전문 읽기. `structured=True`면 줄 구간 읽기 — 전체 줄 수·잘림·다음 위치·내용 버전 |
 | `get_recent_sessions` | 프로젝트의 최근 세션 목록 (세션당 한 항목: goal · what_changed · next_session 발췌) |
 | `get_decisions` | 프로젝트의 결정 이력 (승격 전 후보 · 승격 · `include_archived`로 보관분까지) |
 | `get_known_problems` | 겪은 문제 조회 — `record_problem` 기록(분류 있음) + 세션 Process의 막힌 점 · 실수. `component`로 필터 |
@@ -295,6 +295,26 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 `write_session_process`로 기록합니다. `session_id`는 MCP 서버 프로세스 시작 시
 1회 생성돼 모든 write 계열 tool에 자동 주입되므로 에이전트가 직접 들고 다닐 필요가
 없습니다(컴팩팅 중 분실 방지).
+
+### 프로젝트 근거 검색 (`structured=True`)
+
+기존 호출(`search_vault(query, limit)` → 리스트, `read_note(rel_path)` → 전문)은 그대로이고, `structured=True`를
+줄 때만 새 계약이 나온다. 입력·출력·분량 상한·오류 코드·한계는 [`docs/evidence-search.md`](docs/evidence-search.md).
+
+```text
+search_vault("Context 상한 5000자", structured=True, project="Devtrail")
+  → results[0].excerpts[0] = {start_line: 128, end_line: 129, text: "...", ...}, source_version: "sha256:…"
+read_note("60_Candidates/SessionHandoffs/Devtrail/….md", structured=True, start_line=128, max_lines=2,
+          expected_version="sha256:…")
+  → 같은 줄 기준(frontmatter 포함)의 정확한 구간, next=None이면 끝
+```
+
+- `project`를 주면 그 프로젝트 소속 파일·블록만 본다(공통·타 프로젝트·소속 불명 제외, `include_common`·
+  `include_unattributed`로 직접 넓힌다). 0건이어도 범위를 자동으로 넓히지 않는다.
+- 프로젝트는 등록 이름·`.claude/vault.json`·식별 매핑(`DEVTRAIL_PROJECT_MAP`, 예시 `docs/examples/project-map.example.json`)
+  으로만 확정한다. repo 디렉터리 이름만으로는 확정하지 않는다.
+- 기본 분량: 검색 5개(최대 20)·문서당 발췌 2개×800자·응답 12000자, 구간 읽기 120줄(최대 400)·16000자.
+- 발췌와 구간 읽기는 완전한 줄만 준다. 한 줄이 상한보다 길면 줄을 자르지 않고 `line_too_long`으로 알린다(발췌는 `text: null`).
 
 ### 새 머신 점검 — `devtrail doctor`
 
@@ -464,6 +484,7 @@ app/
 │                      # ResumeAgent, ProjectAgent
 │                      # TaskAgent  ← 할 일 관리 (Telegram 봇 전용)
 ├─ services/           # WikiService, CandidateWriter, RepoSnapshot, retention(vault-cleanup)
+│                      # evidence_search·source_reader·project_identity·vault_source ← structured 근거 검색·구간 읽기
 │                      # TaskService  ← Active.md CRUD + 안정 ID
 ├─ memory/             # AgentMemoryLoader, ProjectMemoryLoader, ContextPackBuilder
 ├─ llm/                # router(task_type→chain), FallbackChain
@@ -487,6 +508,8 @@ scripts/
 docs/
 ├─ mac-automation-setup.md            # Mac 자동화 설정 가이드 (터미널 기초부터)
 ├─ vault-mcp-implementation-summary.md # MCP(Agent Session Lifecycle) 구현 요약
+├─ evidence-search.md                 # search_vault/read_note structured 모드 계약·평가·한계
+├─ examples/project-map.example.json  # 프로젝트 식별 매핑(별칭·owner/repo) 예시
 ├─ vault-templates/                   # Obsidian 노트 템플릿 (외부 AI 프롬프트 가이드 포함)
 └─ old/                               # 과거 기획·설계 문서 아카이브 (feature-reference, architecture 등)
 ```

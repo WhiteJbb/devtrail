@@ -333,3 +333,132 @@ def test_tool_calls_import_no_new_app_modules(vault_env, monkeypatch):
         tools.get_tool("read_note").fn("00_Inbox/x.md")
     after = {m for m in sys.modules if m.startswith("app.")}
     assert after - before == set()
+
+
+# ── search_vault / read_note structured 선택 — 실제 MCP 호출 경로(call_tool) ──────────
+
+
+def _call(mod, name: str, args: dict):
+    """FastMCP의 인자 검증·결과 변환을 그대로 타는 실제 도구 호출."""
+    import asyncio
+
+    return asyncio.run(mod.mcp.call_tool(name, args))
+
+
+def _note(vault: Path, rel: str, text: str) -> None:
+    path = vault / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_search_vault_legacy_call_keeps_list_shape_and_raw_quota(vault_env, monkeypatch):
+    for i in range(5):
+        _note(vault_env, f"20_Knowledge/k{i}.md", "공통검색어 지식")
+        _note(vault_env, f"60_Candidates/Knowledge/c{i}.md", "공통검색어 후보")
+    for i in range(3):
+        _note(vault_env, f"10_Worklog/Sessions/s{i}.md", "공통검색어 세션")
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    content, structured = _call(mod, "search_vault", {"query": "공통검색어"})
+    hits = structured["result"]
+    assert isinstance(hits, list) and len(hits) == 10
+    assert set(hits[0]) == {"path", "title", "status", "score", "summary"}
+    assert [h["status"] for h in hits[-3:]] == ["raw"] * 3
+    assert [h["status"] for h in hits[:5]] == ["stable"] * 5
+    _, small = _call(mod, "search_vault", {"query": "공통검색어", "limit": 2})
+    assert [h["status"] for h in small["result"]] == ["stable", "stable"]
+
+
+def test_search_vault_structured_call_returns_contract(vault_env, monkeypatch):
+    _note(vault_env, "30_Projects/Devtrail/Context.md", "---\nproject: Devtrail\n---\n# Devtrail\n\n구조토큰 배경\n")
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    _, structured = _call(mod, "search_vault", {"query": "구조토큰", "structured": True, "project": "devtrail"})
+    resp = structured["result"]
+    assert resp["ok"] and resp["scope"]["project"] == "Devtrail" and resp["returned"] == 1
+    hit = resp["results"][0]
+    assert hit["excerpts"][0]["start_line"] == 6 and hit["source_version"].startswith("sha256:")
+
+
+def test_search_vault_rejects_structured_args_in_legacy_mode(vault_env, monkeypatch):
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    for extra in ({"project": "Devtrail"}, {"kinds": ["decision"]}, {"cursor": "x"}, {"include_common": True}):
+        with pytest.raises(ToolError, match="structured=True"):
+            _call(mod, "search_vault", {"query": "x", **extra})
+
+
+def test_search_vault_structured_reports_invalid_args_as_error(vault_env, monkeypatch):
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    _, structured = _call(mod, "search_vault", {"query": "검색어", "structured": True, "limit": 50})
+    assert structured["result"]["ok"] is False and structured["result"]["error"]["code"] == "invalid_argument"
+    _, structured = _call(mod, "search_vault", {"query": "검색어", "structured": True, "include_common": True})
+    assert structured["result"]["error"]["code"] == "invalid_argument"
+
+
+def test_read_note_legacy_and_structured_calls(vault_env, monkeypatch):
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    _note(vault_env, "20_Knowledge/a.md", "---\ntitle: a\n---\n하나\n둘\n셋\n")
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    _, legacy = _call(mod, "read_note", {"rel_path": "20_Knowledge/a.md"})
+    assert legacy["result"] == "---\ntitle: a\n---\n하나\n둘\n셋\n"
+    _, structured = _call(mod, "read_note", {"rel_path": "20_Knowledge/a.md", "structured": True, "start_line": 5, "max_lines": 1})
+    page = structured["result"]
+    assert page["content"] == "둘" and page["next"]["start_line"] == 6
+    with pytest.raises(ToolError, match="structured=True"):
+        _call(mod, "read_note", {"rel_path": "20_Knowledge/a.md", "start_line": 2})
+    with pytest.raises(ToolError):
+        _call(mod, "read_note", {"rel_path": "00_Inbox/x.md"})
+    _, bad = _call(mod, "read_note", {"rel_path": "00_Inbox/x.md", "structured": True})
+    assert bad["result"]["error"]["code"] == "scope_violation"
+
+
+def test_search_and_read_tool_schemas_keep_legacy_parameters(vault_env, monkeypatch):
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    search = mod.mcp._tool_manager.get_tool("search_vault").parameters
+    assert search["required"] == ["query"]
+    assert {"query", "limit", "structured"} <= set(search["properties"])
+    read = mod.mcp._tool_manager.get_tool("read_note").parameters
+    assert read["required"] == ["rel_path"]
+
+
+def test_structured_tool_calls_import_no_new_app_modules(vault_env, monkeypatch):
+    """structured 경로도 기동 시 import한 모듈만 쓴다 — 서버가 사는 동안 main이 pull돼도 깨지지 않게."""
+    import sys
+
+    _note(vault_env, "20_Knowledge/a.md", "구조토큰\n")
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    before = {m for m in sys.modules if m.startswith("app.")}
+    tools = mod.mcp._tool_manager
+    tools.get_tool("search_vault").fn("구조토큰", structured=True)
+    tools.get_tool("search_vault").fn("구조토큰", structured=True, project="없는프로젝트")
+    tools.get_tool("read_note").fn("20_Knowledge/a.md", structured=True)
+    after = {m for m in sys.modules if m.startswith("app.")}
+    assert after - before == set()
+
+
+def test_legacy_mode_rejects_zero_valued_structured_args(vault_env, monkeypatch):
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    _note(vault_env, "20_Knowledge/a.md", "본문\n")
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    for extra in ({"start_line": 0}, {"max_lines": 0}, {"max_chars": 0}):
+        with pytest.raises(ToolError, match="structured=True"):
+            _call(mod, "read_note", {"rel_path": "20_Knowledge/a.md", **extra})
+    with pytest.raises(ToolError, match="structured=True"):
+        _call(mod, "search_vault", {"query": "본문", "max_chars": 0})
+
+
+def test_read_note_structured_long_line_through_call_tool(vault_env, monkeypatch):
+    """긴 줄은 MCP 경로에서도 잘리지 않고 line_too_long으로 온다. char_offset은 도구 인자가 아니다."""
+    _note(vault_env, "20_Knowledge/long.md", "첫 줄\n" + "가" * 500 + "\n끝\n")
+    mod = _reload_mcp_server(vault_env, monkeypatch)
+    read = mod.mcp._tool_manager.get_tool("read_note").parameters
+    assert "char_offset" not in read["properties"]
+    _, first = _call(mod, "read_note", {"rel_path": "20_Knowledge/long.md", "structured": True, "max_chars": 300})
+    page = first["result"]
+    assert page["content"] == "첫 줄" and page["truncation_reason"] == "line_too_long" and page["next"]["start_line"] == 2
+    _, second = _call(mod, "read_note", {"rel_path": "20_Knowledge/long.md", "structured": True, "max_chars": 300,
+                                         "start_line": 2, "expected_version": page["next"]["expected_version"]})
+    err = second["result"]["error"]
+    assert err["code"] == "line_too_long" and err["line_chars"] == 500 and err["next"]["start_line"] == 3
