@@ -387,3 +387,29 @@ def test_context_path_that_is_not_readable_as_file_keeps_folder_fallback(tmp_pat
     reg = load_registry(tmp_path)
     assert reg.is_known("Odd") and not reg.unreadable
     assert any("폴더명으로 식별합니다" in w for w in reg.warnings)
+
+
+def test_alias_only_name_is_not_confirmed_while_registry_may_hide_it(tmp_path, deny_access):
+    """별칭만 남은 이름은 못 읽은 등록부가 그 이름을 가렸을 수 있으면 확정하지 않는다(식별 ambiguous, 소속 후보 둘).
+    SessionHandoffs 폴더는 이름이 곧 폴더명이라 그 이름만, 30_Projects 아래 폴더는 선언명을 몰라 모든 별칭이 해당한다."""
+    from app.services.project_identity import load_registry
+
+    _ctx(tmp_path, "Alpha", "Alpha")
+    _ctx(tmp_path, "Gamma", "Gamma")
+    (tmp_path / "60_Candidates/SessionHandoffs/Beta").mkdir(parents=True)
+    map_path = _map(tmp_path, {"Alpha": {"aliases": ["Beta", "al"]}})
+
+    deny_access.none("60_Candidates/SessionHandoffs/Beta")
+    deny_access.no_exec("60_Candidates/SessionHandoffs")
+    reg = load_registry(tmp_path, map_path)
+    assert reg.attribution_targets("Beta") == ["Alpha", "Beta"]
+    assert resolve_project(tmp_path, "Beta", map_path).status == "ambiguous"
+    assert resolve_project(tmp_path, "al", map_path).project == "Alpha"  # 가려질 수 없는 별칭은 그대로 확정
+    assert resolve_project(tmp_path, "Alpha", map_path).status == "resolved"
+
+    deny_access.clear()
+    deny_access.none("30_Projects/Gamma")
+    reg = load_registry(tmp_path, map_path)
+    assert reg.attribution_targets("al") == ["al", "Alpha"]  # Gamma의 선언명이 al일 수도 있다
+    assert resolve_project(tmp_path, "al", map_path).status == "ambiguous"
+    assert resolve_project(tmp_path, "Alpha", map_path).status == "resolved"  # canonical 이름은 계속 확정

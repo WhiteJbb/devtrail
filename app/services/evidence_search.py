@@ -839,8 +839,12 @@ def _corpus_digest(kept: list[tuple[_Doc, list[_Unit]]], scan: "_Scan", reg: Pro
     docs = [[d.rel, d.source.version, d.status_class, d.file_unit.signature(), [u.signature() for u in units]]
             for d, units in kept]
     failed = sorted(w.get("path", "") for w in scan.warnings if w.get("code") == "read_failed")
-    # 등록부 미확인 경로가 회복되면 소속이 바뀔 수 있다 — 앞 페이지와 섞지 않게 cursor를 낡게 만든다
-    return _digest({"docs": docs, "failed": failed, "partial": scan.partial, "registry_unreadable": sorted(reg.unreadable)})
+    state: dict[str, Any] = {"docs": docs, "failed": failed, "partial": scan.partial}
+    if reg.unreadable:
+        # 등록부 미확인 경로가 회복되면 소속이 바뀔 수 있다 — 앞 페이지와 섞지 않게 cursor를 낡게 만든다.
+        # 미확인이 없을 때는 키를 넣지 않는다 — 이 변경 전에 발급된 정상 cursor가 그대로 이어지게
+        state["registry_unreadable"] = sorted(reg.unreadable)
+    return _digest(state)
 
 
 def _encode_cursor(fingerprint: str, corpus: str, offset: int) -> str:

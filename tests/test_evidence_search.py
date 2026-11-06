@@ -1151,3 +1151,78 @@ def test_map_with_lone_surrogates_is_ignored_without_encode_error(tmp_path):
     assert resp["results"][0]["attribution"]["project"] == "Beta"  # 손상 매핑의 별칭이 소속을 바꾸지 않는다
     assert sum("유효하지 않은 문자" in w["message"] for w in resp["warnings"] if w["code"] == "registry") == 2
     assert vault_tools.search_evidence("매핑토큰", project="al", settings=settings)["error"]["code"] == "project_unresolved"
+
+
+# ── 병합 차단 리뷰 반영 (2026-11-06) ────────────────────────────────────────────
+
+
+def _alias_vault(vault: Path, beta_where: str) -> str:
+    """Alpha 정상 등록 + Beta 등록(handoff 폴더 또는 30_Projects) + 매핑이 Beta를 Alpha의 별칭으로 둔다 — 정상이면 Beta는 모호하다."""
+    _projects(vault, "Alpha")
+    if beta_where == "handoff":
+        _w(vault, "60_Candidates/SessionHandoffs/Beta/x.md", _fm(project="Beta") + "별칭토큰 handoff\n")
+    else:
+        _w(vault, "30_Projects/Beta/Context.md", _fm(project="Beta") + "# Beta\n")
+    _w(vault, "10_Worklog/Sessions/s.md", _fm(project="Beta") + "별칭토큰 세션\n")
+    _w(vault, "60_Candidates/_Archive/SessionHandoffs/Beta/a.md", _fm(project="Beta") + "별칭토큰 보관\n")
+    _w(vault, "40_AgentMemory/L.md",
+       '# L\n<!-- devtrail-memory-patch: {"scope": "project", "project": "Beta"} -->\n별칭토큰 메모리\n')
+    map_path = vault / "map.json"
+    map_path.write_text(json.dumps({"projects": {"Alpha": {"aliases": ["Beta"]}}}), encoding="utf-8")
+    return str(map_path)
+
+
+_ALIAS_DOCS = ("10_Worklog/Sessions/s.md", "60_Candidates/_Archive/SessionHandoffs/Beta/a.md", "40_AgentMemory/L.md")
+
+
+@pytest.mark.parametrize(("beta_where", "mode", "rel"), [
+    ("handoff", "none", "60_Candidates/SessionHandoffs"),
+    ("handoff", "no_exec", "60_Candidates/SessionHandoffs"),
+    ("projects", "none", "30_Projects/Beta"),
+])
+def test_unreadable_registry_does_not_resolve_alias_conflict(tmp_path, deny_access, beta_where, mode, rel):
+    """병합 차단 리뷰 재현: 정상이면 `project: Beta`(Beta 등록 + Alpha의 별칭 Beta)는 conflict(Alpha, Beta)다.
+    Beta 등록부가 권한 오류로 빠져도 별칭만 남아 Alpha로 확정되면 안 된다 — 세션 frontmatter·메모리 marker·보관 handoff 모두."""
+    settings = _settings(tmp_path, _alias_vault(tmp_path, beta_where))
+
+    def alpha_paths() -> list[str]:
+        resp = vault_tools.search_evidence("별칭토큰", project="Alpha", include_history=True, limit=20, settings=settings)
+        assert resp["ok"], resp
+        return [r["path"] for r in resp["results"]]
+
+    def attributions() -> dict[str, dict]:
+        resp = vault_tools.search_evidence("별칭토큰", include_history=True, limit=20, settings=settings)
+        assert resp["ok"], resp
+        json.dumps(resp, ensure_ascii=False).encode("utf-8")
+        out = {r["path"]: r["attribution"] for r in resp["results"]}
+        out["40_AgentMemory/L.md"] = out["40_AgentMemory/L.md"]["blocks"][-1]  # marker 블록
+        return out
+
+    assert not set(_ALIAS_DOCS) & set(alpha_paths())
+    assert vault_tools.resolve_project_identity("Beta", settings=settings).status == "ambiguous"
+    getattr(deny_access, mode)(rel)
+    assert not set(_ALIAS_DOCS) & set(alpha_paths())  # 범위가 넓어지지 않는다
+    assert deny_access.hits
+    after = attributions()
+    for path in _ALIAS_DOCS:
+        assert after[path]["scope"] == "conflict" and after[path]["conflict_with"] == ["Alpha", "Beta"], (path, after[path])
+    res = vault_tools.resolve_project_identity("Beta", settings=settings)
+    assert res.status == "ambiguous" and any(e.startswith("registry_unreadable:") for e in res.evidence)
+    # 정상 등록 프로젝트 검색은 계속된다
+    assert vault_tools.resolve_project_identity("Alpha", settings=settings).status == "resolved"
+    opted = vault_tools.search_evidence("별칭토큰", project="Alpha", include_history=True, include_unattributed=True,
+                                        limit=20, settings=settings)
+    for r in opted["results"]:  # 확정 소속으로는 들어오지 않는다 (marker 문서는 포함된 블록 소속을 본다)
+        units = r["attribution"].get("blocks") or [r["attribution"]]
+        assert all(u["scope"] in ("conflict", "unknown") for u in units), (r["path"], r["attribution"])
+
+
+def test_cursor_issued_before_this_change_still_continues(tmp_path):
+    """등록부 미확인이 없으면 cursor 지문 구조가 변경 전과 같다 — 변경 전에 발급된 정상 cursor가 만료되지 않는다.
+    아래 cursor는 변경 전 코드(88288b4)가 이 Vault에 대해 실제로 발급한 값이다(내용 버전·경로가 같으면 결정적)."""
+    for i in range(3):
+        _w(tmp_path, f"20_Knowledge/k{i}.md", f"호환토큰 {i}\n")
+    legacy = "eyJ2IjoyLCJmIjoiODc4MjliMjMwNzE2YzY3YiIsImMiOiI1M2Y4NGRmMzk3NTdlN2I3IiwibyI6MX0"
+    assert _search(tmp_path, "호환토큰", limit=1)["next_cursor"] == legacy
+    page2 = _search(tmp_path, "호환토큰", limit=1, cursor=legacy)
+    assert page2["ok"] and page2["offset"] == 1 and _paths(page2) == ["20_Knowledge/k1.md"]

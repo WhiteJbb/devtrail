@@ -391,6 +391,13 @@ def _resolve_name(reg: ProjectRegistry, name: str) -> tuple[str, list[str], set[
         hits.setdefault(target, []).append(f"alias:{name.strip()}→{target}")
         if "alias" not in methods:
             methods.append("alias")
+    if hits and methods[0] not in ("canonical", "handoff_folder"):
+        # 별칭만으로 가리키는 이름이 못 읽은 등록부에 그 이름 자체로 있을 수 있다 — 정상이면 별칭과 겹쳐 모호했을 이름을
+        # 별칭 대상 하나로 확정하지 않는다. 그 이름 자체를 후보로 남겨 식별은 ambiguous, 소속은 conflict가 된다
+        hidden = reg.may_hide(name)
+        if hidden:
+            hits.setdefault(name.strip(), []).append(f"registry_unreadable:{hidden}")
+            methods.append("registry_unreadable")
     if not hits:
         return "", [], set()
     return (methods[0] if len(hits) == 1 else "+".join(methods)), [e for v in hits.values() for e in v], set(hits)
