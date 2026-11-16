@@ -117,21 +117,25 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 |-------|----|
 | `has_items` | 기록에 명시된 후속 항목이 있다(기록 당시). `complete=false`면 확인하지 못한 출처가 있거나 후속 기록 일부가 본문에서 생략됐다 — 메시지에 "후속 작업 유무를 확인하지 못한 기록 있음"이 붙는다 |
 | `none_in_scope` | 메시지 "**이 브리핑에 포함된 기록에는 명시된 후속 작업 없음**" — 대상 읽기가 완전하고, 최근 세션의 Next Session과 프로젝트 OpenLoops 블록이 모두 명시적 "없음"이거나 OpenLoops 블록이 없거나 비었고, 그 후속 기록이 본문에서 생략되지 않았다. 명시적 없음은 그 기록에만 해당하고, 범위 밖·현재 상태는 판정하지 않았다 |
-| `unknown` | 메시지 "**후속 작업 유무를 확인하지 못한 기록 있음**" — 읽기 실패·생략(`unreadable`·`attribution_mismatch`·`unattributed`·`link_skipped`·partial)이거나, 데이터 부족(세션 기록 없음, Next Session 절 없음 `missing`, 빈 틀 `empty`, Plan만 `no_process`)이거나, 후속 기록(명시적 "없음" 포함)이 예산 때문에 본문에서 생략됐다. 없다고 말할 수 없다 |
+| `unknown` | 메시지 "**후속 작업 유무를 확인하지 못한 기록 있음**" — 읽기 실패·생략(`unreadable`·`attribution_mismatch`·`unattributed`·`link_skipped`·partial)이거나, 데이터 부족(세션 기록 없음, Next Session 절 없음 `missing`, 빈 틀 `empty`, OpenLoops 블록에 제목만 남음 `headings_only`, Plan만 `no_process`)이거나, 후속 기록(명시적 "없음" 포함)이 예산 때문에 본문에서 생략됐다. 없다고 말할 수 없다 |
 | `not_evaluated` | 프로젝트를 확정하지 못해 보지 않았다 |
 
 이유는 `unknown_reasons`로 구분한다: `{read_failed_or_skipped, partial, data_insufficient, no_sessions, omitted_from_text?}`.
 `omitted_from_text`는 예산 배정 **뒤**에 센다 — 후속 항목 판단은 배정 결과까지 반영해 최종 확정한다(고정부 크기는 생략이 가장 많을 때의
 메시지로 미리 잡아 상한을 넘지 않는다). 데이터 부족은 gaps에도
-`follow_up_section_missing`·`follow_up_section_empty`(OpenLoops 빈 틀 블록 포함)·`orphan_plan`·`no_sessions`로 남는다 — 읽기 실패와 섞지 않고,
+`follow_up_section_missing`·`follow_up_section_empty`(OpenLoops 빈 틀 블록 포함)·`follow_up_headings_only`·`orphan_plan`·`no_sessions`로 남는다 — 읽기 실패와 섞지 않고,
 그 세션에 후속 작업이 있었는지 판정하지 않는다.
 
-`sources_checked`에 출처마다 `items | explicit_none | empty | missing | no_process | unreadable | link_skipped | attribution_mismatch | unattributed | block_empty | no_block`.
+`sources_checked`에 출처마다 `items | explicit_none | empty | missing | no_process | unreadable | link_skipped | attribution_mismatch | unattributed | headings_only | block_empty | no_block`.
 `link_skipped`(읽기 경계 밖 링크라 열지 않은 세션 파일)·`attribution_mismatch`(소속 검증 실패 세션 파일)는 읽기 실패와 같이 확인 불가로 센다.
 `unattributed`는 OpenLoops의 소속 unknown/conflict 블록이다 — 이 프로젝트 것일 수 있어 확인 불가로 센다.
 OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 블록 제목(`## <프로젝트>`)만 남았으면(항목을 다 지운 상태) `block_empty`(없음).
-할 일을 하위 제목으로 적은 경우(`### 결제 웹훅 재시도 미해결`, 본문 없음)는 그 제목이 내용이라 `items`다 — Next Session도 같다
-(`없음` 아래 `### …` 제목이 더 있으면 명시적 없음이 아니다). 내용을 거느린 하위 제목(`### 기타` 아래 `- 없음`)은 내용 줄로 세지 않는다.
+OpenLoops 블록에 불릿 없이 하위 제목만 남았으면 `headings_only`(확인 불가)다. `update_open_loops`는 할 일을 `- ` 불릿으로만 쓰고
+`section=`의 `### 분류` 제목은 resolve 뒤에도 남긴다 — 그래서 제목만 남은 블록은 할 일을 다 지운 분류일 수도, 사람이 제목으로 적은
+할 일(`### 결제 웹훅 재시도 미해결`)일 수도 있다. 어느 쪽인지 근거가 없어 '있음'(`items`)으로도 '없음'(`block_empty`)으로도 보지 않고,
+`follow_up_headings_only` gap에 제목 줄 위치(최대 5개)를 남긴다. 불릿이 하나라도 남은 블록은 `items`이고 빈 분류 제목은 발췌 안에 그대로 보인다.
+Next Session은 자유 서식이라 본문 없는 하위 제목도 내용이다(`없음` 아래 `### …` 제목이 더 있으면 `items` — 명시적 없음이 아니다).
+내용을 거느린 하위 제목(`### 기타` 아래 `- 없음`)은 내용 줄로 세지 않는다.
 명시적 없음은 내용이 `없음·없다·해당 없음·none·n/a·na`(대소문자 무시, 앞 불릿·끝 마침표 제외) 한 줄일 때만이다 — "없음 — 단 실측은 남음"은 항목으로 본다.
 Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow_up_state: explicit_none`, 원문 발췌는 남는다). 명시적 없음은 그 기록에만
 해당한다 — 다른 세션·블록의 후속 항목을 지우거나 해결 처리하지 않는다.
@@ -140,7 +144,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 ### 제약 상태
 
 `sections[constraints].state`(Context.md 기준)와 `memory_rule_items`(기억의 적용 규칙 항목 수). state: `items`, `heading_empty`(제약 제목 아래가 알려진 빈 틀뿐 —
-본문 없는 하위 제목은 내용이라 `items`), `none_found`(제약 제목 절 없음 —
+본문 없는 하위 제목은 내용이라 `items`. 빈 틀만 남아 항목이 되지 않은 제약 제목은 `constraint_section_empty` gap 메시지에 줄 번호와 함께
+최대 5개 실린다 — `### main 브랜치에 직접 push 금지` 아래 빈 불릿처럼 제목 자체가 규칙일 수 있어서다. 규칙인지는 판정하지 않는다), `none_found`(제약 제목 절 없음 —
 다른 제목 아래 제약성 문장은 판정 안 함), `no_context`(Context.md 없음), `unknown`(Context.md 또는 그 폴더를 읽지 못함 →
 `critical_omission`), `not_evaluated`.
 
@@ -150,7 +155,7 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 `context_stale`·`memory_stale`(30일, 기본 briefing과 같은 기준), `no_decisions`, `no_sessions`, `orphan_plan`,
 `decisions_unverifiable`·`sessions_unverifiable`(읽은 기록은 없지만 읽지 못한 파일·폴더가 있다), `unclosed_code_fence`,
 `attribution_mismatch`, `unattributed_block_excluded`(marker 소속이 unknown/conflict), `unregistered`, `vault_empty`,
-`project_<status>`(식별 실패), `follow_up_section_missing`·`follow_up_section_empty`(후속 항목 데이터 부족),
+`project_<status>`(식별 실패), `follow_up_section_missing`·`follow_up_section_empty`·`follow_up_headings_only`(후속 항목 데이터 부족·판정 불가),
 `line_exceeds_read_limit`(16000자 넘는 줄을 발췌하지 못함 — 아래 예산 절).
 
 ## 정리 — 알려진 것만, 줄 번호는 그대로
@@ -273,7 +278,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 | 독립 리뷰 6차 지적 2건의 회귀 — 16000자 넘는 줄 하나가 뒤 제약 줄까지 숨기고 그 구간을 전문 읽기로 뭉갬, 최악 길이 생략 줄 예약 때문에 들어갈 제약 줄이 잘림 | `test_over_limit_line_does_not_hide_later_constraints_or_widen_their_read`, `test_line_over_read_limit_is_never_excerpted[*]`(뒤 제약 표시·비연속 구간), `test_budget_cut_uses_exact_omission_note_length`(경계 900자를 1자 단위로 훑음) (고치기 전 코드에서 5건 실패 확인). 리뷰어 퍼즈 220 시드 — 예산 순서 위반·긴 줄 뒤 누락·발췌 회수 실패·이어읽기 불일치·상한 초과 0건 | 통과 |
 | 독립 리뷰 7차 지적(BLOCK 1건·비차단 3건)의 회귀 — 본문 없이 제목만 있는 규칙·할 일을 빈 틀로 지워 제약이 `heading_empty`, 후속이 "없음"으로 바뀜(차단), 1~3칸 들여쓴 제약 제목을 못 알아봐 맥락 상한에 잘림, 발췌가 있는 결정에 고정부 목록 줄이 없음, 문서의 `na`·`line_exceeds_read_limit`·`sources_checked` 상태 누락 | `test_heading_only_rules_are_constraints_not_empty_scaffold`, `test_heading_only_follow_ups_are_not_reported_as_none`, `test_indented_constraint_heading_is_recognised_late_in_long_context`, `test_decisions_keep_fixed_list_line_when_excerpt_is_cut` (고치기 전 코드에서 4건 실패 확인), 정리 규칙을 좁히기만 했다는 보호 검사 `test_scaffold_emptied_constraint_heading_stays_heading_empty`·`test_heading_over_explicit_none_keeps_explicit_none` | 통과 |
 | 병합 리뷰 지적(BLOCK) 회귀 — 하위 절만 거느린 상위 제목("운영 서버에서만 적용" / "로컬 환경")을 정리하면서 두 `### 제약`이 적용 범위 없이 실림 | `test_parent_heading_scope_stays_with_constraints`(리뷰 원문 사례), `test_heading_path_lists_every_enclosing_level_but_not_doc_title`, `test_memory_rule_keeps_parent_heading_inside_its_block_only`, `test_heading_path_line_is_counted_in_text_budget` (고치기 전 코드에서 4건 실패 확인). 리뷰어 퍼즈 150 vault 재실행 — 상한·발췌 회수·예산 순서 위반 0건 | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 807 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 독립 리뷰 8차 지적 — `update_open_loops(section=)`로 쓰고 resolve로 다 지운 뒤 남은 `### 분류` 제목을 후속 항목(`has_items`)으로 보고(차단, 63cf1bb 회귀), 빈 불릿 위 제목 규칙이 본문에서 사라짐(비차단) | `test_open_loops_category_left_after_resolve_is_not_reported_as_open_work`(제품 쓰기 함수로 재현), `test_heading_only_follow_ups_are_not_reported_as_none`(OpenLoops 제목만 → `headings_only`로 갱신), `test_constraint_heading_over_empty_bullet_is_named_in_gap` (고치기 전 코드에서 3건 실패 확인). 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 809 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).

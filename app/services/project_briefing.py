@@ -490,6 +490,7 @@ def _collect_context(b: _Build) -> None:
     starts += heads
     constraint_heads = 0
     constraint_items = 0
+    emptied_rules: list[str] = []  # 빈 틀만 남아 항목이 되지 않은 제약 제목 — 제목 자체가 규칙일 수 있어 본문에 위치를 남긴다
     for i, (n, level, text, is_constraint) in enumerate(starts):
         end = starts[i + 1][0] - 1 if i + 1 < len(starts) else total
         if is_constraint:
@@ -500,6 +501,8 @@ def _collect_context(b: _Build) -> None:
         if not _has_content(lines, keep):
             if not any(lines[m - 1].strip() for m in range(n, end + 1)):
                 continue  # 빈 줄뿐인 머리말
+            if is_constraint:
+                emptied_rules.append(f"L{n} {evidence_search._clip(lines[n - 1].strip(), 80)}")
             # 빈 틀·제목만 있는 절은 항목을 만들지 않고 정리 목록에만 남긴다. 하위 절만 거느린 상위 제목은 비어 있는 게
             # 아니라 하위 항목의 적용 범위다 — 하위 항목의 heading_path로 실리고, 정리 사유도 따로 적는다.
             parent = bool(level and i + 1 < len(starts) and starts[i + 1][1] > level
@@ -515,7 +518,9 @@ def _collect_context(b: _Build) -> None:
         b.states["constraints"] = "items"
     elif constraint_heads:
         b.states["constraints"] = "heading_empty"
-        b.gap("constraint_section_empty", "Context.md에 제약 제목 절은 있지만 내용이 비어 있다(빈 틀).", path=doc.rel)
+        b.gap("constraint_section_empty", "Context.md에 제약 제목 절은 있지만 내용이 비어 있다(빈 틀). 빈 틀만 남은 제약 제목: "
+              + ", ".join(emptied_rules[:5]) + (f" 외 {len(emptied_rules) - 5}개" if len(emptied_rules) > 5 else "")
+              + " — 제목 자체가 규칙인지는 판정하지 않았다.", path=doc.rel)
     else:
         b.states["constraints"] = "none_found"
         b.gap("no_constraint_heading",
@@ -645,8 +650,12 @@ def _collect_memory(b: _Build) -> None:
             keep, cleaned = _clean(doc.source.lines, unit.start, unit.end, drop)
             # 빈 틀(빈 불릿)만 남은 블록은 확인 불가, 제목만 있는 블록(항목을 다 지운 상태)은 기록된 항목 없음.
             # 내용이 "없음" 한 줄뿐이면 Next Session과 같이 명시적 없음 — 이 블록에만 해당하고, 원문 발췌는 남긴다.
+            # update_open_loops는 할 일을 불릿으로만 쓰고 `### 분류` 제목은 resolve 뒤에도 남긴다. 불릿 없이 제목만 남은 블록은
+            # 다 비운 분류인지 제목으로 적은 할 일인지 근거가 없다 — '있음'도 '없음'도 아닌 확인 불가(headings_only)로 둔다.
+            content = _content_lines(doc.source.lines, keep)
             state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
-                     else "items" if _has_content(doc.source.lines, keep)
+                     else "headings_only" if content and all(_heading(line) for line in content)
+                     else "items" if content
                      else "empty" if any(r == "empty_scaffolding" for _, r in cleaned) else "block_empty")
             item = _add_item(b, "follow_ups", "project_open_loops", "프로젝트 Open Loops", doc, (unit.start, unit.end),
                              drop, "project", follow_up_state=state, block_evidence=list(unit.evidence))
@@ -657,6 +666,13 @@ def _collect_memory(b: _Build) -> None:
                 b.items.remove(item)
             if state == "empty":
                 b.gap("follow_up_section_empty", "OpenLoops의 이 프로젝트 블록이 빈 틀뿐이다(데이터 부족) — '없음'으로 보지 않았다.",
+                      path=doc.rel, lines=[unit.start, unit.end])
+            elif state == "headings_only":
+                heads = [n for n in keep if doc.source.lines[n - 1].strip() and _heading(doc.source.lines[n - 1])]
+                listed = ", ".join(f"L{n} {evidence_search._clip(doc.source.lines[n - 1].strip(), 80)}" for n in heads[:5])
+                b.gap("follow_up_headings_only", f"OpenLoops의 이 프로젝트 블록에 불릿 항목 없이 제목만 남았다({listed}"
+                      + (f" 외 {len(heads) - 5}개" if len(heads) > 5 else "") + ") — 항목을 다 지운 분류 제목인지 제목으로 적은 "
+                      "할 일인지 판정하지 않았다. '없음'으로도 '있음'으로도 보지 않았다.",
                       path=doc.rel, lines=[unit.start, unit.end])
         else:
             keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
@@ -858,7 +874,7 @@ FOLLOW_UP_NONE = "이 브리핑에 포함된 기록에는 명시된 후속 작�
 FOLLOW_UP_UNKNOWN = "후속 작업 유무를 확인하지 못한 기록 있음"
 # 확인하지 못한 출처의 두 갈래: 읽기 실패·생략(읽기 경계 밖·소속 불명 포함)과 데이터 부족(절 없음·빈 틀·Process 없음)
 _UNREAD_STATES = frozenset({"unreadable", "unattributed", "attribution_mismatch", "link_skipped"})
-_DATA_GAP_STATES = frozenset({"missing", "empty", "no_process"})
+_DATA_GAP_STATES = frozenset({"missing", "empty", "no_process", "headings_only"})
 
 
 def _follow_up_state(b: _Build) -> dict[str, Any]:
@@ -874,7 +890,7 @@ def _follow_up_state(b: _Build) -> dict[str, Any]:
     if b.partial:
         detail.append("일부 기록을 읽지 못함(partial)")
     if data_gap:
-        detail.append(f"후속 항목 절 없음·빈 틀·Process 없음(데이터 부족) {len(data_gap)}건")
+        detail.append(f"후속 항목 절 없음·빈 틀·제목만 남은 블록·Process 없음(데이터 부족) {len(data_gap)}건")
     if not sessions_checked:
         detail.append("세션 인계 기록 없음(데이터 부족)")
     unknown = bool(unread or data_gap or b.partial or not sessions_checked)

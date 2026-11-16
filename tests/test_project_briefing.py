@@ -19,6 +19,7 @@ from app.services import project_briefing as pb
 from app.services.vault_source import content_version, split_source_lines
 
 TODAY = datetime.now().strftime("%Y-%m-%d")
+FOLLOW_UP_UNKNOWN_TEXT = "후속 작업 유무를 확인하지 못한 기록 있음"
 
 
 def _settings(vault: Path, project_map: str = ""):
@@ -1350,8 +1351,15 @@ def test_heading_only_follow_ups_are_not_reported_as_none(tmp_path):
     fu = _section(resp, "follow_ups")
     assert fu["state"] == "has_items"
     states = {s["source"]: s["state"] for s in fu["sources_checked"]}
-    assert states == {"next_session": "items", "project_open_loops": "items"}
+    # Next Session은 자유 서식이라 '없음' 아래 제목도 내용이다. OpenLoops는 불릿이 항목이고 제목은 분류라, 제목만 남은 블록은
+    # 할 일인지 비운 분류인지 판정하지 않는다(확인 불가) — '없음'으로 보지 않고, 위치·제목은 본문 gap에 남긴다.
+    assert states == {"next_session": "items", "project_open_loops": "headings_only"}
+    assert fu["complete"] is False and FOLLOW_UP_UNKNOWN_TEXT in fu["message"]
     assert "### 배포 스크립트 롤백 확인 필요" in resp["text"] and "### 결제 웹훅 재시도 미해결" in resp["text"]
+    gap = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_headings_only")
+    ol = _file_lines(tmp_path, "40_AgentMemory/05_OpenLoops.md")
+    n = ol.index("### 결제 웹훅 재시도 미해결") + 1
+    assert gap["lines"][0] <= n <= gap["lines"][1] and f"L{n} ### 결제 웹훅 재시도 미해결" in gap["message"]
 
 
 def test_heading_over_explicit_none_keeps_explicit_none(tmp_path):
@@ -1462,3 +1470,37 @@ def test_heading_path_line_is_counted_in_text_budget(tmp_path):
         for seg in item["segments"]:
             assert seg["text"] == "\n".join(lines[seg["start_line"] - 1:seg["end_line"]])
             assert seg["text"] in resp["text"]
+
+
+
+def test_open_loops_category_left_after_resolve_is_not_reported_as_open_work(tmp_path):
+    """update_open_loops(section=)로 쓰고 resolve로 다 지운 뒤 남은 `### 분류` 제목을 후속 항목으로 보고하지 않는다.
+    제목으로 적은 할 일과 구분할 근거가 없어 '없음'으로도 단정하지 않는다(확인 불가)."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
+    s = _settings(tmp_path)
+    vault_tools.update_open_loops("Devtrail", add=["결제 웹훅 재시도 확인"], section="결제", settings=s)
+    assert vault_tools.update_open_loops("Devtrail", resolve=["결제 웹훅"], settings=s).resolved
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert fu["state"] == "unknown" and fu["state"] != "has_items"
+    assert [x["state"] for x in fu["sources_checked"] if x["source"] == "project_open_loops"] == ["headings_only"]
+    assert not [i for i in fu["items"] if i["kind"] == "project_open_loops"]
+    assert "명시된 후속 항목이다" not in resp["text"]
+    assert "follow_up_headings_only" in {g["code"] for g in _items(resp, "gaps")}
+    # 같은 블록에 불릿 할 일이 하나라도 남아 있으면 항목이다 (빈 분류 제목은 발췌 안에 그대로 보인다)
+    vault_tools.update_open_loops("Devtrail", add=["배포 롤백 점검"], section="배포", settings=s)
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert [x["state"] for x in fu["sources_checked"] if x["source"] == "project_open_loops"] == ["items"]
+    assert fu["state"] == "has_items" and "배포 롤백 점검" in resp["text"]
+
+
+def test_constraint_heading_over_empty_bullet_is_named_in_gap(tmp_path):
+    """제목으로 쓴 규칙 아래 빈 불릿만 있으면 정리 규칙대로 항목은 만들지 않되, 그 제목·줄은 본문 gap에 남는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n### main 브랜치에 직접 push 금지\n\n- \n\n## 배경\n\n- 설명\n")
+    resp = _brief(tmp_path)
+    assert _section(resp, "constraints")["state"] == "heading_empty"
+    lines = [l for l in resp["text"].splitlines() if l.startswith("- [constraint_section_empty]")]
+    n = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md").index("### main 브랜치에 직접 push 금지") + 1
+    assert len(lines) == 1 and f"L{n} ### main 브랜치에 직접 push 금지" in lines[0]
