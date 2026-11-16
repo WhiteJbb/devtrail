@@ -124,7 +124,8 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 이유는 `unknown_reasons`로 구분한다: `{read_failed_or_skipped, partial, data_insufficient, no_sessions, omitted_from_text?}`.
 `omitted_from_text`는 예산 배정 **뒤**에 센다 — 후속 항목 판단은 배정 결과까지 반영해 최종 확정한다(고정부 크기는 생략이 가장 많을 때의
 메시지로 미리 잡아 상한을 넘지 않는다). 데이터 부족은 gaps에도
-`follow_up_section_missing`·`follow_up_section_empty`(OpenLoops 빈 틀 블록 포함)·`follow_up_headings_only`·`orphan_plan`·`no_sessions`로 남는다 — 읽기 실패와 섞지 않고,
+`follow_up_section_missing`·`follow_up_section_empty`(OpenLoops 빈 틀 블록 포함 — 빈 틀 아래 제목이 있으면 할 일일 수 있어 메시지에 건수·줄을,
+JSON `headings`에 전체를 싣는다)·`follow_up_headings_only`·`orphan_plan`·`no_sessions`로 남는다 — 읽기 실패와 섞지 않고,
 그 세션에 후속 작업이 있었는지 판정하지 않는다.
 
 `sources_checked`에 출처마다 `items | explicit_none | empty | missing | no_process | unreadable | link_skipped | attribution_mismatch | unattributed | headings_only | block_empty | no_block`.
@@ -293,7 +294,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 | 독립 리뷰 8차 지적 — `update_open_loops(section=)`로 쓰고 resolve로 다 지운 뒤 남은 `### 분류` 제목을 후속 항목(`has_items`)으로 보고(차단, 63cf1bb 회귀), 빈 불릿 위 제목 규칙이 본문에서 사라짐(비차단) | `test_open_loops_category_left_after_resolve_is_not_reported_as_open_work`(제품 쓰기 함수로 재현), `test_heading_only_follow_ups_are_not_reported_as_none`(OpenLoops 제목만 → `headings_only`로 갱신), `test_constraint_heading_over_empty_bullet_is_named_in_gap` (고치기 전 코드에서 3건 실패 확인). 퍼즈 150·40 vault 재실행 위반 0건. 재검토 비차단 지적 — 4칸 들여쓴 `#` 줄을 제목으로 봄, 본문 gap 400자 자름에 "외 N개"가 잘림: `test_four_space_indented_hash_line_in_open_loops_is_content_not_heading`, `test_heading_gaps_keep_count_in_text_and_full_list_in_json` (고치기 전 2건 실패 확인) | 통과 |
 | 병합 리뷰 지적(BLOCK) 회귀 — 다른 제약 항목이 있으면 빈 불릿만 거느린 규칙 제목(`### main 브랜치 직접 push 금지`)이 gap·critical 없이 사라짐(Context·CurrentFocus·Lessons) | `test_scaffold_only_rule_heading_kept_beside_real_constraints_in_context`, `test_scaffold_only_memory_rule_heading_kept_beside_real_rules[CurrentFocus·Lessons]`, `test_scaffold_only_rule_heading_cut_by_budget_is_critical` (고치기 전 코드에서 4건 실패 확인), 보호 검사 `test_parent_constraint_heading_without_scaffold_is_not_a_scaffold_item`. 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
 | 독립 리뷰 지적(BLOCK) 회귀 — 내용 있는 항목 안의 4단계 이하 규칙 제목·제목으로 적은 할 일이 빈 불릿 아래면 `empty_section`으로 소리 없이 사라짐(Context·CurrentFocus·Lessons·OpenLoops·Next Session) | `test_deep_rule_heading_over_empty_bullet_inside_constraint_item_is_shown`, `test_deep_memory_rule_heading_over_empty_bullet_is_shown[CurrentFocus·Lessons]`, `test_todo_heading_over_empty_bullet_beside_real_items_is_shown_in_follow_ups` (고치기 전 코드에서 4건 실패 확인), 보호 검사 `test_whole_scaffold_only_sections_are_still_cleaned`. 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 821 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 재검토 비차단 지적 — 빈 틀뿐인 OpenLoops 블록·Next Session 안의 제목(할 일일 수 있음)이 `follow_up_section_empty` 안내에 이름 없이 빠짐 | `test_empty_follow_up_record_names_its_headings_in_gap[open_loops·next_session]` (고치기 전 2건 실패 확인) | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 823 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).

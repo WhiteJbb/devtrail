@@ -1645,3 +1645,22 @@ def test_whole_scaffold_only_sections_are_still_cleaned(tmp_path):
     assert "## 목표" not in resp["text"]
     fu = _section(resp, "follow_ups")
     assert [s["state"] for s in fu["sources_checked"] if s["source"] == "next_session"] == ["empty"]
+
+
+@pytest.mark.parametrize("where", ["open_loops", "next_session"])
+def test_empty_follow_up_record_names_its_headings_in_gap(tmp_path, where):
+    """빈 틀뿐인 후속 기록 안의 제목(할 일일 수 있다)은 확인 불가 gap에 건수·줄과 함께 본문에 남는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    if where == "open_loops":
+        _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
+        _open_loops_block(tmp_path, "### 결제 웹훅 재시도 미해결\n\n- \n")
+        rel, heading = "40_AgentMemory/05_OpenLoops.md", "### 결제 웹훅 재시도 미해결"
+    else:
+        _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("### 운영 DB 롤백 확인\n\n- "))
+        rel, heading = "60_Candidates/SessionHandoffs/Devtrail/p1.md", "### 운영 DB 롤백 확인"
+    resp = _brief(tmp_path)
+    assert _section(resp, "follow_ups")["state"] == "unknown"
+    gap = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_section_empty")
+    n = _file_lines(tmp_path, rel).index(heading) + 1
+    assert gap["headings"] == [{"line": n, "text": heading}]
+    assert f"빈 틀 아래 제목 1개" in gap["message"] and f"L{n} {heading}" in resp["text"]

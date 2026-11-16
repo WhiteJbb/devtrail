@@ -374,6 +374,15 @@ def _content_lines(lines: list[str], nums: list[int]) -> list[str]:
     return [lines[n - 1].strip() for n in _content_nums(lines, nums)]
 
 
+def _emptied_headings_note(lines: list[str], cleaned: list[tuple[int, str]]) -> tuple[str, dict[str, Any]]:
+    """빈 틀뿐이라 정리된 후속 기록 안의 제목 — 제목 자체가 할 일일 수 있어 gap 메시지(건수 먼저)와 JSON headings에 남긴다."""
+    nums = sorted(n for n, r in cleaned if r == "empty_section")
+    if not nums:
+        return "", {}
+    short, full = _heading_list(lines, nums)
+    return (f" 빈 틀 아래 제목 {len(full)}개 — 제목 자체가 할 일인지는 판정하지 않았다: {short}", {"headings": full})
+
+
 def _heading_list(lines: list[str], nums: list[int]) -> tuple[str, list[dict[str, Any]]]:
     """gap에 싣는 제목 목록 — 본문용 짧은 목록(5개·제목 40자)과 JSON용 전체 목록(줄 번호·제목)."""
     full = [{"line": n, "text": evidence_search._clip(lines[n - 1].strip(), _FIELD_CHARS)} for n in nums]
@@ -714,8 +723,9 @@ def _collect_memory(b: _Build) -> None:
             if not shown_item:
                 b.items.remove(item)
             if state == "empty":
-                b.gap("follow_up_section_empty", "OpenLoops의 이 프로젝트 블록이 빈 틀뿐이다(데이터 부족) — '없음'으로 보지 않았다.",
-                      path=doc.rel, lines=[unit.start, unit.end])
+                note, extra = _emptied_headings_note(doc.source.lines, cleaned)
+                b.gap("follow_up_section_empty", "OpenLoops의 이 프로젝트 블록이 빈 틀뿐이다(데이터 부족) — '없음'으로 보지 않았다."
+                      + note, path=doc.rel, lines=[unit.start, unit.end], **extra)
             elif state == "headings_only":
                 heads = [n for n in keep if doc.source.lines[n - 1].strip() and _heading(doc.source.lines[n - 1])]
                 short, full = _heading_list(doc.source.lines, heads)
@@ -880,15 +890,16 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                         continue
                     for n, end in spans:
                         drop = {name}
-                        keep, _ = _clean(doc.source.lines, n, end, drop)
+                        keep, cleaned = _clean(doc.source.lines, n, end, drop)
                         if section == "follow_ups":
                             state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
                                      else "items" if _has_content(doc.source.lines, keep) else "empty")
                             if state == "empty":
                                 b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
                                                          "state": "empty", "session_id": sid})
+                                note, extra = _emptied_headings_note(doc.source.lines, cleaned)
                                 b.gap("follow_up_section_empty", "Next Session 절이 비었거나 빈 틀뿐이다(데이터 부족) — "
-                                      "'없음'으로 보지 않았다.", path=doc.rel, lines=[n, end])
+                                      "'없음'으로 보지 않았다." + note, path=doc.rel, lines=[n, end], **extra)
                                 continue
                             item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project",
                                              follow_up_state=state, **meta)
