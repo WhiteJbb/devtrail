@@ -429,6 +429,23 @@ def _add_item(b: _Build, section: str, group: str, label: str, doc: Any, span: t
     return item
 
 
+def _scaffold_only_headings(lines: list[str], start: int, end: int, drop_titles: set[str]) -> list[int]:
+    """제약·규칙으로 분류된 절이 알려진 빈 틀만 거느려 정리로 비었을 때, 그 절의 제목 줄들. 제목 자체가 규칙일 수
+    있으므로(`### main 브랜치 직접 push 금지` 아래 빈 불릿) 지우지 않고 제목만 담은 제약 항목으로 남긴다. 빈 틀이 없는
+    상위 제목(하위 절만 거느림)은 해당하지 않는다 — 하위 항목의 heading_path로 실린다."""
+    keep, cleaned = _clean(lines, start, end, drop_titles)
+    if keep or not any(r == "empty_scaffolding" for _, r in cleaned):
+        return []
+    return [n for n, r in cleaned if r == "empty_section"]
+
+
+def _add_scaffold_only(b: _Build, heads: list[int], *args: Any, **extra: Any) -> _Item:
+    item = _add_item(b, *args, scaffold_only=True, **extra)
+    item.candidates = list(heads)
+    item.cleaned = [(n, r) for n, r in item.cleaned if n not in heads]
+    return item
+
+
 def _heading_path(lines: list[str], lo: int, start: int, drop_titles: set[str]) -> list[dict[str, Any]]:
     """[lo, start) 안에서 start 줄을 감싸는 상위 제목들(바깥부터). 상위 제목이 하위 절만 거느려 따로 항목이 되지 않아도
     "운영 서버에서만 적용" 같은 적용 범위가 항목에서 떨어지지 않게 한다. 이미 항목·출처로 드러난 문서 제목은 뺀다."""
@@ -512,8 +529,14 @@ def _collect_context(b: _Build) -> None:
         if not _has_content(lines, keep):
             if not any(lines[m - 1].strip() for m in range(n, end + 1)):
                 continue  # 빈 줄뿐인 머리말
-            if is_constraint:
-                emptied_rules.append(n)
+            heads_only = _scaffold_only_headings(lines, n, end, drop) if is_constraint else []
+            if heads_only:
+                # 다른 제약 항목이 있어도 사라지지 않게 제약 항목으로 남긴다 — 예산은 제약 단계, 잘리면 critical_omission
+                emptied_rules.extend(heads_only)
+                _add_scaffold_only(b, heads_only, section, group, label, doc, (n, end), drop, "project",
+                                   heading_line=n if level else None, heading_level=level or None,
+                                   heading_path=_heading_path(lines, doc.body_start, n, drop))
+                continue
             # 빈 틀·제목만 있는 절은 항목을 만들지 않고 정리 목록에만 남긴다. 하위 절만 거느린 상위 제목은 비어 있는 게
             # 아니라 하위 항목의 적용 범위다 — 하위 항목의 heading_path로 실리고, 정리 사유도 따로 적는다.
             parent = bool(level and i + 1 < len(starts) and starts[i + 1][1] > level
@@ -644,6 +667,13 @@ def _collect_memory(b: _Build) -> None:
             for start, end, is_rule, heading, hline in _memory_pieces(lines, unit.start, unit.end):
                 keep, _ = _clean(lines, start, end, drop)
                 if not _has_content(lines, keep):
+                    heads_only = _scaffold_only_headings(lines, start, end, drop) if is_rule else []
+                    if heads_only:
+                        b.states["memory_rule_items"] = b.states.get("memory_rule_items", 0) + 1
+                        _add_scaffold_only(b, heads_only, "constraints", "constraint", f"{label} · 적용 규칙: {heading}",
+                                           doc, (start, end), drop, unit.scope, block_evidence=list(unit.evidence),
+                                           heading_line=hline, memory_rule=True,
+                                           heading_path=_heading_path(lines, unit.start, start, drop))
                     continue
                 if is_rule:
                     b.states["memory_rule_items"] = b.states.get("memory_rule_items", 0) + 1
@@ -1013,6 +1043,8 @@ def _header(item: _Item) -> str:
         bits.append(f"기록 {evidence_search._clip(rec['value'], 60) if rec['value'] else '시각 없음'} ({rec['source']})")
     if item.extra.get("follow_up_state") == "explicit_none":
         bits.append("명시적 없음 — 이 기록 범위 한정")
+    if item.extra.get("scaffold_only"):
+        bits.append("본문은 빈 틀뿐 — 제목만 남김(규칙 여부는 판정하지 않음)")
     bits.append(item.doc.rel)
     return "▸ " + " · ".join(bits) + _path_line(item)
 
@@ -1356,7 +1388,7 @@ def _item_dict(item: _Item) -> dict[str, Any]:
     if item.skipped:
         out["unreadable_lines"] = list(item.skipped)  # 원문 읽기 상한 초과로 발췌하지 않은 줄 — omissions에 줄마다 있다
     for key in ("follow_up_state", "decision_status", "recorded_at", "session_rank", "session_id", "handoff_type", "host", "agent",
-                "heading_line", "heading_path", "excerpt_basis", "block_evidence", "memory_rule"):
+                "heading_line", "heading_path", "excerpt_basis", "block_evidence", "memory_rule", "scaffold_only"):
         if key == "heading_path" and not item.extra.get(key):
             continue  # 상위 제목이 없는 항목엔 키를 싣지 않는다 (응답 크기)
         if item.extra.get(key) not in (None, ""):

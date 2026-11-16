@@ -1536,3 +1536,58 @@ def test_heading_gaps_keep_count_in_text_and_full_list_in_json(tmp_path):
     assert all(h["text"] == ol[h["line"] - 1] for h in gap["headings"])
     line = next(l for l in resp["text"].splitlines() if l.startswith("- [follow_up_headings_only]"))
     assert "제목 8개만 남았다" in line and "외 3개" in line
+
+
+# ── 병합 리뷰 지적 회귀 — 다른 제약이 있어도 빈 틀 아래 규칙 제목이 사라지지 않는다 ─────────────────────
+
+
+def _rule_texts(resp: dict) -> list[str]:
+    return [seg["text"] for it in _items(resp, "constraints") for seg in it["segments"]]
+
+
+def test_scaffold_only_rule_heading_kept_beside_real_constraints_in_context(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n- 실제 규칙 A\n### main 브랜치 직접 push 금지\n-\n## 배경\n설명\n")
+    resp = _brief(tmp_path)
+    cons = _section(resp, "constraints")
+    assert cons["state"] == "items"
+    kept = [i for i in cons["items"] if i.get("scaffold_only")]
+    assert len(kept) == 1 and [s["text"] for s in kept[0]["segments"]] == ["### main 브랜치 직접 push 금지"]
+    lines = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md")
+    seg = kept[0]["segments"][0]
+    assert lines[seg["start_line"] - 1] == seg["text"]
+    assert {"lines": [seg["start_line"] + 1, seg["start_line"] + 1], "reason": "empty_scaffolding"} in kept[0]["cleaned"]
+    assert "### main 브랜치 직접 push 금지" in resp["text"] and "본문은 빈 틀뿐" in resp["text"]
+    assert "- 실제 규칙 A" in resp["text"]
+
+
+@pytest.mark.parametrize("rel", ["40_AgentMemory/01_CurrentFocus.md", "40_AgentMemory/06_Lessons.md"])
+def test_scaffold_only_memory_rule_heading_kept_beside_real_rules(tmp_path, rel):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _w(tmp_path, rel, _fm(type="agent_memory", scope="global", updated_at=TODAY) + "# Memory\n\n"
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n### 규칙\n- 실제 기억 규칙\n### 운영 DB 직접 수정 금지\n- \n")
+    resp = _brief(tmp_path)
+    rules = [i for i in _items(resp, "constraints") if i.get("memory_rule")]
+    assert [i.get("scaffold_only", False) for i in rules] == [False, True]
+    assert [s["text"] for s in rules[1]["segments"]] == ["### 운영 DB 직접 수정 금지"]
+    assert rules[1]["scope"] == "project" and rules[1]["path"] == rel
+    assert "### 운영 DB 직접 수정 금지" in resp["text"] and "- 실제 기억 규칙" in resp["text"]
+
+
+def test_scaffold_only_rule_heading_cut_by_budget_is_critical(tmp_path):
+    """제목만 남긴 규칙도 제약 예산을 받고, 예산에 밀려 빠지면 critical_omission·requires_read로 드러난다."""
+    rules = "".join(f"- 규칙 {i:04d} " + "나" * 80 + "\n" for i in range(260))
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + rules + "\n### 마지막 금지 제목\n\n- \n")
+    resp = _brief(tmp_path)
+    item = next(i for i in _items(resp, "constraints") if i.get("scaffold_only"))
+    assert item["shown"] == "omitted" and resp["critical_omission"] is True
+    assert any(r.get("item") == item["id"] for r in resp["requires_read"])
+
+
+def test_parent_constraint_heading_without_scaffold_is_not_a_scaffold_item(tmp_path):
+    """빈 틀 없이 하위 절만 거느린 제약 상위 제목은 항목이 아니라 하위 항목의 heading_path다 (이전 동작 유지)."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n### 운영\n- 재시작 금지\n")
+    resp = _brief(tmp_path)
+    items = _items(resp, "constraints")
+    assert not [i for i in items if i.get("scaffold_only")]
+    assert [h["text"] for h in items[0]["heading_path"]] == ["제약"]
