@@ -990,3 +990,27 @@ def test_other_project_file_paths_in_warnings_stay_out_of_text(tmp_path):
     # 소속을 확인하지 못한 파일이라 JSON warnings에는 경로가 남는다(숨기지 않는다) — 본문에는 코드별 건수만
     assert any(w.get("path") == rel for w in resp["warnings"])
     assert "acquire-competitor" not in resp["text"] and "frontmatter_unparsed 1" in resp["text"]
+
+
+@pytest.mark.parametrize("mode", ["many_next_session_headings", "many_open_loops_blocks"])
+def test_many_follow_up_items_do_not_displace_constraints(tmp_path, mode):
+    """후속 항목 수는 창으로 묶이지 않는다(Next Session 절 반복, 패치마다 쌓이는 OpenLoops 블록) — 미리 예약하는 안내 줄이
+    제약 발췌를 밀어내면 안 된다. 들어가는 제약(약 14000자)은 전부 실리고, 못 실은 후속 항목은 omissions와 건수로 드러난다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + "".join(f"- 제약 {i}: " + "가" * 90 + "\n" for i in range(140)))
+    if mode == "many_next_session_headings":
+        body = "# Process\n\n## What Changed\n\n- x\n\n" + "".join(f"## Next Session\n\n- 후속 {k}\n\n" for k in range(120))
+        _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", body)
+    else:
+        _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 다음 일"))
+        mk = '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n## Devtrail\n\n'
+        _w(tmp_path, "40_AgentMemory/05_OpenLoops.md", "# Open Loops\n\n" + "".join(f"{mk}- 루프 {k}\n\n" for k in range(120)))
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+    assert resp["critical_omission"] is False and [i["shown"] for i in _items(resp, "constraints")] == ["full"]
+    assert resp["text"].count("- 제약 ") == 140
+    follow = _items(resp, "follow_ups")
+    assert len(follow) >= 120 and _section(resp, "follow_ups")["state"] == "has_items"
+    hidden = [i for i in follow if i["shown"] == "omitted"]
+    assert all(any(o["item"] == i["id"] for o in resp["omissions"]) for i in hidden)
+    if hidden and not all(i["path"] in resp["text"] for i in hidden):
+        assert "안내도 못 낸 생략" in resp["text"]

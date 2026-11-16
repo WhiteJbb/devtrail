@@ -166,8 +166,12 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
   프로젝트 OpenLoops 6000, Context 나머지 6000, CurrentFocus 2000, Lessons 6000(뒤부터), 공통 OpenLoops 2000(뒤부터).
   제약은 전체 예산만 적용한다. 값은 기본 briefing의 상한에서 가져왔다.
 - 위치 안내 한 줄(`본문 생략 L…-L… → read_note(…)`) 예약 — 내용이 다 빠져도 항목이 어디 있는지는 본문에 남게 한다.
-  - 후속·결정·세션 결과·Plan Goal 항목은 **미리** 예약한다. 개수가 창(결정 5건·세션 3개·OpenLoops 블록)으로 묶여 있어
-    크기에 상한이 있는 고정부 성격의 자리다. 제약이 예산을 다 써도 후속 항목의 위치는 남는다.
+  - 후속·결정·세션 결과·Plan Goal 항목은 **미리** 예약한다 — 제약이 예산을 다 써도 후속 항목의 위치가 남게 하는 고정부 성격의
+    자리다. 항목 수는 창으로 묶이지 않으므로(Process 하나에 Next Session 절이 여럿, OpenLoops 프로젝트 블록은 패치마다 쌓인다)
+    **예산 순서대로 앞의 15개 항목만**(기본 창 크기: 결정 5 + 3세션 × 3 + OpenLoops 1) 예약하고, 크기는 항목 전체 발췌 비용과
+    안내 줄 중 **작은 쪽**이다. 그래서 제약이 이 예약 때문에 덜 받는 몫은 최대 15개 안내 줄(각 수백 자)이고, 그 자리는 해당 후속·
+    최근 항목이 실제로 쓴다. 16번째부터의 후속 항목은 제약·맥락 뒤 남은 예산으로만 실리고, 못 실으면 `omissions`와 "안내도 못 낸
+    생략 N건"으로 드러난다.
   - Context 절은 **제약 배정이 끝난 뒤** 맥락 단계에 들어갈 때 남은 예산 안에서만 예약한다. 모르는 제목까지 항목이 되어 개수에
     상한이 없으므로, 미리 예약하면 많은 맥락 절의 안내 줄이 제약 발췌를 밀어낸다.
   - 예약은 항목 차례가 오면 돌려받아 그 항목의 발췌에 쓴다 — 발췌 본문의 순서는 위 예산 순서 그대로다. CurrentFocus·Lessons·
@@ -223,6 +227,7 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 | 결정 5건·세션 3개 창과 순서가 기본과 같음, 후보/정본·기록 시각 근거 | `test_recent_windows_and_order_match_default_briefing` | 통과 |
 | 다른 프로젝트·소속 불명 블록 미주입, 식별 실패·동명 모호 | `test_other_project_*`, `test_unresolved_*`, `test_ambiguous_*` | 통과 |
 | 후속: 실패/성공/동명 미병합, 명시적 없음·빈 틀·절 없음·Plan만·읽기 실패 | `test_follow_ups_*`, `test_explicit_none_*`, `test_missing_*`, `test_partial_*` | 통과 |
+| 독립 리뷰 4차 지적 — Next Session 절 120개·OpenLoops 블록 120개일 때 미리 예약한 안내 줄이 제약을 밀어냄(예약 수 상한·실제 비용 크기로 고침) | `test_many_follow_up_items_do_not_displace_constraints[*]` (고치기 전 코드에서 2건 실패 확인), 리뷰어 fuzz 150 시드 재실행 — 여유 예산이 있는데 critical, 상한 초과, 조용한 누락 0건 | 통과 |
 | 모든 발췌 = 원문 줄, 버전 일치, `read_source`로 회수, 비연속 구간, 원문 변경 시 `version_mismatch`, CRLF·BOM | `test_every_segment_*`, `test_crlf_*` | 통과 |
 | 20000자·완전한 줄·제약 우선·정확한 생략 위치, 긴 Context 후반 제약, 제약 초과 critical, 과도한 한 줄, Context 읽기 실패, 빈 vault·미등록, 응답 크기 측정 | `test_late_constraint_*`, `test_constraints_over_budget_*`, `test_overlong_*`, `test_unreadable_context_*`, `test_empty_vault_*`, `test_response_*`, `test_large_response_*`, `test_many_unreadable_*`, `test_follow_ups_keep_a_location_line_*` | 통과 |
 | 실제 stdio MCP 왕복: 도구 발견 → structured briefing → 근거 구간 읽기 → 원문 변경 후 버전 불일치 | `tests/test_mcp_stdio.py::test_cli_stdio_structured_briefing_then_evidence_read` (임시 vault, `python -m app.cli mcp-serve` 자식 프로세스) | 통과 |
@@ -231,6 +236,7 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 | 병합 리뷰 2차 지적 2건의 회귀 — 다른 프로젝트 블록 안 `# ` 제목이 항목 이름·`sources`·신선도 경고에 섞이지 않음(공통·자기 블록 제목은 유지), 중첩된 깊은 제약 절 뒤 같은 단계 제목부터는 맥락 | `test_title_line_inside_other_project_block_*`, `test_title_line_in_common_or_own_block_*`, `test_nested_deep_constraint_*`, `test_constraint_inheritance_uses_all_headings_*`, `test_context_blocks_unit` (고치기 전 코드에서 5건 실패 확인) | 통과 |
 | 확정 설계 #7 순서 — 표시 순서(본문 `## 1.`~`## 5.`, 최근 결과·결정 발췌가 후속 항목보다 앞, 5번째 갈래에 gaps→경고→근거 출처), 예산 순서(제약→맥락→후속→최근 결과·결정: 예산이 최근 결과에서 바닥나고 맥락·후속은 예산으로 잘리지 않음, 이전 순서면 맥락이 잘림), structured에도 기본 키(`candidates`·`source_refs`) | `test_display_and_budget_orders_follow_design_7`, `test_budget_runs_out_in_recent_stage_not_in_context`, `test_display_order_in_text_puts_follow_ups_after_recent_and_gaps_warnings_sources_last`, `test_default_briefing_keys_and_text_unchanged_by_structured_option`, `tests/test_briefing_eval.py::test_budget_order_keeps_context_and_follow_ups_before_recent` (고치기 전 코드에서 5건 실패 확인) | 통과 |
 | 독립 리뷰 3차 지적 3건의 회귀 — 많은 맥락 절의 위치 안내 예약이 제약을 밀어냄, 본문 경고 목록이 제약을 밀어냄, 다른 프로젝트 파일 경로가 경고로 본문에 실림. 후속 항목 문구를 설계 문구 그대로·읽기 실패와 데이터 부족 구분 | `test_many_context_sections_do_not_crowd_out_*`, `test_many_warnings_do_not_push_*`, `test_other_project_file_paths_in_warnings_*` (고치기 전 코드에서 3건 실패 확인), `test_explicit_none_*`, `test_missing_*`, `test_partial_*` | 통과 |
+| 독립 리뷰 4차 지적 — Next Session 절 120개·OpenLoops 블록 120개일 때 미리 예약한 안내 줄이 제약을 밀어냄(예약 수 상한·실제 비용 크기로 고침) | `test_many_follow_up_items_do_not_displace_constraints[*]` (고치기 전 코드에서 2건 실패 확인), 리뷰어 fuzz 150 시드 재실행 — 여유 예산이 있는데 critical, 상한 초과, 조용한 누락 0건 | 통과 |
 | 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 772 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
@@ -246,14 +252,14 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 일반 | 7 | 5275→8250 | 6295→41189 | 7→7 | 0→7 | 6→1 | 8173→41189 | 1.0→3.9 | False | c2/2 x2/2 f3/3→c2/2 x2/2 f3/3 | - |
 | 긴 Context 후반 제약 | 3 | 8993→12010 | 9860→43542 | 2→3 | 0→3 | 3→1 | 32394→43542 | 0.7→3.5 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
-| 이전 세션의 긴 Next Session | 2 | 5512→8550 | 6327→36840 | 0→2 | 0→2 | 3→1 | 8615→36840 | 0.7→2.7 | False | f0/2→f2/2 | - |
-| 제약만 2만 자 초과 | 2 | 6127→18799 | 6702→49705 | 1→1 | 0→1 | 2→2 | 32108→59737 | 0.5→3.3 | True | c1/2→c1/2 | constraints 1 |
-| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19778 | 13221→60501 | 6→7 | 0→7 | 6→1 | 27853→60501 | 0.8→4.1 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
+| 이전 세션의 긴 Next Session | 2 | 5512→8550 | 6327→36840 | 0→2 | 0→2 | 3→1 | 8615→36840 | 0.7→2.8 | False | f0/2→f2/2 | - |
+| 제약만 2만 자 초과 | 2 | 6127→19809 | 6702→51745 | 1→1 | 0→1 | 2→2 | 32108→60757 | 0.5→3.2 | True | c1/2→c1/2 | constraints 1 |
+| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19778 | 13221→60501 | 6→7 | 0→7 | 6→1 | 27853→60501 | 0.8→4.2 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
 | init-project 템플릿 | 1 | 477→991 | 630→5112 | 1→1 | 0→1 | 2→1 | 969→5112 | 0.2→0.5 | False | c1/1→c1/1 | - |
 
 읽는 법:
 
-- **더 길고 느리다.** text는 1.3~3.1배, 응답 JSON 전체는 4.4~8.1배, 조립 시간은 약 2.5~6.6배(밀리초 단위)다.
+- **더 길고 느리다.** text는 1.3~3.2배, 응답 JSON 전체는 4.4~8.1배, 조립 시간은 약 2.5~6.4배(밀리초 단위)다.
   "본문 예산 초과" 사례는 응답 JSON이 60501자로 `response_large` 경고(60000자) 기준을 넘는다 — 줄이지 않고 경고로 드러낸다.
   MCP 응답은 JSON 전체가 클라이언트 컨텍스트에 들어가므로 이 크기는 실제 비용이다. 성능 개선을 주장하지 않는다.
 - "확인 문자"는 새 쪽이 오히려 크다 — 기본 briefing은 목표 줄 파일을 전문으로 더 읽어도 structured 응답 하나보다 작은 경우가

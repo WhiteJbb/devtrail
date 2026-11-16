@@ -95,13 +95,18 @@ ITEM_CAPS: dict[str, int | None] = {
 # 꼬리부터 배정하는 묶음 — append형 파일이라 최신 블록이 뒤에 있다 (기본 briefing의 tail 절단과 같은 이유)
 _TAIL_GROUPS = frozenset({"lessons", "common_open_loops"})
 # 내용이 모두 빠져도 본문에 위치 안내 한 줄은 남기는 묶음 — 두 가지로 나눈다.
-# - 미리 예약: 후속 항목·최근 결과/결정. 개수가 창(결정 5건·세션 3개·OpenLoops 블록)으로 묶여 있어 예약 크기에 상한이 있다.
-#   제약이 예산을 다 써도 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이 없게 하는 고정부 성격의 자리다.
+# - 미리 예약: 후속 항목·최근 결과/결정. 제약이 예산을 다 써도 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이
+#   없게 하는 고정부 성격의 자리다. 항목 수는 창으로 묶이지 않는다(Process 하나에 Next Session 절이 여럿, OpenLoops 프로젝트
+#   블록은 패치마다 하나씩 쌓인다) — 그래서 예약 수를 _UPFRONT_MAX_STUBS로 자르고, 크기는 항목 전체 발췌 비용과 안내 줄 중
+#   작은 쪽으로 잡는다(작은 항목은 예약만큼만 쓴다 — 쓰지 않을 자리를 잡아 제약을 밀어내지 않게).
 # - 단계 시작 때 예약: Context 절. 모르는 제목까지 항목이 되어 개수에 상한이 없으므로, 미리 예약하면 많은 맥락 절의 안내 줄이
 #   제약 발췌를 밀어낸다(예산 순서 위반). 그래서 제약 배정이 끝난 뒤, 맥락 단계에 들어갈 때 남은 예산 안에서만 예약한다.
 # CurrentFocus·Lessons·공통 OpenLoops는 예약하지 않는다 — 못 넣으면 JSON omissions와 본문의 "안내도 못 낸 생략 N건"으로 드러난다.
 _UPFRONT_RESERVED = frozenset({"next_session", "project_open_loops", "decision", "session_result", "plan_goal"})
 _STAGE_RESERVED = frozenset({"context_section"})
+# 미리 예약하는 항목 수 상한 — 기본 창 크기(결정 5건 + 3세션 × Next Session·What Changed·Plan Goal + OpenLoops 1)와 같다.
+# 제약이 이 예약 때문에 덜 받는 몫은 최대 이 수만큼의 안내 줄(각 수백 자)이다.
+_UPFRONT_MAX_STUBS = 15
 _RECENT_DECISIONS = 5  # 기본 briefing과 같은 창
 _GAPS_TEXT_CAP = 20
 _FIELD_CHARS = 200  # 본문 고정부에 싣는 문서 유래 문자열(제목·session_id 등) 상한
@@ -871,6 +876,13 @@ def _stub_cost(item: _Item) -> int:
     return len(_render_item(_Item(**{**item.__dict__, "stub": True, "omission": om}))) + 2
 
 
+def _full_cost(item: _Item) -> int:
+    """항목 전체를 생략 없이 실을 때의 본문 비용(_allocate와 같은 계산: 머리줄+항목 사이 빈 줄, 구간 표시 줄, 발췌 줄)."""
+    width = len(_seg_label(item.doc.source.total_lines, item.doc.source.total_lines)) + 1
+    return (len(_header(item)) + 1 + 2 + width * len(_segments(item.candidates))
+            + sum(len(item.lines[n - 1]) + 1 for n in item.candidates))
+
+
 def _render_item(item: _Item) -> str:
     if item.stub:
         return f"▸ {item.label} · {item.doc.rel} · 본문 생략 L{item.omission['lines'][0]}-L{item.omission['lines'][1]} " \
@@ -895,16 +907,17 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
     order = {g: i for i, g in enumerate(BUDGET_ORDER)}
     reserve: dict[int, int] = {}
 
-    def reserve_for(groups: frozenset[str]) -> None:
+    def reserve_for(groups: frozenset[str], limit: int | None = None) -> None:
         nonlocal remaining
-        for it in sorted((i for i in b.items if i.group in groups and i.candidates), key=lambda i: order[i.group]):
-            cost = _stub_cost(it)
+        targets = sorted((i for i in b.items if i.group in groups and i.candidates), key=lambda i: order[i.group])
+        for it in targets[:limit]:
+            cost = min(_stub_cost(it), _full_cost(it))
             if cost >= remaining:
                 break
             reserve[id(it)] = cost
             remaining -= cost
 
-    reserve_for(_UPFRONT_RESERVED)
+    reserve_for(_UPFRONT_RESERVED, _UPFRONT_MAX_STUBS)
     by_group: dict[str, list[_Item]] = {}
     for item in b.items:
         by_group.setdefault(item.group, []).append(item)
@@ -1217,7 +1230,8 @@ def build(
             for w in doc.warnings[:5]:
                 b.warn("document", w, path=rel)
     follow = _follow_up_state(b) if res.status in ("resolved", "unregistered") else {
-        "state": "not_evaluated", "message": "프로젝트가 확정되지 않아 확인하지 않았다.", "complete": False}
+        "state": "not_evaluated", "message": "프로젝트가 확정되지 않아 확인하지 않았다.", "complete": False,
+        "unknown_reasons": None}
 
     # 고정부(최악 길이 안내 줄 포함)를 먼저 잡고 남은 예산을 BUDGET_ORDER대로 나눈다
     # 목록이 길어 고정부만으로 상한을 넘으면 목록 줄 수를 줄인다(넘는 몫은 개수만) — 상한을 넘는 응답을 내지 않는다
