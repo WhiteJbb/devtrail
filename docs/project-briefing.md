@@ -79,13 +79,17 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 
 | 갈래 | 들어가는 것 | 근거 |
 |------|-------------|------|
-| 제약 `constraints` | Context.md의 제약 제목 절과 그 하위 절 (제목 단계 무관 — `#### 금지`도 따로 떼어 제약으로 둔다) | 제목에 `제약·원칙·규칙·금지·불변식·constraint(s)·principle(s)·rule(s)·guardrail(s)·invariant(s)` |
+| 제약 `constraints` | Context.md의 제약 제목 절과 그 하위 절 (제목 단계 무관 — `#### 금지`도 따로 떼어 제약으로 둔다. 범위는 아래 계층 규칙) | 제목에 `제약·원칙·규칙·금지·불변식·constraint(s)·principle(s)·rule(s)·guardrail(s)·invariant(s)` |
 | 프로젝트 맥락 `context` | Context.md의 나머지 절(모르는 제목 포함), CurrentFocus·Lessons의 이 프로젝트 블록과 공통 블록, OpenLoops의 공통 블록 | 경로·marker 귀속 |
 | 기록된 최근 결과·결정 `recent` | 최근 결정 최대 5건의 `## 결정` 절(없으면 한 줄짜리 frontmatter `summary:` 줄), 최근 3세션의 Process `## What Changed`, Plan `## Goal` | 제목·frontmatter |
 | 명시적 후속 항목 `follow_ups` | 최근 3세션 Process의 `## Next Session`, OpenLoops의 이 프로젝트 marker 블록 | 제목·marker |
 | 정보 부족·판단 한계 `gaps` | 아래 코드 목록 | — |
 
 - 제목에 위 단어가 없는 절의 제약성 문장("반드시 dev 브랜치에서")은 맥락으로 남긴다. 내용을 읽어 제약으로 올리지 않는다.
+- **제약 범위는 모든 제목의 계층으로 정한다.** 제목 하나는 자기 제목에 제약 단어가 있거나 상위 제목(자기보다 얕은 단계의 가장
+  가까운 앞 제목들) 중 하나가 제약이면 제약이다. 같거나 얕은 단계의 제목이 나오면 그 범위가 끝난다. 항목은 1~3단계 제목과,
+  제약 여부가 바뀌는 제목에서 끊는다 — 한 항목 안의 줄은 모두 같은 분류다. 예: `#### 제약` → `##### 금지` → `##### 세부 설명` →
+  `#### 결과`에서 앞의 셋은 제약, `#### 결과`(와 그 아래)는 맥락이다.
 - **Plan Goal은 후속 항목이 아니다** — 그 세션이 기록 당시 하려던 일이다. 완료 여부를 판정하지 않는다.
 - 공통(전역) OpenLoops는 이 프로젝트의 후속 항목으로 보지 않고 맥락에 `scope: common`으로 둔다.
 - 창과 순서는 기본 briefing과 같다: 결정은 `_list_decisions` 순서(후보+승격, superseded 제외) 앞 5건, 세션은
@@ -175,6 +179,9 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 - `unregistered`(매핑은 있지만 vault에 Context.md·SessionHandoffs가 없음)면 공통 메모리와 그 이름이 marker로 명시된 블록만 넣는다.
 - 40_AgentMemory는 marker 블록 단위로 귀속한다(검색과 같은 규칙 — `evidence_search._marker_units`). 다른 프로젝트 블록은
   세기만 하고(`sections[context].excluded`), 소속 unknown/conflict 블록은 넣지 않고 `unattributed_block_excluded`로 알린다.
+- 문서 제목도 블록으로 거른다. 본문 `# ` 제목 줄이 이 프로젝트·공통 블록 밖(다른 프로젝트·소속 불명 블록)에 있으면 항목 이름·
+  `sources[].title`·신선도 경고에 그 제목 대신 파일명을 쓴다(근거 검색 `evidence_search._score`와 같은 규칙). frontmatter
+  `title`은 파일 단위 값이라 그대로 쓴다.
 - 등록부가 30_Projects 아래 폴더를 읽지 못하면, 그 폴더가 이 프로젝트의 Context.md일 수 있어 "Context 없음"으로 보고하지
   않고 `context_unverifiable`(critical)로 둔다. `requires_read`에는 그 폴더의 `Context.md` 경로가 `unverified: true`로 들어간다.
 - 승격 결정은 Context.md가 있는 실제 폴더(`30_Projects/<폴더>/Decisions`)에서 읽는다 — 선언 이름과 폴더명이 다른 프로젝트도
@@ -203,6 +210,7 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 | 실제 stdio MCP 왕복: 도구 발견 → structured briefing → 근거 구간 읽기 → 원문 변경 후 버전 불일치 | `tests/test_mcp_stdio.py::test_cli_stdio_structured_briefing_then_evidence_read` (임시 vault, `python -m app.cli mcp-serve` 자식 프로세스) | 통과 |
 | 독립 리뷰가 재현한 결함 7건의 회귀 — 소속 불명 OpenLoops 블록, 고정부 길이 폭주, 목록 못 읽는 폴더, 4단계 제약 제목·닫히지 않은 코드 블록, 폴더명≠선언명 결정, 빈 틀 OpenLoops 블록, append형 파일 최신 줄 | `test_unattributed_open_loops_*`, `test_long_fixed_parts_*`, `test_unlistable_*`, `test_deep_constraint_*`, `test_promoted_decisions_*`, `test_scaffold_only_open_loops_*`, `test_append_files_*`, `test_permission_denied_memory_dir_*` | 통과 |
 | 병합 리뷰 지적 3건의 회귀 — 읽기 경계 밖 링크를 열지도 싣지도 않음(열린 파일 기록으로 확인), 소속 실패 문서는 경로·상태만, 펜스 종류·길이·정보 문자열·들여쓰기 규칙, 반환된 `read`를 MCP `read_note`에 그대로 전달 | `test_links_outside_read_boundary_*`, `test_attribution_failures_expose_only_*`, `test_fence_rules_*`, `test_late_constraint_after_mixed_fence_*`, `test_constraints_over_budget_*`·`test_overlong_*`(tool 함수에 `**read`), stdio 테스트(`read_note(**om["read"])`, `requires_read[].read`, 변경 후 같은 인자로 `version_mismatch`) | 통과 |
+| 병합 리뷰 2차 지적 2건의 회귀 — 다른 프로젝트 블록 안 `# ` 제목이 항목 이름·`sources`·신선도 경고에 섞이지 않음(공통·자기 블록 제목은 유지), 중첩된 깊은 제약 절 뒤 같은 단계 제목부터는 맥락 | `test_title_line_inside_other_project_block_*`, `test_title_line_in_common_or_own_block_*`, `test_nested_deep_constraint_*`, `test_constraint_inheritance_uses_all_headings_*`, `test_context_blocks_unit` (고치기 전 코드에서 5건 실패 확인) | 통과 |
 | 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 통과 (지정 제외 3개는 변경 전부터 실패) |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
@@ -215,10 +223,10 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 
 | 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | 확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission |
 |---|---|---|---|---|---|---|---|---|---|
-| 일반 | 5 | 5275→8246 | 6295→40371 | 5→5 | 0→5 | 5→1 | 8114→40371 | 1.0→3.7 | False |
-| 긴 Context 후반 제약 | 2 | 8993→12006 | 9860→42924 | 1→2 | 0→2 | 3→1 | 32394→42924 | 0.7→3.4 | False |
+| 일반 | 5 | 5275→8246 | 6295→40371 | 5→5 | 0→5 | 5→1 | 8114→40371 | 1.0→3.8 | False |
+| 긴 Context 후반 제약 | 2 | 8993→12006 | 9860→42924 | 1→2 | 0→2 | 3→1 | 32394→42924 | 0.7→3.5 | False |
 | 이전 세션의 긴 Next Session | 2 | 5512→8546 | 6327→36222 | 0→2 | 0→2 | 3→1 | 8615→36222 | 0.7→2.8 | False |
-| 제약만 2만 자 초과 | 2 | 6127→18896 | 6702→49394 | 1→1 | 0→1 | 2→2 | 32108→59324 | 0.5→3.3 | True |
+| 제약만 2만 자 초과 | 2 | 6127→18896 | 6702→49394 | 1→1 | 0→1 | 2→2 | 32108→59324 | 0.5→3.2 | True |
 | init-project 템플릿 | 1 | 477→962 | 630→4874 | 1→1 | 0→1 | 2→1 | 969→4874 | 0.2→0.5 | False |
 
 읽는 법:

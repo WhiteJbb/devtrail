@@ -786,3 +786,64 @@ def test_late_constraint_after_mixed_fence_in_long_context_is_critical_or_kept(t
     resp = _brief(tmp_path)
     assert "- LATE_FENCED_CONSTRAINT" in resp["text"]
     assert _section(resp, "constraints")["state"] == "items"
+
+
+# ── 병합 리뷰 2차 지적 회귀: 블록 밖 제목, 중첩 제약 범위 ─────────────────────
+
+
+@pytest.mark.parametrize("rel", ["40_AgentMemory/06_Lessons.md", "40_AgentMemory/01_CurrentFocus.md",
+                                 "40_AgentMemory/05_OpenLoops.md"])
+def test_title_line_inside_other_project_block_is_replaced_by_file_name(tmp_path, rel):
+    _ctx(tmp_path, "## 배경\n\nx\n")
+    _ctx(tmp_path, "## 배경\n\ny\n", project="Other")
+    _handoff(tmp_path, "p", "process", "s", "2026-11-10T10:00:00", _process("없음"))
+    _w(tmp_path, rel, _fm(updated_at="2020-01-01")
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Other"} -->\n# PRIVATE_OTHER_TITLE\n\n- 남의 내용\n\n'
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n## Devtrail\n\n- 우리 내용\n')
+    resp = _brief(tmp_path)
+    dumped = json.dumps(resp, ensure_ascii=False)
+    assert "PRIVATE_OTHER_TITLE" not in dumped and "남의 내용" not in dumped
+    stem = Path(rel).stem
+    assert next(s for s in resp["sources"] if s["path"] == rel)["title"] == stem
+    assert any(g["code"] == "memory_stale" and g["message"].startswith(stem)
+               for g in _section(resp, "gaps")["items"]) or rel.endswith("06_Lessons.md")
+    assert "- 우리 내용" in resp["text"]
+
+
+def test_title_line_in_common_or_own_block_is_kept(tmp_path):
+    _ctx(tmp_path, "## 배경\n\nx\n")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md",
+       "# 공통 교훈 제목\n\n- 공통\n\n"
+       '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n- 우리 교훈\n')
+    resp = _brief(tmp_path)
+    assert next(s for s in resp["sources"] if s["path"] == "40_AgentMemory/06_Lessons.md")["title"] == "공통 교훈 제목"
+
+
+def test_nested_deep_constraint_scope_ends_at_sibling_heading(tmp_path):
+    _ctx(tmp_path, "## 구현 메모\n\n- 메모\n\n#### 제약\n\n- 깊은 제약\n\n##### 금지\n\n- 금지 항목\n\n"
+                   "##### 세부 설명\n\n- 제약 설명\n\n#### 결과\n\n- 작업 성공\n\n###### 결과 세부\n\n- 결과 세부 내용\n")
+    resp = _brief(tmp_path)
+    constraint_text = "\n".join(seg["text"] for i in _items(resp, "constraints") for seg in i["segments"])
+    for kept in ("- 깊은 제약", "- 금지 항목", "- 제약 설명"):
+        assert kept in constraint_text
+    assert "작업 성공" not in constraint_text and "결과 세부" not in constraint_text
+    context_text = "\n".join(seg["text"] for i in _items(resp, "context") for seg in i["segments"])
+    assert "- 작업 성공" in context_text and "- 결과 세부 내용" in context_text and "- 메모" in context_text
+    labels = {i["label"]: i["kind"] for i in _all_items(resp)}
+    assert labels["제약"] == "constraint" and labels["결과"] == "context_section"
+
+
+def test_constraint_inheritance_uses_all_headings_not_only_item_starts(tmp_path):
+    # ## 원칙 아래 #### 하위는 제약(상속)이고, 다음 ## 배경부터는 맥락이다
+    _ctx(tmp_path, "## 원칙\n\n- 원칙 하나\n\n#### 하위 세부\n\n- 상속된 제약\n\n## 배경\n\n#### 배경 하위\n\n- 배경 세부\n")
+    resp = _brief(tmp_path)
+    constraint_text = "\n".join(seg["text"] for i in _items(resp, "constraints") for seg in i["segments"])
+    assert "- 상속된 제약" in constraint_text and "배경 세부" not in constraint_text
+    assert [i["label"] for i in _items(resp, "constraints")] == ["원칙"]
+
+
+def test_context_blocks_unit():
+    heads = [(1, 2, "메모"), (3, 4, "제약"), (5, 5, "금지"), (7, 5, "세부 설명"), (9, 4, "결과"), (11, 6, "결과 세부"),
+             (13, 2, "규칙"), (15, 3, "하위")]
+    assert pb._context_blocks(heads) == [
+        (1, 2, "메모", False), (3, 4, "제약", True), (9, 4, "결과", False), (13, 2, "규칙", True), (15, 3, "하위", True)]

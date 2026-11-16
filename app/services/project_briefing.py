@@ -379,6 +379,18 @@ def _add_item(b: _Build, section: str, group: str, label: str, doc: Any, span: t
     return item
 
 
+def _safe_title(doc: Any, project: str) -> str:
+    """응답에 싣는 문서 제목. marker 블록으로 나뉜 문서(40_AgentMemory)는 본문 '# ' 제목 줄이 이 프로젝트·공통 블록에
+    있을 때만 그 제목을 쓰고, 다른 프로젝트·소속 불명 블록에 있으면 파일명으로 대체한다 — 근거 검색(evidence_search._score)과
+    같은 규칙. 본문만 블록으로 거르고 제목은 문서 전체 값을 쓰면 다른 프로젝트 블록의 제목이 섞인다."""
+    if doc.has_markers and doc.title_line:
+        key = project.casefold()
+        allowed = [u for u in doc.units if u.scope == "common" or (u.scope == "project" and u.project.casefold() == key)]
+        if not any(u.start <= doc.title_line <= u.end for u in allowed):
+            return Path(doc.rel).stem
+    return doc.title
+
+
 def _attributed_to(doc: Any, project: str) -> bool:
     fu = doc.file_unit
     return fu.scope == "project" and fu.project.casefold() == project.casefold()
@@ -410,41 +422,20 @@ def _collect_context(b: _Build) -> None:
         return
     lines = doc.source.lines
     total = doc.source.total_lines
-    drop = {_norm(doc.title), _norm(b.project), _norm(f"{b.project} - Project Context"), _norm("Project Context")}
-    # 항목 경계는 1~3단계 제목. 4단계 이하라도 제약 제목이면 따로 떼어 제약으로 둔다 — 맥락 항목 안에 묻혀 맥락 상한에
-    # 잘리면 critical로 드러나지 않는다. 그 제약 절은 같거나 높은 단계의 다음 제목에서 끝난다.
-    heads: list[tuple[int, int, str]] = []
-    deep: int | None = None
-    for n, lv, text in _headings(lines, doc.body_start, total):
-        if lv <= 3:
-            heads.append((n, lv, text))
-            deep = None
-        elif _CONSTRAINT_HEADING_RE.search(text):
-            heads.append((n, lv, text))
-            deep = lv
-        elif deep is not None and lv <= deep:
-            heads.append((n, lv, text))
-            deep = None
+    drop = {_norm(_safe_title(doc, b.project)), _norm(b.project), _norm(f"{b.project} - Project Context"), _norm("Project Context")}
+    heads = _context_blocks(_headings(lines, doc.body_start, total))
     _, unclosed = _fence_map(lines, doc.body_start, total)
     if unclosed is not None:
         b.gap("unclosed_code_fence", f"Context.md {unclosed}행의 코드 블록이 닫히지 않아 그 뒤 제목(제약 절 포함)을 "
               "제목으로 보지 않았다 — 그 뒤 내용은 맥락 항목의 코드로 남는다.", path=doc.rel, lines=[unclosed, total])
-    starts: list[tuple[int, int, str]] = []
+    starts: list[tuple[int, int, str, bool]] = []
     if not heads or heads[0][0] > doc.body_start:
-        starts.append((doc.body_start, 0, ""))  # 첫 제목 앞 머리말
+        starts.append((doc.body_start, 0, "", False))  # 첫 제목 앞 머리말
     starts += heads
-    stack: list[tuple[int, bool]] = []
     constraint_heads = 0
     constraint_items = 0
-    for i, (n, level, text) in enumerate(starts):
+    for i, (n, level, text, is_constraint) in enumerate(starts):
         end = starts[i + 1][0] - 1 if i + 1 < len(starts) else total
-        if level:
-            while stack and stack[-1][0] >= level:
-                stack.pop()
-            is_constraint = bool(_CONSTRAINT_HEADING_RE.search(text)) or any(c for _, c in stack)
-            stack.append((level, is_constraint))
-        else:
-            is_constraint = False
         if is_constraint:
             constraint_heads += 1
         section, group = ("constraints", "constraint") if is_constraint else ("context", "context_section")
@@ -476,6 +467,29 @@ def _collect_context(b: _Build) -> None:
     if age is not None and age > STALE_DAYS:
         b.gap("context_stale", f"Context.md가 {age}일 전({updated[:10]})에 마지막으로 갱신됐다 — 발췌는 그 시점의 기록이다.",
               path=doc.rel)
+
+
+def _context_blocks(heads: list[tuple[int, int, str]]) -> list[tuple[int, int, str, bool]]:
+    """Context.md 제목들(코드 블록 밖, 모든 단계)로 항목 경계와 제약 여부를 정한다. (줄, 단계, 제목, 제약 여부).
+
+    제약 여부는 **모든 제목**의 계층으로 계산한다 — 자기 제목에 제약 단어가 있거나 상위 제목 중 하나가 제약이면 제약이다.
+    상위는 자기보다 낮은 단계 번호의 가장 가까운 앞 제목들이다(같거나 깊은 단계 제목이 나오면 그 범위가 끝난다).
+    항목 경계는 1~3단계 제목, 그리고 앞 줄과 제약 여부가 **바뀌는** 제목이다. 그래서 한 항목 안의 줄은 모두 같은 분류다:
+    `#### 제약` → `##### 금지` → `##### 세부 설명` → `#### 결과`에서 `#### 결과`는 제약 범위 밖이라 맥락 항목으로 갈린다.
+    깊은 제약 절을 맥락 항목 안에 묻지 않아야 맥락 상한에 잘릴 때도 제약 생략으로 드러난다(critical).
+    """
+    stack: list[tuple[int, bool]] = []
+    out: list[tuple[int, int, str, bool]] = []
+    current: bool | None = None
+    for n, lv, text in heads:
+        while stack and stack[-1][0] >= lv:
+            stack.pop()
+        is_constraint = bool(_CONSTRAINT_HEADING_RE.search(text)) or any(c for _, c in stack)
+        stack.append((lv, is_constraint))
+        if lv <= 3 or current is None or is_constraint != current:
+            out.append((n, lv, text, is_constraint))
+            current = is_constraint
+    return out
 
 
 def _memory_units(b: _Build, key: str) -> list[tuple[Any, Any]]:
@@ -510,7 +524,7 @@ def _memory_units(b: _Build, key: str) -> list[tuple[Any, Any]]:
         value = t["value"] if t["value"] else (doc.time_value if doc.time_source == "file_mtime" else "")
         age = _days_old(value, b.now) if value else None
         if age is not None and age > STALE_DAYS:
-            b.gap("memory_stale", f"{doc.title}: {age}일 전({value[:10]}) 마지막 갱신 — 발췌는 그 시점의 기록이다.", path=rel)
+            b.gap("memory_stale", f"{_safe_title(doc, b.project)}: {age}일 전({value[:10]}) 마지막 갱신 — 발췌는 그 시점의 기록이다.", path=rel)
     return out
 
 
@@ -518,8 +532,9 @@ def _collect_memory(b: _Build) -> None:
     project_key = _norm(b.project)
     for key, group in (("current_focus", "current_focus"), ("lessons", "lessons")):
         for doc, unit in _memory_units(b, key):
-            drop = {_norm(doc.title), project_key, "current focus", "currentfocus", "lessons", "openloops", "open loops"}
-            label = doc.title + (" — 프로젝트 블록" if unit.scope == "project" else " — 공통")
+            title = _safe_title(doc, b.project)
+            drop = {_norm(title), project_key, "current focus", "currentfocus", "lessons", "openloops", "open loops"}
+            label = title + (" — 프로젝트 블록" if unit.scope == "project" else " — 공통")
             keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
             if _has_content(doc.source.lines, keep):
                 _add_item(b, "context", group, label, doc, (unit.start, unit.end), drop, unit.scope,
@@ -527,7 +542,7 @@ def _collect_memory(b: _Build) -> None:
     open_units = _memory_units(b, "open_loops")
     project_blocks = 0
     for doc, unit in open_units:
-        drop = {_norm(doc.title), project_key, "openloops", "open loops"}
+        drop = {_norm(_safe_title(doc, b.project)), project_key, "openloops", "open loops"}
         if unit.scope == "project":
             project_blocks += 1
             keep, cleaned = _clean(doc.source.lines, unit.start, unit.end, drop)
@@ -579,7 +594,7 @@ def _collect_decisions(b: _Build, decisions: list[dict], unlisted: list[dict]) -
             b.gap("attribution_mismatch", "결정 문서의 소속이 이 프로젝트로 확정되지 않아 제목·내용을 넣지 않았다.",
                   path=d["rel_path"])
             continue
-        title = evidence_search._clip(doc.title, _FIELD_CHARS)
+        title = evidence_search._clip(_safe_title(doc, b.project), _FIELD_CHARS)
         recorded = _time_of(doc, ("updated_at", "created_at"))
         entry.update(title=title, date=recorded["value"][:10], recorded_at=recorded)
         meta = {"decision_status": d["status"], "recorded_at": recorded}
@@ -663,7 +678,7 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                            agent=evidence_search._clip(meta_of(main.meta, "agent") or "", 80))
         for (doc, entry), kind in zip(valid, kinds):
             recorded = _time_of(doc, ("updated_at", "created_at"))
-            entry.update(handoff_type=kind, title=evidence_search._clip(doc.title, _FIELD_CHARS), recorded_at=recorded)
+            entry.update(handoff_type=kind, title=evidence_search._clip(_safe_title(doc, b.project), _FIELD_CHARS), recorded_at=recorded)
             sid = evidence_search._clip(meta_of(doc.meta, "session_id") or "", _FIELD_CHARS)
             meta = {"session_id": sid, "handoff_type": kind, "recorded_at": recorded,
                     "host": evidence_search._clip(meta_of(doc.meta, "host") or "", 80),
@@ -1016,11 +1031,11 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
 # ── 응답 조립 ────────────────────────────────────────────────────────────────
 
 
-def _source_dict(doc: Any) -> dict[str, Any]:
+def _source_dict(doc: Any, project: str) -> dict[str, Any]:
     fu = doc.file_unit
     return {
         "path": doc.rel,
-        "title": evidence_search._clip(doc.title, 200),
+        "title": evidence_search._clip(_safe_title(doc, project), 200),
         "kind": doc.kind,
         "record_tier": doc.tier,
         "status": {"declared": doc.status_declared, "class": doc.status_class},
@@ -1218,7 +1233,7 @@ def build(
         "omissions": omissions,
         "warnings": b.warnings,
         # 소속 검증에 실패한 문서는 경로와 제외 사유만 — 제목·버전·귀속 근거(문서 내용에서 온 값)를 싣지 않는다
-        "sources": [{"path": rel, "excluded": b.rejected[rel]} if rel in b.rejected else _source_dict(d)
+        "sources": [{"path": rel, "excluded": b.rejected[rel]} if rel in b.rejected else _source_dict(d, b.project)
                     for rel, d in b.docs.items()],
         "text": text,
         "budget": {
