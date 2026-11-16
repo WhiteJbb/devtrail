@@ -116,13 +116,20 @@ def _with_text_warning(payload: dict | None, *values) -> dict | None:
 
 
 @mcp.tool()
-def get_project_briefing(project_or_repo: str) -> dict:
+def get_project_briefing(project_or_repo: str, structured: bool = False) -> dict:
     """세션 시작 시 프로젝트 컨텍스트, 최근 handoff, decision, open loops를 반환한다.
 
     matched=False면 컨텍스트가 주입되지 않은 것이며 candidates에 후보 프로젝트명이
     담긴다 — 사용자에게 확인 후 .claude/vault.json에 저장하도록 안내해야 한다.
+
+    structured=True: 제약·맥락·기록된 최근 결과/결정·명시적 후속 항목·정보 부족을 나눠 주고, 모든 발췌에
+    원문 경로·줄(@L시작-L끝)·source_version을 단다. text 본문은 20000자 이하(완전한 줄만). 빠진 구간은
+    omissions의 read 인자로 read_note(structured=True)에 그대로 넘긴다. critical_omission=True면 requires_read를 먼저 읽는다.
+    프로젝트는 명시적 근거로만 확정한다(matching) — 확정 못 하면 어떤 프로젝트 기록도 넣지 않는다.
     """
     _touch_session_marker()
+    if structured:
+        return vault_tools.get_structured_project_briefing(project_or_repo, settings=get_settings())
     result = vault_tools.get_project_briefing(project_or_repo, settings=get_settings())
     return dataclasses.asdict(result)
 

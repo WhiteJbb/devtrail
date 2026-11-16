@@ -1,0 +1,1194 @@
+"""structured 프로젝트 briefing — `get_project_briefing(structured=True)`.
+
+기본 briefing(app/vault_tools.get_project_briefing)은 그대로 두고, 같은 창(최근 결정 5건·최근 세션 3개)과
+같은 정렬 위에 다음을 더한다 (사용법·계약: docs/project-briefing.md):
+
+- 구분: 제약 / 프로젝트 맥락 / 기록된 최근 결과·결정 / 명시적 후속 항목 / 정보 부족·판단 한계.
+  분류 근거는 **명시적 제목과 메타데이터뿐**이다 — 내용을 읽고 중요도·해결 여부·현재 상태를 추론하지 않는다.
+- 근거 위치: 모든 발췌는 원문 줄 그대로이며 경로·1-based 줄(frontmatter 포함 파일 전체 기준)·source_version을
+  단다. `read_note(structured=True, start_line, max_lines, expected_version)`로 그대로 다시 읽힌다.
+- 예산: text 본문 상한 TEXT_MAX_CHARS(JSON 전체 크기 상한이 아니다). 줄 중간에서 자르지 않는다.
+  예산은 제약부터 배정하고(BUDGET_ORDER), 표시 순서(DISPLAY_ORDER)와 다르다. 못 넣은 구간은 omissions에
+  정확한 줄 범위와 이어읽기 인자로 남기고, 제약이 빠지면 critical_omission/requires_read로 드러낸다.
+
+원문은 로더(ProjectMemoryLoader·AgentMemoryLoader)가 아니라 evidence_search.load_doc으로 직접 읽는다 —
+로더의 사전 잘림(Context 5000자 등)이 긴 Context 후반의 제약을 숨기지 않게, 그리고 검색과 같은
+줄 기준·버전·marker 블록 귀속을 쓰게 하려는 것이다. 로더와 기본 briefing은 바꾸지 않는다.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from app.services import evidence_search
+from app.services.evidence_search import load_doc
+from app.services.project_identity import ProjectRegistry, ProjectResolution, load_registry, resolve_project
+from app.services.source_reader import DEFAULT_MAX_CHARS as READ_MAX_CHARS
+from app.services.source_reader import MAX_LINES as READ_MAX_LINES
+from app.services.vault_source import VaultNotFoundError, VaultScopeError, resolve_scoped_file
+
+SCHEMA_VERSION = "1"
+TEXT_MAX_CHARS = 20000
+# 응답 전체(JSON)는 상한이 없다 — 대신 재고 이 크기를 넘으면 경고로 드러낸다 (숨기거나 자르지 않는다)
+RESPONSE_WARN_CHARS = 60000
+STALE_DAYS = 30  # 기본 briefing의 Context·AgentMemory 신선도 경고와 같은 값
+
+DISPLAY_ORDER = ("constraints", "context", "recent", "follow_ups", "gaps")
+SECTION_TITLES = {
+    "constraints": "제약",
+    "context": "프로젝트 맥락",
+    "recent": "기록된 최근 결과·결정",
+    "follow_ups": "명시적 후속 항목",
+    "gaps": "정보 부족·판단 한계",
+}
+# 예산 배정 순서. gaps·후속 항목 상태 줄·세션 머리줄 같은 고정부는 이보다 먼저 전부 잡힌다.
+BUDGET_ORDER = (
+    "constraint",
+    "next_session", "project_open_loops",
+    "decision",
+    "session_result", "plan_goal",
+    "context_section", "current_focus", "lessons", "common_open_loops",
+)
+# 묶음별 본문 상한(발췌 줄 글자 수). None은 전체 예산만 적용. 기본 briefing의 값에서 가져왔다:
+# Context 5000자·CurrentFocus 2000자(앞)·OpenLoops/Lessons 6000자(뒤)·최신 Process 1200자.
+GROUP_CAPS: dict[str, int | None] = {
+    "constraint": None,
+    "next_session": None,
+    "project_open_loops": 6000,
+    "decision": None,
+    "session_result": None,
+    "plan_goal": None,
+    "context_section": 6000,
+    "current_focus": 2000,
+    "lessons": 6000,
+    "common_open_loops": 2000,
+}
+ITEM_CAPS: dict[str, int | None] = {
+    "constraint": None,
+    "next_session": 1500,
+    "project_open_loops": None,
+    "decision": 600,
+    "session_result": 1200,
+    "plan_goal": 400,
+    "context_section": None,
+    "current_focus": None,
+    "lessons": None,
+    "common_open_loops": None,
+}
+# 꼬리부터 배정하는 묶음 — append형 파일이라 최신 블록이 뒤에 있다 (기본 briefing의 tail 절단과 같은 이유)
+_TAIL_GROUPS = frozenset({"lessons", "common_open_loops"})
+_STUB_RESERVED = frozenset({"constraint", "next_session", "project_open_loops", "decision", "session_result", "plan_goal"})
+_RECENT_DECISIONS = 5  # 기본 briefing과 같은 창
+_GAPS_TEXT_CAP = 20
+_FIELD_CHARS = 200  # 본문 고정부에 싣는 문서 유래 문자열(제목·session_id 등) 상한
+
+_MEMORY_FILES = {
+    "current_focus": "40_AgentMemory/01_CurrentFocus.md",
+    "open_loops": "40_AgentMemory/05_OpenLoops.md",
+    "lessons": "40_AgentMemory/06_Lessons.md",
+}
+
+# 알려진 빈 틀 — init-project·init-vault·write_session_process가 만드는 자리표시 줄. 이 목록에 없는 줄은 지우지 않는다.
+_SCAFFOLD_LINES = frozenset({
+    "> 이 파일은 `get_project_briefing`이 세션 시작 시 자동 주입하는 프로젝트 정본 컨텍스트다.",
+    "> 배경·목표·제약이 바뀔 때마다 갱신한다.",
+    "_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_",
+    "_Fill this note with durable context that future agents should know._",
+})
+_EMPTY_BULLET_RE = re.compile(r"^(?:[-*+]|\d+[.)])$")
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
+# 제목만 본다. 이 단어가 없는 제목 아래의 제약성 문장은 "맥락"으로 남기고, 제약으로 승격하지 않는다.
+_CONSTRAINT_HEADING_RE = re.compile(
+    r"제약|원칙|규칙|금지|불변식|(?<![a-z])(?:constraints?|principles?|rules?|guardrails?|invariants?)(?![a-z])",
+    re.IGNORECASE,
+)
+# 명시적 "없음"으로 인정하는 내용 — 이 값 하나만 적힌 경우만. "없음 — 단 X 확인" 같은 문장은 항목으로 본다.
+_EXPLICIT_NONE = frozenset({"없음", "없다", "해당 없음", "none", "n/a", "na"})
+_DECISION_HEADINGS = frozenset({"결정", "decision"})
+
+
+# ── 내부 타입 ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _Item:
+    id: str
+    section: str  # constraints | context | recent | follow_ups
+    group: str  # BUDGET_ORDER의 한 값
+    label: str
+    doc: Any  # evidence_search._Doc
+    span: tuple[int, int]  # 이 항목이 덮는 원문 줄 범위 (제목 줄 포함, 1-based)
+    candidates: list[int]  # 정리 후 보여줄 후보 줄 번호 (오름차순)
+    cleaned: list[tuple[int, str]]
+    scope: str
+    project: str
+    extra: dict[str, Any] = field(default_factory=dict)
+    shown: list[int] = field(default_factory=list)
+    omission: dict[str, Any] | None = None
+    stub: bool = False
+    tail: bool = False  # 뒤쪽 줄부터 넣었다 — 생략은 앞쪽 구간이고 본문에서 발췌 앞에 붙는다  # 전부 생략됐고 본문에 한 줄 안내를 냈다
+
+    @property
+    def lines(self) -> list[str]:
+        return self.doc.source.lines
+
+
+@dataclass
+class _Build:
+    vault_dir: Path
+    project: str
+    reg: ProjectRegistry
+    now: datetime
+    items: list[_Item] = field(default_factory=list)
+    docs: dict[str, Any] = field(default_factory=dict)  # rel → _Doc (응답 sources 순서 = 처음 읽은 순서)
+    gaps: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[dict[str, Any]] = field(default_factory=list)
+    partial: bool = False
+    fixed: dict[str, list[str]] = field(default_factory=dict)  # 섹션별 고정 안내 줄 (예산 전에 잡는다)
+    excluded: dict[str, int] = field(default_factory=dict)
+    states: dict[str, Any] = field(default_factory=dict)
+    follow_sources: list[dict[str, Any]] = field(default_factory=list)
+    sessions: list[dict[str, Any]] = field(default_factory=list)
+    decisions: list[dict[str, Any]] = field(default_factory=list)
+    _seq: int = 0
+
+    def next_id(self, prefix: str) -> str:
+        self._seq += 1
+        return f"{prefix}{self._seq}"
+
+    def gap(self, code: str, message: str, **extra: Any) -> None:
+        self.gaps.append({"code": code, "message": message, **extra})
+
+    def warn(self, code: str, message: str, **extra: Any) -> None:
+        self.warnings.append({"code": code, "message": message, **extra})
+
+    def load(self, rel: str) -> Any | None:
+        """read_scope·실제 경로 검증(read_note와 같은 경계)을 거쳐 문서를 읽는다. 없으면 None, 못 읽으면 partial."""
+        if rel in self.docs:
+            return self.docs[rel]
+        try:
+            normalized, path = resolve_scoped_file(self.vault_dir, rel)
+        except VaultNotFoundError:
+            return None
+        except VaultScopeError as exc:
+            self.partial = True
+            self.warn("scope_violation", str(exc), path=rel)
+            return None
+        except OSError as exc:  # 권한 없는 폴더 안 경로의 stat 등 — briefing 전체를 멈추지 않고 읽기 실패로 드러낸다
+            self.partial = True
+            self.warn("read_failed", f"경로를 확인하지 못했습니다: {exc.strerror or exc}", path=rel)
+            return None
+        try:
+            doc = load_doc(self.vault_dir, normalized, path, self.reg)
+        except OSError as exc:
+            self.partial = True
+            self.warn("read_failed", f"파일을 읽지 못했습니다: {exc.strerror or exc}", path=rel)
+            return None
+        self.docs[normalized] = doc
+        for w in doc.warnings[:5]:
+            self.warn("document", w, path=normalized)
+        return doc
+
+
+# ── 줄 단위 도구 ─────────────────────────────────────────────────────────────
+
+
+def _heading(text: str) -> tuple[int, str] | None:
+    m = _HEADING_RE.match(text)
+    return (len(m.group(1)), m.group(2).strip()) if m else None
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.replace("—", "-").split()).casefold()
+
+
+def _is_fence(text: str) -> bool:
+    s = text.lstrip()
+    return s.startswith("```") or s.startswith("~~~")
+
+
+def _headings(lines: list[str], start: int, end: int) -> list[tuple[int, int, str]]:
+    """[start, end] 안의 제목 줄 (줄 번호, 단계, 제목). 코드 블록 안 '#' 줄은 제목이 아니다."""
+    out: list[tuple[int, int, str]] = []
+    fence = False
+    for n in range(start, end + 1):
+        text = lines[n - 1]
+        if _is_fence(text):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        h = _heading(text)
+        if h:
+            out.append((n, h[0], h[1]))
+    return out
+
+
+def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tuple[list[int], list[tuple[int, str]]]:
+    """[start, end]에서 보여줄 줄과 정리한 줄(줄, 이유). 줄 내용은 바꾸지 않고 줄을 빼기만 한다 — 번호가 그대로다.
+
+    정리 대상은 알려진 것뿐이다: memory marker 줄, 알려진 빈 틀 줄·빈 불릿, 이미 항목 이름으로 드러난 반복 제목,
+    내용 없이 제목만 남은 절. 그 밖의 줄(모르는 제목 포함)은 남긴다.
+    """
+    keep: list[int] = []
+    cleaned: list[tuple[int, str]] = []
+    fenced: set[int] = set()  # 코드 블록 안 줄 — 제목·빈 틀로 보지 않는다
+    fence = False
+    for n in range(start, end + 1):
+        text = lines[n - 1]
+        s = text.strip()
+        if _is_fence(text):
+            fence = not fence
+            fenced.add(n)
+            keep.append(n)
+            continue
+        if fence:
+            fenced.add(n)
+            keep.append(n)
+            continue
+        if text.startswith(evidence_search._MARKER_PREFIX):
+            cleaned.append((n, "memory_marker"))
+            continue
+        if s in _SCAFFOLD_LINES or _EMPTY_BULLET_RE.match(s):
+            cleaned.append((n, "empty_scaffolding"))
+            continue
+        h = _heading(text)
+        if h and _norm(h[1]) in drop_titles:
+            cleaned.append((n, "repeated_title"))
+            continue
+        keep.append(n)
+    # 내용 없이 제목만 남은 절 — 같거나 높은 단계 제목 전까지 내용 줄이 없으면 그 제목도 뺀다
+    heads = {n: h for n in keep if n not in fenced and (h := _heading(lines[n - 1]))}
+    drop: set[int] = set()
+    for i, n in enumerate(keep):
+        if n not in heads:
+            continue
+        level = heads[n][0]
+        has_content = False
+        for m in keep[i + 1:]:
+            if m in heads:
+                if heads[m][0] <= level:
+                    break
+                continue
+            if lines[m - 1].strip():
+                has_content = True
+                break
+        if not has_content:
+            drop.add(n)
+    if drop:
+        cleaned.extend((n, "empty_section") for n in sorted(drop))
+        keep = [n for n in keep if n not in drop]
+    # 구간 가장자리의 빈 줄은 뺀다 (번호가 바뀌지 않는다 — 보고하지 않는 공백 정리)
+    out: list[int] = []
+    for seg in _segments(keep):
+        s, e = seg
+        while s <= e and not lines[s - 1].strip():
+            s += 1
+        while e >= s and not lines[e - 1].strip():
+            e -= 1
+        out.extend(range(s, e + 1))
+    cleaned.sort()
+    return out, cleaned
+
+
+def _segments(nums: list[int]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for n in nums:
+        if out and n == out[-1][1] + 1:
+            out[-1] = (out[-1][0], n)
+        else:
+            out.append((n, n))
+    return out
+
+
+def _has_content(lines: list[str], nums: list[int]) -> bool:
+    return any(lines[n - 1].strip() and not _heading(lines[n - 1]) for n in nums)
+
+
+def _explicit_none(lines: list[str], nums: list[int]) -> bool:
+    content = [lines[n - 1].strip() for n in nums if lines[n - 1].strip() and not _heading(lines[n - 1])]
+    if len(content) != 1:
+        return False
+    text = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", content[0]).strip().rstrip(".").strip()
+    return text.casefold() in _EXPLICIT_NONE
+
+
+def _sections_named(doc: Any, names: set[str], level: int = 2) -> list[tuple[int, int]]:
+    """'## 이름' 절들 (제목 줄, 절 끝 줄). 절은 같거나 높은 단계의 다음 제목 전까지 — 기본 briefing의 excerpt와 같은 경계."""
+    lines = doc.source.lines
+    total = doc.source.total_lines
+    heads = _headings(lines, doc.body_start, total)
+    out: list[tuple[int, int]] = []
+    for i, (n, lv, text) in enumerate(heads):
+        if lv != level or _norm(text) not in names:
+            continue
+        end = next((m - 1 for m, lv2, _ in heads[i + 1:] if lv2 <= level), total)
+        out.append((n, end))
+    return out
+
+
+def _time_of(doc: Any, keys: tuple[str, ...]) -> dict[str, str]:
+    for key in keys:
+        value = evidence_search._str_meta(doc.meta, key)
+        if value:
+            return {"value": value, "source": f"meta:{key}"}
+    return {"value": "", "source": "none"}
+
+
+def _days_old(value: str, now: datetime) -> int | None:
+    try:
+        return (now - datetime.strptime(value.strip()[:10], "%Y-%m-%d")).days
+    except ValueError:
+        return None
+
+
+# ── 항목 수집 ────────────────────────────────────────────────────────────────
+
+
+def _add_item(b: _Build, section: str, group: str, label: str, doc: Any, span: tuple[int, int],
+              drop_titles: set[str], scope: str, **extra: Any) -> _Item:
+    keep, cleaned = _clean(doc.source.lines, span[0], span[1], drop_titles)
+    item = _Item(id=b.next_id({"constraints": "c", "context": "x", "recent": "r", "follow_ups": "f"}[section]),
+                 section=section, group=group, label=evidence_search._clip(label, _FIELD_CHARS), doc=doc, span=span,
+                 candidates=keep, cleaned=cleaned,
+                 scope=scope, project=b.project if scope == "project" else "", extra=extra)
+    b.items.append(item)
+    return item
+
+
+def _attributed_to(doc: Any, project: str) -> bool:
+    fu = doc.file_unit
+    return fu.scope == "project" and fu.project.casefold() == project.casefold()
+
+
+def _context_rel(reg: ProjectRegistry, project: str) -> str:
+    rels = reg.canonical.get(project.casefold(), [])
+    return rels[0] if len(rels) == 1 else ""
+
+
+def _collect_context(b: _Build) -> None:
+    rel = _context_rel(b.reg, b.project)
+    if not rel:
+        blocked = sorted(p for p in b.reg.unreadable if p.startswith("30_Projects/"))
+        if blocked:
+            # 못 읽은 폴더가 이 프로젝트의 Context.md일 수 있다 — "Context 없음"으로 보고하면 제약 확인 불가가 숨는다
+            b.states["constraints"] = "unknown"
+            for path in blocked:
+                b.gap("context_unverifiable", f"프로젝트 등록부가 {path}를 읽지 못해 이 프로젝트의 Context.md(제약)가 "
+                      "그 안에 있는지 확인할 수 없다.", path=f"{path}Context.md", critical=True, unverified=True)
+            return
+        b.states["constraints"] = "no_context"
+        b.gap("no_context", "Context.md가 없다(세션 기록만 있는 프로젝트) — 제약·배경을 확인할 수 없다.")
+        return
+    doc = b.load(rel)
+    if doc is None:
+        b.states["constraints"] = "unknown"
+        b.gap("context_unreadable", "Context.md를 읽지 못해 제약 존재 여부를 확인할 수 없다.", path=rel, critical=True)
+        return
+    lines = doc.source.lines
+    total = doc.source.total_lines
+    drop = {_norm(doc.title), _norm(b.project), _norm(f"{b.project} - Project Context"), _norm("Project Context")}
+    # 항목 경계는 1~3단계 제목. 4단계 이하라도 제약 제목이면 따로 떼어 제약으로 둔다 — 맥락 항목 안에 묻혀 맥락 상한에
+    # 잘리면 critical로 드러나지 않는다. 그 제약 절은 같거나 높은 단계의 다음 제목에서 끝난다.
+    heads: list[tuple[int, int, str]] = []
+    deep: int | None = None
+    for n, lv, text in _headings(lines, doc.body_start, total):
+        if lv <= 3:
+            heads.append((n, lv, text))
+            deep = None
+        elif _CONSTRAINT_HEADING_RE.search(text):
+            heads.append((n, lv, text))
+            deep = lv
+        elif deep is not None and lv <= deep:
+            heads.append((n, lv, text))
+            deep = None
+    fences = [n for n in range(doc.body_start, total + 1) if _is_fence(lines[n - 1])]
+    if len(fences) % 2:
+        b.gap("unclosed_code_fence", f"Context.md {fences[-1]}행의 코드 블록이 닫히지 않아 그 뒤 제목(제약 절 포함)을 "
+              "제목으로 보지 않았다 — 그 뒤 내용은 맥락 항목의 코드로 남는다.", path=doc.rel, lines=[fences[-1], total])
+    starts: list[tuple[int, int, str]] = []
+    if not heads or heads[0][0] > doc.body_start:
+        starts.append((doc.body_start, 0, ""))  # 첫 제목 앞 머리말
+    starts += heads
+    stack: list[tuple[int, bool]] = []
+    constraint_heads = 0
+    constraint_items = 0
+    for i, (n, level, text) in enumerate(starts):
+        end = starts[i + 1][0] - 1 if i + 1 < len(starts) else total
+        if level:
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            is_constraint = bool(_CONSTRAINT_HEADING_RE.search(text)) or any(c for _, c in stack)
+            stack.append((level, is_constraint))
+        else:
+            is_constraint = False
+        if is_constraint:
+            constraint_heads += 1
+        section, group = ("constraints", "constraint") if is_constraint else ("context", "context_section")
+        label = text or "(첫 제목 앞 머리말)"
+        keep, _ = _clean(lines, n, end, drop)
+        if not _has_content(lines, keep):
+            if not any(lines[m - 1].strip() for m in range(n, end + 1)):
+                continue  # 빈 줄뿐인 머리말
+            # 빈 틀·제목만 있는 절은 항목을 만들지 않고 정리 목록에만 남긴다
+            b.states.setdefault("cleaned_sections", []).append({"path": doc.rel, "lines": [n, end], "heading": label,
+                                                                "reason": "empty_section"})
+            continue
+        if is_constraint:
+            constraint_items += 1
+        _add_item(b, section, group, label, doc, (n, end), drop, "project", heading_line=n if level else None,
+                  heading_level=level or None)
+    if constraint_items:
+        b.states["constraints"] = "items"
+    elif constraint_heads:
+        b.states["constraints"] = "heading_empty"
+        b.gap("constraint_section_empty", "Context.md에 제약 제목 절은 있지만 내용이 비어 있다(빈 틀).", path=doc.rel)
+    else:
+        b.states["constraints"] = "none_found"
+        b.gap("no_constraint_heading",
+              "Context.md에 제약 제목(제약·원칙·규칙·금지·불변식·constraints 등) 절이 없다. 다른 제목 아래 제약성 문장이 "
+              "있는지는 판정하지 않았다 — 맥락 항목을 읽어 확인한다.", path=doc.rel)
+    updated = evidence_search._str_meta(doc.meta, "updated_at") or ""
+    age = _days_old(updated, b.now) if updated else None
+    if age is not None and age > STALE_DAYS:
+        b.gap("context_stale", f"Context.md가 {age}일 전({updated[:10]})에 마지막으로 갱신됐다 — 발췌는 그 시점의 기록이다.",
+              path=doc.rel)
+
+
+def _memory_units(b: _Build, key: str) -> list[tuple[Any, Any]]:
+    """AgentMemory 파일 하나의 (문서, 블록) 중 이 프로젝트·공통 블록. 다른 프로젝트·귀속 불명 블록은 넣지 않는다."""
+    rel = _MEMORY_FILES[key]
+    doc = b.load(rel)
+    if doc is None:
+        if any(w.get("path") == rel for w in b.warnings):
+            b.states[f"{key}_unreadable"] = True
+        return []
+    out: list[tuple[Any, Any]] = []
+    for unit in doc.units:
+        if unit.scope == "project":
+            if unit.project.casefold() == b.project.casefold():
+                out.append((doc, unit))
+            else:
+                b.excluded["other_project_blocks"] = b.excluded.get("other_project_blocks", 0) + 1
+        elif unit.scope == "common":
+            out.append((doc, unit))
+        else:
+            b.excluded["unattributed_blocks"] = b.excluded.get("unattributed_blocks", 0) + 1
+            if key == "open_loops":
+                # 이 프로젝트 블록일 수 있다 — 후속 항목이 "없다"고 말할 수 없게 출처로 남긴다
+                b.follow_sources.append({"source": "project_open_loops", "path": rel, "lines": [unit.start, unit.end],
+                                         "state": "unattributed"})
+            why = "conflict(후보: " + ", ".join(unit.conflict_with) + ")" if unit.scope == "conflict" else "unknown"
+            b.gap("unattributed_block_excluded",
+                  f"{rel} {unit.start}-{unit.end}행 블록은 소속이 {why}라 넣지 않았다 — 이 프로젝트 것인지 판정하지 않았다.",
+                  path=rel, lines=[unit.start, unit.end])
+    if key in ("current_focus", "open_loops"):
+        t = _time_of(doc, ("updated_at",))
+        value = t["value"] if t["value"] else (doc.time_value if doc.time_source == "file_mtime" else "")
+        age = _days_old(value, b.now) if value else None
+        if age is not None and age > STALE_DAYS:
+            b.gap("memory_stale", f"{doc.title}: {age}일 전({value[:10]}) 마지막 갱신 — 발췌는 그 시점의 기록이다.", path=rel)
+    return out
+
+
+def _collect_memory(b: _Build) -> None:
+    project_key = _norm(b.project)
+    for key, group in (("current_focus", "current_focus"), ("lessons", "lessons")):
+        for doc, unit in _memory_units(b, key):
+            drop = {_norm(doc.title), project_key, "current focus", "currentfocus", "lessons", "openloops", "open loops"}
+            label = doc.title + (" — 프로젝트 블록" if unit.scope == "project" else " — 공통")
+            keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
+            if _has_content(doc.source.lines, keep):
+                _add_item(b, "context", group, label, doc, (unit.start, unit.end), drop, unit.scope,
+                          block_evidence=list(unit.evidence))
+    open_units = _memory_units(b, "open_loops")
+    project_blocks = 0
+    for doc, unit in open_units:
+        drop = {_norm(doc.title), project_key, "openloops", "open loops"}
+        if unit.scope == "project":
+            project_blocks += 1
+            keep, cleaned = _clean(doc.source.lines, unit.start, unit.end, drop)
+            # 빈 틀(빈 불릿)만 남은 블록은 확인 불가, 제목만 있는 블록(항목을 다 지운 상태)은 기록된 항목 없음
+            state = ("items" if _has_content(doc.source.lines, keep)
+                     else "empty" if any(r == "empty_scaffolding" for _, r in cleaned) else "block_empty")
+            item = _add_item(b, "follow_ups", "project_open_loops", "프로젝트 Open Loops", doc, (unit.start, unit.end),
+                             drop, "project", follow_up_state=state, block_evidence=list(unit.evidence))
+            b.follow_sources.append({"source": "project_open_loops", "path": doc.rel, "lines": [unit.start, unit.end],
+                                     "state": state, "item": item.id if state == "items" else None})
+            if state != "items":
+                b.items.remove(item)
+        else:
+            keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
+            if _has_content(doc.source.lines, keep):
+                # 공통(전역) Open Loops는 이 프로젝트의 후속 항목이 아니다 — 맥락으로만 둔다
+                _add_item(b, "context", "common_open_loops", "Open Loops — 공통(이 프로젝트 후속 항목으로 보지 않음)",
+                          doc, (unit.start, unit.end), drop, "common", block_evidence=list(unit.evidence))
+    if b.states.get("open_loops_unreadable"):
+        b.follow_sources.append({"source": "project_open_loops", "path": _MEMORY_FILES["open_loops"], "state": "unreadable"})
+    elif not project_blocks:
+        b.follow_sources.append({"source": "project_open_loops", "path": _MEMORY_FILES["open_loops"], "state": "no_block"})
+
+
+def _collect_decisions(b: _Build, decisions: list[dict], unlisted: list[dict]) -> None:
+    for w in unlisted:
+        b.partial = True
+        b.warn(w["code"], w["message"], path=w["path"])
+    for d in decisions[:_RECENT_DECISIONS]:
+        doc = b.load(d["rel_path"])
+        entry = {"path": d["rel_path"], "title": d["title"], "status": d["status"], "date": d["date"], "item": None}
+        b.decisions.append(entry)
+        if doc is None:
+            entry["state"] = "unreadable"
+            continue
+        if not _attributed_to(doc, b.project):
+            entry["state"] = "attribution_mismatch"
+            b.gap("attribution_mismatch",
+                  f"결정 '{d['title']}'은 기본 목록에 들었지만 소속 근거({', '.join(doc.file_unit.evidence)})가 이 프로젝트로 "
+                  "확정되지 않아 넣지 않았다.", path=d["rel_path"])
+            continue
+        recorded = _time_of(doc, ("updated_at", "created_at"))
+        entry["recorded_at"] = recorded
+        meta = {"decision_status": d["status"], "recorded_at": recorded}
+        spans = _sections_named(doc, _DECISION_HEADINGS)
+        if spans:
+            n, end = spans[0]
+            item = _add_item(b, "recent", "decision", f"결정: {d['title']}", doc, (n, end),
+                             {"결정", "decision"}, "project", **meta)
+            entry["item"] = item.id
+            entry["state"] = "excerpt" if item.candidates else "section_empty"
+            if not item.candidates:
+                b.items.remove(item)
+            continue
+        line = _summary_line(doc)
+        if line:
+            item = _add_item(b, "recent", "decision", f"결정: {d['title']}", doc, (line, line), set(), "project",
+                             excerpt_basis="frontmatter summary", **meta)
+            entry["item"] = item.id
+            entry["state"] = "excerpt"
+        else:
+            entry["state"] = "no_excerpt"
+
+
+def _summary_line(doc: Any) -> int:
+    """frontmatter의 한 줄짜리 `summary:` 줄 번호. 여러 줄 값이면 0 — 줄 일부를 발췌로 내지 않는다."""
+    fm = doc.source.frontmatter_lines
+    if not fm or not doc.meta.get("summary"):
+        return 0
+    lines = doc.source.lines
+    for n in range(fm[0] + 1, fm[1]):
+        if lines[n - 1].startswith("summary:"):
+            nxt = lines[n] if n < fm[1] - 1 else ""
+            value = lines[n - 1][len("summary:"):].strip()
+            if value and value[0] not in "|>" and not nxt.startswith((" ", "\t")):
+                return n
+            return 0
+    return 0
+
+
+def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
+                      timestamp: Callable[[dict], float]) -> None:
+    for w in unlisted:
+        b.partial = True
+        b.warn(w["code"], w["message"], path=w["path"])
+        b.follow_sources.append({"source": "session_handoff", "path": w["path"], "state": "unreadable"})
+    if not groups:
+        if unlisted:
+            b.gap("sessions_unverifiable", "읽은 SessionHandoff 기록이 없지만 읽지 못한 파일·폴더가 있어 기록이 없다고 말할 수 없다.")
+        else:
+            b.gap("no_sessions", "이 프로젝트의 SessionHandoff(Plan/Process) 기록이 없다.")
+    for rank, group in enumerate(groups, 1):
+        ordered = sorted(group, key=timestamp, reverse=True)
+        main = next((h for h in ordered if h["handoff_type"] == "process"), ordered[0])
+        session = {"rank": rank, "session_id": main["session_id"], "host": main["host"], "agent": main["agent"],
+                   "handoffs": []}
+        b.sessions.append(session)
+        has_process = any(h["handoff_type"] == "process" for h in group)
+        for h in ordered:
+            doc = b.load(h["rel_path"])
+            entry = {"path": h["rel_path"], "handoff_type": h["handoff_type"], "title": h["title"], "items": []}
+            session["handoffs"].append(entry)
+            if doc is None:
+                entry["state"] = "unreadable"
+                if h["handoff_type"] == "process":
+                    b.follow_sources.append({"source": "next_session", "path": h["rel_path"], "state": "unreadable",
+                                             "session_id": h["session_id"]})
+                continue
+            entry["recorded_at"] = _time_of(doc, ("updated_at", "created_at"))
+            if not _attributed_to(doc, b.project):
+                entry["state"] = "attribution_mismatch"
+                b.gap("attribution_mismatch",
+                      f"세션 기록 '{h['title']}'의 소속 근거({', '.join(doc.file_unit.evidence)})가 이 프로젝트로 확정되지 않아 "
+                      "넣지 않았다.", path=h["rel_path"])
+                if h["handoff_type"] == "process":
+                    b.follow_sources.append({"source": "next_session", "path": h["rel_path"], "state": "unreadable",
+                                             "session_id": h["session_id"]})
+                continue
+            meta = {"session_id": h["session_id"], "handoff_type": h["handoff_type"], "recorded_at": entry["recorded_at"],
+                    "host": h["host"], "agent": h["agent"], "session_rank": rank}
+            if h["handoff_type"] == "process":
+                for name, group_key, section, label in (
+                    ("what changed", "session_result", "recent", "What Changed (기록된 결과)"),
+                    ("next session", "next_session", "follow_ups", "Next Session"),
+                ):
+                    spans = _sections_named(doc, {name})
+                    if not spans:
+                        entry.setdefault("missing", []).append(name)
+                        if section == "follow_ups":
+                            b.follow_sources.append({"source": "next_session", "path": doc.rel, "state": "missing",
+                                                     "session_id": h["session_id"]})
+                        continue
+                    for n, end in spans:
+                        drop = {name}
+                        keep, _ = _clean(doc.source.lines, n, end, drop)
+                        if section == "follow_ups":
+                            state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
+                                     else "items" if _has_content(doc.source.lines, keep) else "empty")
+                            if state == "empty":
+                                b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
+                                                         "state": "empty", "session_id": h["session_id"]})
+                                continue
+                            item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project",
+                                             follow_up_state=state, **meta)
+                            b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
+                                                     "state": state, "session_id": h["session_id"], "item": item.id})
+                        else:
+                            if not _has_content(doc.source.lines, keep):
+                                entry.setdefault("empty", []).append(name)
+                                continue
+                            item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project", **meta)
+                        entry["items"].append(item.id)
+            elif h["handoff_type"] == "plan":
+                for n, end in _sections_named(doc, {"goal"}):
+                    keep, _ = _clean(doc.source.lines, n, end, {"goal"})
+                    if not _has_content(doc.source.lines, keep):
+                        continue
+                    item = _add_item(b, "recent", "plan_goal", "Plan Goal (기록 당시 목표 — 완료 여부는 판정하지 않음)",
+                                     doc, (n, end), {"goal"}, "project", **meta)
+                    entry["items"].append(item.id)
+        if not has_process:
+            b.follow_sources.append({"source": "next_session", "path": ordered[0]["rel_path"], "state": "no_process",
+                                     "session_id": main["session_id"]})
+            b.gap("orphan_plan", f"세션 {main['session_id'] or ordered[0]['rel_path']}에 Plan만 있고 Process가 없다 — "
+                  "그 세션의 결과·후속 항목은 확인할 수 없다.", path=ordered[0]["rel_path"])
+
+
+def _follow_up_state(b: _Build) -> dict[str, Any]:
+    states = [s["state"] for s in b.follow_sources]
+    sessions_checked = [s for s in b.follow_sources if s["source"] in ("next_session", "session_handoff")]
+    unknown = [s for s in b.follow_sources if s["state"] in ("missing", "empty", "no_process", "unreadable", "unattributed")]
+    if "items" in states:
+        state = "has_items"
+        message = "아래는 기록에 명시된 후속 항목이다(기록 당시). 완료 여부·현재 유효성은 판정하지 않았다."
+        if unknown:
+            message += f" 단 {len(unknown)}개 출처는 확인하지 못했다(아래 목록)."
+    elif unknown or not sessions_checked:
+        state = "unknown"
+        message = ("확인 불가 — " + ("세션 인계 기록이 없다." if not sessions_checked else
+                   f"{len(unknown)}개 출처에서 후속 항목 절을 확인하지 못했다(없음/빈 틀/Process 없음/읽기 실패/소속 불명 블록).")
+                   + " 후속 항목이 없다고 말할 수 없다.")
+    else:
+        state = "none_in_scope"
+        message = ("검토한 범위(최근 세션 Next Session·프로젝트 Open Loops 블록)에 기록된 후속 항목이 없다. "
+                   "범위 밖 기록·현재 작업 상태는 판정하지 않았다.")
+    if b.partial and state == "none_in_scope":
+        state = "unknown"
+        message = "확인 불가 — 일부 기록을 읽지 못해(partial) 후속 항목이 없다고 말할 수 없다."
+    return {"state": state, "message": message, "complete": not unknown and not b.partial}
+
+
+# ── 예산 배정 ────────────────────────────────────────────────────────────────
+
+
+def _read_args(doc: Any, start: int, end: int) -> dict[str, Any]:
+    """생략 구간을 read_note(structured=True)로 다시 읽는 인자. max_chars는 기본값(=최대)이라 넣지 않는다."""
+    count = end - start + 1
+    args: dict[str, Any] = {"path": doc.rel, "start_line": start, "max_lines": min(count, READ_MAX_LINES),
+                            "expected_version": doc.source.version, "end_line": end}
+    if count > READ_MAX_LINES:
+        args["continues"] = True  # 응답의 next로 이어 읽는다
+    if any(len(doc.source.lines[n - 1]) > READ_MAX_CHARS for n in range(start, end + 1)):
+        args["structured_readable"] = False  # 줄 단위로 줄 수 없는 줄이 있다 — read_note(structured=False)로 전문
+    return args
+
+
+def _call(args: dict[str, Any]) -> str:
+    if args.get("structured_readable") is False:
+        return f'read_note("{args["path"]}")'
+    return (f'read_note("{args["path"]}", structured=True, start_line={args["start_line"]}, '
+            f'max_lines={args["max_lines"]}, expected_version="{args["expected_version"]}")')
+
+
+def _header(item: _Item) -> str:
+    tier = {"stable": "정본", "candidate": "후보", "raw": "원문"}.get(item.doc.tier, item.doc.tier)
+    scope = {"project": "프로젝트", "common": "공통"}.get(item.scope, item.scope)
+    bits = [item.label, f"{tier}·{scope}"]
+    if "decision_status" in item.extra:
+        bits.append({"candidate": "결정 후보", "promoted": "승격된 결정"}.get(item.extra["decision_status"],
+                                                                          item.extra["decision_status"]))
+    rec = item.extra.get("recorded_at")
+    if rec:
+        bits.append(f"기록 {evidence_search._clip(rec['value'], 60) if rec['value'] else '시각 없음'} ({rec['source']})")
+    if item.extra.get("follow_up_state") == "explicit_none":
+        bits.append("명시적 없음 — 이 기록 범위 한정")
+    bits.append(item.doc.rel)
+    return "▸ " + " · ".join(bits)
+
+
+def _seg_label(s: int, e: int) -> str:
+    return f"  @L{s}-L{e}"
+
+
+def _omission_line(item: _Item, om: dict[str, Any]) -> str:
+    r = om["lines"]
+    return f"  ⋯ 생략 L{r[0]}-L{r[1]} ({om['reason']}) → {_call(om['read'])}"
+
+
+def _omission_reserve(item: _Item) -> int:
+    """생략 안내 줄의 최대 길이(+줄바꿈). 줄 번호를 전체 줄 수 자릿수로 잡아 실제 줄은 이보다 짧거나 같다."""
+    t = item.doc.source.total_lines
+    worst = {"path": item.doc.rel, "start_line": t, "max_lines": READ_MAX_LINES, "expected_version": item.doc.source.version}
+    return len(_omission_line(item, {"lines": [t, t], "reason": "line_too_long", "read": worst})) + 1
+
+
+def _stub_cost(item: _Item) -> int:
+    """전부 생략될 때의 한 줄 안내 길이(+항목 사이 빈 줄) — 이유는 가장 긴 값으로 잡는다."""
+    rng = [item.candidates[0], item.candidates[-1]]
+    om = {"lines": rng, "reason": "line_too_long", "read": _read_args(item.doc, *rng)}
+    return len(_render_item(_Item(**{**item.__dict__, "stub": True, "omission": om}))) + 2
+
+
+def _render_item(item: _Item) -> str:
+    if item.stub:
+        return f"▸ {item.label} · {item.doc.rel} · 본문 생략 L{item.omission['lines'][0]}-L{item.omission['lines'][1]} " \
+               f"({item.omission['reason']}) → {_call(item.omission['read'])}"
+    out = [_header(item)]
+    if item.omission and item.tail:
+        out.append(_omission_line(item, item.omission))
+    for s, e in _segments(item.shown):
+        out.append(_seg_label(s, e))
+        out.extend(item.lines[s - 1:e])
+    if item.omission and not item.tail:
+        out.append(_omission_line(item, item.omission))
+    return "\n".join(out)
+
+
+def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
+    """BUDGET_ORDER대로 완전한 줄만 배정한다. (남은 예산, 본문에서 한 줄 안내도 못 낸 생략 수)."""
+    group_used: dict[str, int] = {}
+    aggregated = 0
+    # 맥락 묶음 밖의 항목은 전부 빠져도 본문에 위치 안내 한 줄은 남도록 그 자리를 먼저 예약한다 — 제약이 예산을 다 써도
+    # 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이 없게. 예약이 고정부 뒤 남은 예산을 넘으면 예약하지 않는다.
+    reserve = {id(i): _stub_cost(i) for i in b.items if i.group in _STUB_RESERVED and i.candidates}
+    if sum(reserve.values()) < remaining:
+        remaining -= sum(reserve.values())
+    else:
+        reserve = {}
+    order = {g: i for i, g in enumerate(BUDGET_ORDER)}
+    by_group: dict[str, list[_Item]] = {}
+    for item in b.items:
+        by_group.setdefault(item.group, []).append(item)
+    for group in sorted(by_group, key=order.__getitem__):
+        items = by_group[group]
+        if group in _TAIL_GROUPS:
+            items = list(reversed(items))
+        gcap = GROUP_CAPS.get(group)
+        for item in items:
+            remaining += reserve.pop(id(item), 0)
+            lines = item.lines
+            width = len(_seg_label(item.doc.source.total_lines, item.doc.source.total_lines)) + 1
+            header = len(_header(item)) + 1 + 2  # 항목 사이 빈 줄 몫
+            icap = ITEM_CAPS.get(group)
+            om_reserve = _omission_reserve(item)
+            cost = header
+            text_used = 0
+            chosen: list[int] = []
+            reason = ""
+            prev = None
+            # append형 파일(Lessons·공통 OpenLoops)은 최신이 아래에 쌓인다 — 항목 안에서도 뒤쪽 줄부터 넣는다
+            item.tail = group in _TAIL_GROUPS
+            seq = list(reversed(item.candidates)) if item.tail else item.candidates
+            step = -1 if item.tail else 1
+            for idx, n in enumerate(seq):
+                line_cost = len(lines[n - 1]) + 1
+                seg_cost = width if prev is None or n != prev + step else 0
+                is_last = idx == len(item.candidates) - 1
+                need = cost + seg_cost + line_cost + (0 if is_last else om_reserve)
+                limits = []
+                if icap is not None and text_used + line_cost > icap:
+                    limits.append("item_cap")
+                if gcap is not None and group_used.get(group, 0) + text_used + line_cost > gcap:
+                    limits.append("group_cap")
+                if need > remaining:
+                    limits.append("budget")
+                if limits:
+                    alone = len(lines[n - 1])
+                    caps = [c for c in (icap, gcap, TEXT_MAX_CHARS) if c is not None]
+                    reason = "line_too_long" if alone > min(caps) else limits[0]
+                    break
+                chosen.append(n)
+                cost += seg_cost + line_cost
+                text_used += line_cost
+                prev = n
+            item.shown = sorted(chosen)
+            if len(chosen) < len(item.candidates):
+                first = seq[len(chosen)]  # 처음 못 넣은 줄
+                rng = ([item.candidates[0], first] if item.tail else [first, item.candidates[-1]])
+                item.omission = {"lines": rng, "reason": reason or "budget", "read": _read_args(item.doc, *rng)}
+                if reason == "line_too_long":
+                    item.omission["line_chars"] = len(lines[first - 1])
+                if not chosen:
+                    stub = len(_render_item(_Item(**{**item.__dict__, "stub": True}))) + 2
+                    if stub <= remaining:
+                        item.stub = True
+                        remaining -= stub
+                    else:
+                        aggregated += 1
+                    continue
+                cost += len(_omission_line(item, item.omission)) + 1
+            remaining -= cost
+            group_used[group] = group_used.get(group, 0) + text_used
+    return remaining, aggregated
+
+
+# ── 렌더 ─────────────────────────────────────────────────────────────────────
+
+
+def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generated_at: str, *,
+            critical: bool, aggregated: int, include_items: bool, list_cap: int = _GAPS_TEXT_CAP) -> str:
+    """include_items=False면 고정부만 렌더한다 — 예산 계산용 (최악 길이 줄을 포함한다).
+
+    list_cap: 본문에 줄로 내는 목록(gaps·확인 못 한 출처·세션 파일 안내·출처)의 최대 줄 수. 넘는 몫은 개수만 적는다.
+    문서에서 온 문자열(제목·session_id 등)은 _FIELD_CHARS로 자른다 — 고정부가 상한을 넘지 않게.
+    """
+    c = lambda v, n=_FIELD_CHARS: evidence_search._clip(str(v), n)  # noqa: E731
+    out: list[str] = [f"# Project Briefing (structured) — {evidence_search._clip(b.project or matching['input'], 200)}", ""]
+    m_ev = c("; ".join(matching.get("evidence") or []) or "-", 400)
+    out.append(f"- 생성 {generated_at} · schema {SCHEMA_VERSION} · 매칭 {matching['status']}"
+               f"{' (' + matching['method'] + ')' if matching.get('method') else ''} · 근거 {m_ev}")
+    out.append("- 발췌는 원문 줄 그대로다 (경로 @L시작-L끝, 1부터, frontmatter 포함). 기록 당시 내용이며 "
+               "현재 유효성·완료 여부·중요도는 판정하지 않았다.")
+    if b.partial or not include_items:
+        out.append("- ⚠ partial: 일부 기록을 읽지 못했다 — warnings 참조.")
+    if critical or not include_items:
+        out.append("- ⚠ critical_omission: 제약 일부가 본문에 없다 — requires_read의 구간을 먼저 읽는다.")
+
+    def items_of(section: str, group: str | None = None) -> list[_Item]:
+        return [i for i in b.items if i.section == section and (group is None or i.group == group)
+                and (i.shown or i.stub)]
+
+    def add_items(items: list[_Item]) -> None:
+        for item in items:
+            out.extend(["", _render_item(item)])
+
+    n = 0
+    for key in DISPLAY_ORDER:
+        n += 1
+        out.extend(["", f"## {n}. {SECTION_TITLES[key]}"])
+        if key == "constraints":
+            state = b.states.get("constraints", "not_evaluated")
+            if state != "items":
+                out.append(f"- 상태: {state} — 정보 부족 절 참조")
+            if include_items:
+                add_items(items_of("constraints"))
+        elif key == "context":
+            if include_items:
+                add_items(items_of("context"))
+        elif key == "recent":
+            out.extend(["", f"### 결정 (최근 최대 {_RECENT_DECISIONS}건, 기본 briefing과 같은 순서)"])
+            if not b.decisions:
+                out.append("- 기록된 결정 없음")
+            for d in b.decisions:
+                if d.get("state") != "excerpt":
+                    out.append(f"- {c(d['title'])} · {d['status']} · {c(d['date'] or '날짜 없음', 40)} · {d['path']} · "
+                               f"발췌 없음({d.get('state')}) → read_note(\"{d['path']}\")")
+            if include_items:
+                add_items(items_of("recent", "decision"))
+            out.extend(["", "### 세션 결과 (최근 최대 3세션, 기본 briefing과 같은 순서)"])
+            for s in b.sessions:
+                out.extend(["", f"- 세션 {s['rank']}: {c(s['session_id'] or '(session_id 없음)')} · "
+                           f"host {c(s['host'] or '-', 80)} · agent {c(s['agent'] or '-', 80)}"])
+                noted = 0
+                for h in s["handoffs"]:
+                    notes = [f"{k} 절 없음" for k in h.get("missing", []) if k != "next session"]
+                    notes += [f"{k} 빈 틀" for k in h.get("empty", [])]
+                    if h.get("state"):
+                        notes.append(h["state"])
+                    if notes:
+                        noted += 1
+                        if noted <= list_cap:
+                            out.append(f"  - {c(h['handoff_type'], 40)} {h['path']}: {', '.join(notes)}")
+                if noted > list_cap:
+                    out.append(f"  - 그 밖에 {noted - list_cap}개 파일 — JSON sections.recent.sessions 참조")
+                if include_items:
+                    for item in [i for i in b.items if i.section == "recent" and i.group != "decision"
+                                 and i.extra.get("session_rank") == s["rank"] and (i.shown or i.stub)]:
+                        out.extend(["", _render_item(item)])
+        elif key == "follow_ups":
+            out.append(f"- 상태: {follow['state']} — {follow['message']}")
+            unchecked = [src for src in b.follow_sources if src["state"] not in ("items", "explicit_none")]
+            for src in unchecked[:list_cap]:
+                where = f" L{src['lines'][0]}-L{src['lines'][1]}" if src.get("lines") else ""
+                out.append(f"- {src['source']} {src['path']}{where}: {src['state']}")
+            if len(unchecked) > list_cap:
+                out.append(f"- 그 밖에 {len(unchecked) - list_cap}개 출처 — JSON sources_checked 참조")
+            if include_items:
+                add_items(items_of("follow_ups"))
+        elif key == "gaps":
+            if not b.gaps:
+                out.append("- 기록된 정보 부족 없음 (판단 한계: 이 briefing은 기록만 읽는다 — 현재 상태는 확인하지 않았다)")
+            for g in b.gaps[:list_cap]:
+                out.append(f"- [{g['code']}] {c(g['message'], 400)}" + (f" ({g['path']})" if g.get("path") else ""))
+            if len(b.gaps) > list_cap:
+                out.append(f"- 그 밖에 {len(b.gaps) - list_cap}건 — JSON gaps 참조")
+    if aggregated or not include_items:
+        out.extend(["", f"… 그 밖에 본문에 안내도 못 낸 생략 {aggregated if include_items else 99999}건 — JSON omissions 참조"])
+    if b.docs:
+        out.extend(["", "## 출처 (source_version — read_note expected_version)"])
+        docs = list(b.docs.items())
+        for rel, doc in docs[:list_cap * 2]:
+            out.append(f"- {rel} · {doc.source.version} · {doc.source.total_lines}줄")
+        if len(docs) > list_cap * 2:
+            out.append(f"- 그 밖에 {len(docs) - list_cap * 2}개 — JSON sources 참조 (각 항목의 source_version에도 있다)")
+    return "\n".join(out).rstrip() + "\n"
+
+
+# ── 응답 조립 ────────────────────────────────────────────────────────────────
+
+
+def _source_dict(doc: Any) -> dict[str, Any]:
+    fu = doc.file_unit
+    return {
+        "path": doc.rel,
+        "title": evidence_search._clip(doc.title, 200),
+        "kind": doc.kind,
+        "record_tier": doc.tier,
+        "status": {"declared": doc.status_declared, "class": doc.status_class},
+        "time": {"value": doc.time_value, "source": doc.time_source},
+        "attribution": {"scope": fu.scope, "project": fu.project, "evidence": evidence_search._ev(fu.evidence),
+                        **({"conflict_with": fu.conflict_with} if fu.conflict_with else {})},
+        "source_version": doc.source.version,
+        "total_lines": doc.source.total_lines,
+        "frontmatter_lines": list(doc.source.frontmatter_lines) if doc.source.frontmatter_lines else None,
+    }
+
+
+def _item_dict(item: _Item) -> dict[str, Any]:
+    segs = [{"start_line": s, "end_line": e, "text": "\n".join(item.lines[s - 1:e])} for s, e in _segments(item.shown)]
+    shown = "full" if item.shown and not item.omission else "partial" if item.shown else "omitted"
+    out: dict[str, Any] = {
+        "id": item.id, "kind": item.group, "label": item.label, "path": item.doc.rel,
+        "span": list(item.span), "segments": segs, "shown": shown,
+        "contiguous": len(segs) <= 1,
+        "scope": item.scope, "project": item.project, "record_tier": item.doc.tier,
+        "source_version": item.doc.source.version,
+    }
+    if item.cleaned:
+        out["cleaned"] = [{"lines": [s, e], "reason": r} for s, e, r in _cleaned_ranges(item.cleaned)]
+    if item.omission:
+        out["omission"] = {"lines": item.omission["lines"], "reason": item.omission["reason"]}
+    for key in ("follow_up_state", "decision_status", "recorded_at", "session_rank", "session_id", "handoff_type", "host", "agent",
+                "heading_line", "excerpt_basis", "block_evidence"):
+        if item.extra.get(key) not in (None, ""):
+            out[key] = item.extra[key]
+    return out
+
+
+def _cleaned_ranges(cleaned: list[tuple[int, str]]) -> list[tuple[int, int, str]]:
+    out: list[tuple[int, int, str]] = []
+    for n, reason in sorted(cleaned):
+        if out and out[-1][2] == reason and out[-1][1] == n - 1:
+            out[-1] = (out[-1][0], n, reason)
+        else:
+            out.append((n, n, reason))
+    return out
+
+
+def _matching(res: ProjectResolution, reg: ProjectRegistry) -> dict[str, Any]:
+    return {
+        "input": res.input, "status": res.status, "project": res.project, "method": res.method,
+        "evidence": evidence_search._ev(res.evidence), "candidates": res.candidates, "hint": res.hint,
+        "basis": "명시적 근거만 (등록 표기·SessionHandoffs 폴더·별칭·.claude/vault.json·owner/repo 매핑). "
+                 "repo 디렉터리 이름만으로는 확정하지 않는다.",
+        # 확정하지 못했을 때만 고를 수 있는 이름을 준다 (확정된 응답에는 쓸모없는 크기다)
+        **({} if res.status == "resolved" else {"registered_projects": reg.known_projects()[:50]}),
+    }
+
+
+def _size(obj: Any) -> int:
+    return len(json.dumps(obj, ensure_ascii=False))
+
+
+def build(
+    vault_dir: Path,
+    project_or_repo: str,
+    *,
+    project_map: str = "",
+    list_decisions: Callable[[str, str], list[dict]],
+    list_handoffs: Callable[[str], list[dict]],
+    recent_groups: Callable[[list[dict]], list[list[dict]]],
+    handoff_timestamp: Callable[[dict], float],
+    unlisted_decisions: Callable[[str, str, list[dict]], list[dict]],
+    unlisted_handoffs: Callable[[str, list[dict]], list[dict]],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """structured briefing 응답. 결정·세션 목록과 정렬은 기본 briefing 함수를 받아 그대로 쓴다(순환 import 회피)."""
+    started = time.perf_counter()
+    now = now or datetime.now()
+    generated_at = now.astimezone().isoformat(timespec="seconds")
+    reg = load_registry(vault_dir, project_map)
+    res = resolve_project(vault_dir, project_or_repo, project_map, registry=reg)
+    matching = _matching(res, reg)
+    b = _Build(vault_dir=vault_dir, project=res.project if res.status in ("resolved", "unregistered") else "",
+               reg=reg, now=now)
+    for rel, msg in reg.unreadable.items():
+        b.warn("registry_unreadable", msg, path=rel)
+    if reg.unreadable:
+        b.partial = True
+    unreadable_msgs = set(reg.unreadable.values())
+    for w in reg.warnings:
+        if w not in unreadable_msgs:
+            b.warn("registry", w)
+    for w in res.warnings:
+        if w not in reg.warnings:
+            b.warn("project_resolution", w)
+
+    if res.status == "resolved":
+        _collect_context(b)
+        _collect_memory(b)
+        # 승격 결정은 Context.md가 있는 실제 폴더에서 읽는다 (선언 이름과 폴더명이 다를 수 있다)
+        ctx_rel = _context_rel(reg, b.project)
+        folder = ctx_rel.split("/")[1] if ctx_rel else b.project
+        decisions = list_decisions(b.project, folder)
+        unlisted_d = unlisted_decisions(b.project, folder, decisions)
+        _collect_decisions(b, decisions, unlisted_d)
+        handoffs = list_handoffs(b.project)
+        _collect_sessions(b, recent_groups(handoffs), unlisted_handoffs(b.project, handoffs), handoff_timestamp)
+        if not decisions:
+            if unlisted_d:
+                b.gap("decisions_unverifiable", "읽은 결정이 없지만 읽지 못한 파일·폴더가 있어 결정이 없다고 말할 수 없다.")
+            else:
+                b.gap("no_decisions", "기록된 결정(후보·승격)이 없다.")
+    elif res.status == "unregistered":
+        b.states["constraints"] = "no_context"
+        b.gap("unregistered", f"'{res.project}'은 매핑으로 가리켜지지만 vault에 Context.md·SessionHandoffs가 없다. "
+              "공통 메모리와 이 이름으로 표시된 메모리 블록만 넣었다.")
+        _collect_memory(b)
+    else:
+        b.states["constraints"] = "not_evaluated"
+        if not reg.known_projects():
+            b.gap("vault_empty", "vault에 등록된 프로젝트가 없다(Context.md·SessionHandoffs 폴더 없음).")
+        b.gap(f"project_{res.status}",
+              "프로젝트를 명시적 근거로 확정하지 못해 어떤 프로젝트 기록도 넣지 않았다. 다른 프로젝트 근거로 채우지 않는다 — "
+              "matching.candidates·hint를 보고 프로젝트명을 직접 넘긴다." + (f" ({res.hint})" if res.hint else ""))
+    follow = _follow_up_state(b) if res.status in ("resolved", "unregistered") else {
+        "state": "not_evaluated", "message": "프로젝트가 확정되지 않아 확인하지 않았다.", "complete": False}
+
+    # 고정부(최악 길이 안내 줄 포함)를 먼저 잡고 남은 예산을 BUDGET_ORDER대로 나눈다
+    # 목록이 길어 고정부만으로 상한을 넘으면 목록 줄 수를 줄인다(넘는 몫은 개수만) — 상한을 넘는 응답을 내지 않는다
+    for list_cap in (_GAPS_TEXT_CAP, 5, 0):
+        skeleton = _render(b, matching, follow, generated_at, critical=True, aggregated=0, include_items=False,
+                           list_cap=list_cap)
+        if len(skeleton) <= TEXT_MAX_CHARS:
+            break
+    remaining = TEXT_MAX_CHARS - len(skeleton)
+    aggregated = 0
+    if remaining > 0:
+        remaining, aggregated = _allocate(b, remaining)
+    else:
+        for item in b.items:
+            item.omission = {"lines": [item.span[0], item.span[1]], "reason": "budget",
+                             "read": _read_args(item.doc, item.span[0], item.span[1])}
+            aggregated += 1
+
+    omissions = []
+    for item in b.items:
+        if item.omission:
+            om = {"item": item.id, "section": item.section, "kind": item.group, "path": item.doc.rel,
+                  "lines": item.omission["lines"], "reason": item.omission["reason"],
+                  "critical": item.section == "constraints", "read": item.omission["read"]}
+            if "line_chars" in item.omission:
+                om["line_chars"] = item.omission["line_chars"]
+            omissions.append(om)
+    critical_gaps = [g for g in b.gaps if g.get("critical")]
+    requires_read = [om["read"] for om in omissions if om["critical"]]
+    requires_read += [{"path": g["path"], "reason": g["code"], **({"unverified": True} if g.get("unverified") else {})}
+                      for g in critical_gaps if g.get("path")]
+    critical = bool(requires_read) or bool(critical_gaps)
+
+    text = _render(b, matching, follow, generated_at, critical=critical, aggregated=aggregated, include_items=True,
+                   list_cap=list_cap)
+    if len(text) > TEXT_MAX_CHARS:  # 구성상 일어나지 않는다 — 일어나면 숨기지 않고 실패로 드러낸다
+        raise RuntimeError(f"structured briefing text가 상한을 넘었습니다: {len(text)} > {TEXT_MAX_CHARS}")
+
+    sections = []
+    for key in DISPLAY_ORDER:
+        sec: dict[str, Any] = {"key": key, "title": SECTION_TITLES[key],
+                               "display_rank": DISPLAY_ORDER.index(key) + 1}
+        if key == "gaps":
+            sec["items"] = b.gaps
+        else:
+            sec["items"] = [_item_dict(i) for i in b.items if i.section == key]
+        if key == "constraints":
+            sec["state"] = b.states.get("constraints", "not_evaluated")
+        elif key == "follow_ups":
+            sec.update(follow)
+            sec["sources_checked"] = b.follow_sources
+        elif key == "recent":
+            sec["decisions"] = b.decisions
+            sec["sessions"] = b.sessions
+        elif key == "context":
+            sec["excluded"] = dict(b.excluded)
+            sec["cleaned_sections"] = b.states.get("cleaned_sections", [])
+        sections.append(sec)
+
+    response: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": generated_at,
+        "project": b.project,
+        "matched": res.status == "resolved",
+        "matching": matching,
+        "partial": b.partial,
+        "critical_omission": critical,
+        "requires_read": requires_read,
+        "sections": sections,
+        "omissions": omissions,
+        "warnings": b.warnings,
+        "sources": [_source_dict(d) for d in b.docs.values()],
+        "text": text,
+        "budget": {
+            "text_max_chars": TEXT_MAX_CHARS, "text_chars": len(text),
+            "display_order": list(DISPLAY_ORDER), "budget_order": list(BUDGET_ORDER),
+            "group_caps": GROUP_CAPS, "item_caps": ITEM_CAPS,
+            "recent_decisions": _RECENT_DECISIONS, "recent_sessions": len(b.sessions),
+            "response_chars": 0, "sources_meta_chars": 0, "sections_meta_chars": 0,
+        },
+        "elapsed_ms": 0,
+    }
+    response["budget"]["sources_meta_chars"] = _size(response["sources"])
+    response["budget"]["sections_meta_chars"] = _size(response["sections"])
+    response["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+    used = 0
+    for _ in range(4):
+        response["budget"]["response_chars"] = used
+        size = _size(response)
+        if size == used:
+            break
+        used = size
+    if used > RESPONSE_WARN_CHARS:
+        response["warnings"].append({"code": "response_large",
+                                     "message": f"응답 전체가 {used}자다(text 상한 {TEXT_MAX_CHARS}자와 별개). 줄이지 않고 그대로 냈다."})
+        used = 0
+        for _ in range(4):
+            response["budget"]["response_chars"] = used
+            size = _size(response)
+            if size == used:
+                break
+            used = size
+    return response
