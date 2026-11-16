@@ -94,10 +94,14 @@ ITEM_CAPS: dict[str, int | None] = {
 }
 # 꼬리부터 배정하는 묶음 — append형 파일이라 최신 블록이 뒤에 있다 (기본 briefing의 tail 절단과 같은 이유)
 _TAIL_GROUPS = frozenset({"lessons", "common_open_loops"})
-# 내용이 모두 빠져도 본문에 위치 안내 한 줄은 남기는 묶음. append형(Lessons·공통 OpenLoops)·CurrentFocus는 블록이 많을 수
-# 있어 예약하지 않는다 — 못 넣으면 JSON omissions와 본문의 "안내도 못 낸 생략 N건"으로 드러난다.
-_STUB_RESERVED = frozenset({"constraint", "context_section", "next_session", "project_open_loops", "decision",
-                            "session_result", "plan_goal"})
+# 내용이 모두 빠져도 본문에 위치 안내 한 줄은 남기는 묶음 — 두 가지로 나눈다.
+# - 미리 예약: 후속 항목·최근 결과/결정. 개수가 창(결정 5건·세션 3개·OpenLoops 블록)으로 묶여 있어 예약 크기에 상한이 있다.
+#   제약이 예산을 다 써도 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이 없게 하는 고정부 성격의 자리다.
+# - 단계 시작 때 예약: Context 절. 모르는 제목까지 항목이 되어 개수에 상한이 없으므로, 미리 예약하면 많은 맥락 절의 안내 줄이
+#   제약 발췌를 밀어낸다(예산 순서 위반). 그래서 제약 배정이 끝난 뒤, 맥락 단계에 들어갈 때 남은 예산 안에서만 예약한다.
+# CurrentFocus·Lessons·공통 OpenLoops는 예약하지 않는다 — 못 넣으면 JSON omissions와 본문의 "안내도 못 낸 생략 N건"으로 드러난다.
+_UPFRONT_RESERVED = frozenset({"next_session", "project_open_loops", "decision", "session_result", "plan_goal"})
+_STAGE_RESERVED = frozenset({"context_section"})
 _RECENT_DECISIONS = 5  # 기본 briefing과 같은 창
 _GAPS_TEXT_CAP = 20
 _FIELD_CHARS = 200  # 본문 고정부에 싣는 문서 유래 문자열(제목·session_id 등) 상한
@@ -568,6 +572,9 @@ def _collect_memory(b: _Build) -> None:
                                      "state": state, "item": item.id if state == "items" else None})
             if state != "items":
                 b.items.remove(item)
+            if state == "empty":
+                b.gap("follow_up_section_empty", "OpenLoops의 이 프로젝트 블록이 빈 틀뿐이다(데이터 부족) — '없음'으로 보지 않았다.",
+                      path=doc.rel, lines=[unit.start, unit.end])
         else:
             keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
             if _has_content(doc.source.lines, keep):
@@ -707,6 +714,8 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                         if section == "follow_ups":
                             b.follow_sources.append({"source": "next_session", "path": doc.rel, "state": "missing",
                                                      "session_id": sid})
+                            b.gap("follow_up_section_missing", "Process에 Next Session 절이 없다(데이터 부족) — 그 세션의 "
+                                  "후속 작업 유무는 판정하지 않았다.", path=doc.rel)
                         continue
                     for n, end in spans:
                         drop = {name}
@@ -717,6 +726,8 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                             if state == "empty":
                                 b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
                                                          "state": "empty", "session_id": sid})
+                                b.gap("follow_up_section_empty", "Next Session 절이 비었거나 빈 틀뿐이다(데이터 부족) — "
+                                      "'없음'으로 보지 않았다.", path=doc.rel, lines=[n, end])
                                 continue
                             item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project",
                                              follow_up_state=state, **meta)
@@ -745,29 +756,44 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                   "그 세션의 결과·후속 항목은 확인할 수 없다.", path=path)
 
 
+# 후속 항목 판단 표현 — 확정 설계 #7 문구 그대로
+FOLLOW_UP_NONE = "이 브리핑에 포함된 기록에는 명시된 후속 작업 없음"
+FOLLOW_UP_UNKNOWN = "후속 작업 유무를 확인하지 못한 기록 있음"
+# 확인하지 못한 출처의 두 갈래: 읽기 실패·생략(읽기 경계 밖·소속 불명 포함)과 데이터 부족(절 없음·빈 틀·Process 없음)
+_UNREAD_STATES = frozenset({"unreadable", "unattributed", "attribution_mismatch", "link_skipped"})
+_DATA_GAP_STATES = frozenset({"missing", "empty", "no_process"})
+
+
 def _follow_up_state(b: _Build) -> dict[str, Any]:
     states = [s["state"] for s in b.follow_sources]
     sessions_checked = [s for s in b.follow_sources if s["source"] in ("next_session", "session_handoff")]
-    unknown = [s for s in b.follow_sources if s["state"] in ("missing", "empty", "no_process", "unreadable", "unattributed",
-                                                             "attribution_mismatch", "link_skipped")]
+    unread = [s for s in b.follow_sources if s["state"] in _UNREAD_STATES]
+    data_gap = [s for s in b.follow_sources if s["state"] in _DATA_GAP_STATES]
+    reasons = {"read_failed_or_skipped": len(unread), "partial": b.partial,
+               "data_insufficient": len(data_gap), "no_sessions": not sessions_checked}
+    detail = []
+    if unread:
+        detail.append(f"읽기 실패·읽기 경계 밖·소속 불명 {len(unread)}건")
+    if b.partial:
+        detail.append("일부 기록을 읽지 못함(partial)")
+    if data_gap:
+        detail.append(f"후속 항목 절 없음·빈 틀·Process 없음(데이터 부족) {len(data_gap)}건")
+    if not sessions_checked:
+        detail.append("세션 인계 기록 없음(데이터 부족)")
+    unknown = bool(unread or data_gap or b.partial or not sessions_checked)
     if "items" in states:
         state = "has_items"
         message = "아래는 기록에 명시된 후속 항목이다(기록 당시). 완료 여부·현재 유효성은 판정하지 않았다."
         if unknown:
-            message += f" 단 {len(unknown)}개 출처는 확인하지 못했다(아래 목록)."
-    elif unknown or not sessions_checked:
+            message += f" 단 {FOLLOW_UP_UNKNOWN} — " + ", ".join(detail) + " (아래 목록)."
+    elif unknown:
         state = "unknown"
-        message = ("확인 불가 — " + ("세션 인계 기록이 없다." if not sessions_checked else
-                   f"{len(unknown)}개 출처에서 후속 항목 절을 확인하지 못했다(없음/빈 틀/Process 없음/읽기 실패/소속 불명 블록).")
-                   + " 후속 항목이 없다고 말할 수 없다.")
+        message = f"{FOLLOW_UP_UNKNOWN} — " + ", ".join(detail) + ". 후속 항목이 없다고 말할 수 없다."
     else:
         state = "none_in_scope"
-        message = ("검토한 범위(최근 세션 Next Session·프로젝트 Open Loops 블록)에 기록된 후속 항목이 없다. "
-                   "범위 밖 기록·현재 작업 상태는 판정하지 않았다.")
-    if b.partial and state == "none_in_scope":
-        state = "unknown"
-        message = "확인 불가 — 일부 기록을 읽지 못해(partial) 후속 항목이 없다고 말할 수 없다."
-    return {"state": state, "message": message, "complete": not unknown and not b.partial}
+        message = (f"{FOLLOW_UP_NONE} (범위: 최근 세션 Next Session·프로젝트 Open Loops 블록. 명시적 '없음'은 그 기록에만 "
+                   "해당한다. 범위 밖 기록·현재 작업 상태는 판정하지 않았다).")
+    return {"state": state, "message": message, "complete": not unknown, "unknown_reasons": reasons}
 
 
 # ── 예산 배정 ────────────────────────────────────────────────────────────────
@@ -864,22 +890,27 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
     """BUDGET_ORDER대로 완전한 줄만 배정한다. (남은 예산, 본문에서 한 줄 안내도 못 낸 생략 수)."""
     group_used: dict[str, int] = {}
     aggregated = 0
-    # _STUB_RESERVED 항목은 내용이 전부 빠져도 본문에 위치 안내 한 줄은 남도록 그 자리를 먼저 예약한다 — 제약·맥락이 예산을
-    # 다 써도 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이 없게. 예약은 항목 차례가 오면 돌려받으므로 발췌
-    # 본문의 배정 순서는 BUDGET_ORDER 그대로다. 예약도 BUDGET_ORDER 순으로, 남은 예산 안에 들어가는 만큼만 한다.
+    # 위치 안내 한 줄 예약(_UPFRONT_RESERVED·_STAGE_RESERVED 설명 참조). 예약은 항목 차례가 오면 돌려받으므로 발췌 본문의
+    # 배정 순서는 BUDGET_ORDER 그대로다. 예약은 BUDGET_ORDER 순으로, 남은 예산 안에 들어가는 만큼만 한다.
     order = {g: i for i, g in enumerate(BUDGET_ORDER)}
     reserve: dict[int, int] = {}
-    for item in sorted((i for i in b.items if i.group in _STUB_RESERVED and i.candidates),
-                       key=lambda i: order[i.group]):
-        cost = _stub_cost(item)
-        if cost >= remaining:
-            break
-        reserve[id(item)] = cost
-        remaining -= cost
+
+    def reserve_for(groups: frozenset[str]) -> None:
+        nonlocal remaining
+        for it in sorted((i for i in b.items if i.group in groups and i.candidates), key=lambda i: order[i.group]):
+            cost = _stub_cost(it)
+            if cost >= remaining:
+                break
+            reserve[id(it)] = cost
+            remaining -= cost
+
+    reserve_for(_UPFRONT_RESERVED)
     by_group: dict[str, list[_Item]] = {}
     for item in b.items:
         by_group.setdefault(item.group, []).append(item)
     for group in sorted(by_group, key=order.__getitem__):
+        if group in _STAGE_RESERVED:
+            reserve_for(frozenset({group}))
         items = by_group[group]
         if group in _TAIL_GROUPS:
             items = list(reversed(items))
@@ -1034,11 +1065,13 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
             if len(b.gaps) > list_cap:
                 out.append(f"- 그 밖에 {len(b.gaps) - list_cap}건 — JSON gaps 참조")
             if b.warnings:
-                out.extend(["", "### 경고"])
-                for w in b.warnings[:list_cap]:
-                    out.append(f"- [{w['code']}] {c(w['message'], 400)}" + (f" ({c(w['path'], 300)})" if w.get("path") else ""))
-                if len(b.warnings) > list_cap:
-                    out.append(f"- 그 밖에 {len(b.warnings) - list_cap}건 — JSON warnings 참조")
+                # 본문에는 코드별 건수만 — 메시지·경로는 JSON warnings에 있다. 공유 후보 폴더의 다른 프로젝트 파일 경로(파일명이
+                # 제목 구실을 한다)가 본문에 실리지 않게, 그리고 경고 수가 늘어도 고정부가 제약 발췌를 밀어내지 않게 한다.
+                counts: dict[str, int] = {}
+                for w in b.warnings:
+                    counts[w["code"]] = counts.get(w["code"], 0) + 1
+                out.extend(["", "### 경고 (코드별 건수 — 내용·경로는 JSON warnings)"])
+                out.append("- " + ", ".join(f"{c(code, 60)} {n}" for code, n in counts.items()))
     if aggregated or not include_items:
         out.extend(["", f"… 그 밖에 본문에 안내도 못 낸 생략 {aggregated if include_items else 99999}건 — JSON omissions 참조"])
     if b.docs:

@@ -308,7 +308,9 @@ def test_explicit_none_is_scoped_and_distinct_from_unknown(tmp_path):
     resp = _brief(tmp_path)
     sec = _section(resp, "follow_ups")
     assert sec["state"] == "none_in_scope" and sec["complete"] is True
-    assert "검토한 범위" in sec["message"] and "범위 밖" in sec["message"]
+    # 확정 설계 #7 문구 그대로 — 완전히 읽었고 명시된 후속 항목이 없을 때
+    assert sec["message"].startswith(pb.FOLLOW_UP_NONE) and pb.FOLLOW_UP_UNKNOWN not in sec["message"]
+    assert "범위 밖" in sec["message"] and sec["message"] in resp["text"]
     item = sec["items"][0]
     assert item["follow_up_state"] == "explicit_none" and item["segments"][0]["text"] == "없음"
     assert "명시적 없음 — 이 기록 범위 한정" in resp["text"]
@@ -317,8 +319,13 @@ def test_explicit_none_is_scoped_and_distinct_from_unknown(tmp_path):
     _handoff(tmp_path, "p0", "process", "s0", "2026-11-02T10:00:00", _process("- "))
     resp = _brief(tmp_path)
     sec = _section(resp, "follow_ups")
-    assert sec["state"] == "unknown" and "확인 불가" in sec["message"]
+    assert sec["state"] == "unknown" and sec["message"].startswith(pb.FOLLOW_UP_UNKNOWN)
+    assert pb.FOLLOW_UP_NONE not in sec["message"]
     assert any(s["state"] == "empty" for s in sec["sources_checked"])
+    # 빈 틀은 읽기 실패가 아니라 데이터 부족으로 구분한다
+    assert sec["unknown_reasons"] == {"read_failed_or_skipped": 0, "partial": False, "data_insufficient": 1,
+                                      "no_sessions": False}
+    assert any(g["code"] == "follow_up_section_empty" for g in _section(resp, "gaps")["items"])
 
     # "없음"으로 시작하는 문장은 명시적 없음으로 보지 않는다
     _handoff(tmp_path, "p0", "process", "s0", "2026-11-02T10:00:00", _process("- 없음 — 단 실측 확인은 남음"))
@@ -343,8 +350,10 @@ def test_missing_next_session_plan_only_and_no_sessions_are_unknown(tmp_path):
     _handoff(tmp_path, "proc", "process", "s1", "2026-11-03T10:00:00", "# Process\n\n## What Changed\n\n- x\n")
     resp = _brief(tmp_path)
     sec = _section(resp, "follow_ups")
-    assert sec["state"] == "unknown"
+    assert sec["state"] == "unknown" and sec["message"].startswith(pb.FOLLOW_UP_UNKNOWN)
     assert [s["state"] for s in sec["sources_checked"] if s["source"] == "next_session"] == ["missing"]
+    assert sec["unknown_reasons"]["data_insufficient"] == 1 and sec["unknown_reasons"]["read_failed_or_skipped"] == 0
+    assert any(g["code"] == "follow_up_section_missing" for g in _section(resp, "gaps")["items"])
 
 
 def test_partial_read_failure_makes_follow_ups_unknown_not_none(tmp_path, monkeypatch):
@@ -356,6 +365,8 @@ def test_partial_read_failure_makes_follow_ups_unknown_not_none(tmp_path, monkey
     assert resp["partial"] is True
     sec = _section(resp, "follow_ups")
     assert sec["state"] == "unknown" and sec["complete"] is False
+    assert sec["message"].startswith(pb.FOLLOW_UP_UNKNOWN) and "partial" in sec["message"]
+    assert sec["unknown_reasons"]["partial"] is True and sec["unknown_reasons"]["data_insufficient"] == 0
     assert any(w["code"] == "read_failed" and w["path"].endswith("p2.md") for w in resp["warnings"])
     assert "숨은 후속" not in resp["text"]
 
@@ -933,8 +944,49 @@ def test_display_order_in_text_puts_follow_ups_after_recent_and_gaps_warnings_so
     assert text.index("WC_s2_0") < text.index("## 4. 명시적 후속 항목") < text.index("NEXT_s2_0") < heads[4]
     tail = text[heads[4]:]
     assert resp["warnings"] and resp["partial"] is True
-    assert tail.index("[read_failed]") < tail.index("### 근거 출처")
-    assert tail.index("### 경고") < tail.index("### 근거 출처")
+    assert tail.index("### 경고") < tail.index("read_failed 1") < tail.index("### 근거 출처")
+    # 경고는 본문에 코드별 건수만 — 메시지·경로는 JSON warnings에만 있다
+    assert all(w["path"] not in tail for w in resp["warnings"] if w.get("path"))
     for src in resp["sources"]:
         if "excluded" not in src:
             assert f"{src['path']} · {src['source_version']}" in tail
+
+
+# ── 독립 리뷰 3차 지적의 회귀 ────────────────────────────────────────────────
+
+
+def test_many_context_sections_do_not_crowd_out_constraints_with_location_lines(tmp_path):
+    """맥락 절의 위치 안내 예약이 제약 발췌보다 먼저 예산을 가져가면 안 된다 (예산 순서: 제약 → 맥락)."""
+    body = "\n# Devtrail\n\n## 제약\n\n" + "".join(f"- 제약 {i}: " + "가" * 80 + "\n" for i in range(60))
+    body += "".join(f"\n## 배경 {i}\n\n- 맥락 {i} 짧은 줄\n" for i in range(80))
+    _ctx(tmp_path, body)
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 다음 일"))
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+    assert resp["critical_omission"] is False and resp["requires_read"] == []
+    assert [i["shown"] for i in _items(resp, "constraints")] == ["full"]
+    assert resp["text"].count("- 제약 ") == 60
+    assert "- 다음 일" in resp["text"]
+
+
+def test_many_warnings_do_not_push_constraints_out_of_text(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + "".join(f"- 제약 {i}: " + "가" * 90 + "\n" for i in range(150)))
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 다음 일"))
+    for i in range(20):
+        _w(tmp_path, f"60_Candidates/Decisions/Other-{i}-{'d' * 180}.md", "---\ntitle: [bad\n---\n")
+    resp = _brief(tmp_path)
+    assert len(resp["warnings"]) >= 20 and resp["partial"] is True
+    assert resp["critical_omission"] is False and [i["shown"] for i in _items(resp, "constraints")] == ["full"]
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+
+
+def test_other_project_file_paths_in_warnings_stay_out_of_text(tmp_path):
+    _ctx(tmp_path, TEMPLATE_CONTEXT)
+    _ctx(tmp_path, "\n# Other\n\n## 배경\n\n- x\n", project="Other")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 다음 일"))
+    rel = "60_Candidates/Decisions/Other-acquire-competitor-secretly.md"
+    _w(tmp_path, rel, "---\nproject: Other\ntitle: [bad\n---\n# x\n")
+    resp = _brief(tmp_path)
+    # 소속을 확인하지 못한 파일이라 JSON warnings에는 경로가 남는다(숨기지 않는다) — 본문에는 코드별 건수만
+    assert any(w.get("path") == rel for w in resp["warnings"])
+    assert "acquire-competitor" not in resp["text"] and "frontmatter_unparsed 1" in resp["text"]
