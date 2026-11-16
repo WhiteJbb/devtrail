@@ -595,10 +595,10 @@ def test_follow_ups_keep_a_location_line_even_when_constraints_fill_budget(tmp_p
     resp = _brief(tmp_path)
     assert resp["critical_omission"] is True and len(resp["text"]) <= pb.TEXT_MAX_CHARS
     nxt = _items(resp, "follow_ups")[0]
-    # 내용 일부 또는 위치 안내 줄 중 하나는 반드시 본문에 있다
-    assert nxt["path"] in resp["text"]
+    # 발췌가 예산 때문에 빠져도 위치는 고정부(후속 기록 위치 목록)에 남는다 — 예약으로 제약 예산을 가져가지 않는다
+    assert f"{nxt['id']} 세션 1 next_session · {nxt['path']} L{nxt['span'][0]}-L{nxt['span'][1]}" in resp["text"]
     om = next(o for o in resp["omissions"] if o["item"] == nxt["id"])
-    assert f"생략 L{om['lines'][0]}-L{om['lines'][1]}" in resp["text"]
+    assert om["path"] == nxt["path"] and om["read"]["rel_path"] == nxt["path"]
 
 
 def test_permission_denied_memory_dir_is_partial_not_crash(tmp_path, deny_access):
@@ -1032,15 +1032,21 @@ def test_many_follow_up_items_do_not_displace_constraints(tmp_path, mode):
 
 
 @pytest.mark.parametrize("n_rules", [200, 230, 257])
-def test_small_reserved_follow_up_is_shown_even_when_constraints_fill_budget(tmp_path, n_rules):
-    """실제 비용으로 예약한 작은 후속 항목(두 줄)은 제약이 예산을 다 써도 자기 예약 안에서 통째로 실린다 — 위치 안내도 없이
-    건수로만 남으면 안 된다."""
+def test_small_follow_up_keeps_location_without_taking_constraint_budget(tmp_path, n_rules):
+    """제약이 예산을 다 써도 작은 후속 기록의 위치는 고정부에 남는다. 위치를 남기려고 발췌 자리를 미리 잡지 않는다."""
     _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + "".join(f"- c{i} " + "가" * 80 + "\n" for i in range(n_rules)))
     _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- a\n- b"))
     resp = _brief(tmp_path)
     assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
-    assert [i["shown"] for i in _items(resp, "follow_ups")] == ["full"]
-    assert "안내도 못 낸 생략" not in resp["text"]
+    nxt = _items(resp, "follow_ups")[0]
+    assert f"{nxt['path']} L{nxt['span'][0]}-L{nxt['span'][1]}" in resp["text"]
+    cons = _items(resp, "constraints")[0]
+    if cons["shown"] != "full":
+        # 제약이 예산 때문에 잘렸다면 후속 발췌는 제약 다음 줄이 못 들어간 자투리에만 들어갈 수 있다
+        assert nxt["shown"] != "full" or resp["budget"]["text_chars"] + 90 > pb.TEXT_MAX_CHARS
+        sec = _section(resp, "follow_ups")
+        if nxt["shown"] != "full":
+            assert sec["complete"] is False and pb.FOLLOW_UP_UNKNOWN in sec["message"]
 
 
 # ── 병합 리뷰 3차(BLOCK) 지적의 회귀 ─────────────────────────────────────────
@@ -1160,3 +1166,89 @@ def test_unreadable_shared_decisions_folder_keeps_its_reason(tmp_path, deny_acce
     w = next(w for w in resp["warnings"] if w["path"] == "60_Candidates/Decisions/")
     assert w["code"] == "read_failed" and "폴더" in w["message"] and "count" not in w
     assert "secret-plan" not in json.dumps(resp, ensure_ascii=False)
+
+
+
+# ── 병합 리뷰 4차(BLOCK) 지적의 회귀 ─────────────────────────────────────────
+
+
+def test_constraint_that_fits_is_never_cut_for_later_stages(tmp_path, monkeypatch):
+    """분리 재현: 고정부 뒤 남은 예산이 제약 전체 비용과 같을 때 제약은 전부 실리고, 후속·최근·맥락 발췌는 남은 예산이 없어 빠진다."""
+    _ctx(tmp_path, "## 제약\n\n" + "".join(f"- 규칙 {i}: " + "가" * 90 + "\n" for i in range(10)) + "\n## 배경\n\n- 맥락 한 줄\n")
+    for r in range(3):
+        _handoff(tmp_path, f"p{r}", "process", f"s{r}", f"2026-11-1{r}T10:00:00", _process(f"- 후속 {r}", f"- 결과 {r}"))
+    _w(tmp_path, "40_AgentMemory/05_OpenLoops.md", "# OpenLoops\n\n" + "".join(
+        _MK % "Devtrail" + f"## Devtrail\n\n- 루프 {k}\n\n" for k in range(5)))
+    captured: dict = {}
+    real = pb._allocate
+
+    def spy(b, remaining):
+        captured["b"] = b
+        return real(b, remaining)
+
+    monkeypatch.setattr(pb, "_allocate", spy)
+    _brief(tmp_path)
+    b = captured["b"]
+    cons = [i for i in b.items if i.group == "constraint"]
+    assert len(cons) == 1 and len(cons[0].candidates) >= 11
+    for budget in (pb._full_cost(cons[0]), pb._full_cost(cons[0]) + 30):
+        for i in b.items:
+            i.shown, i.omission, i.stub, i.tail = [], None, False, False
+        real(b, budget)
+        assert cons[0].shown == cons[0].candidates and cons[0].omission is None, budget
+        assert all(not i.shown for i in b.items if i.group != "constraint"), budget
+
+
+@pytest.mark.parametrize("width", [16001, 17000, 19000])
+def test_line_over_read_limit_is_never_excerpted(tmp_path, monkeypatch, width):
+    long_rule = "- " + "가" * (width - 2)
+    _ctx(tmp_path, "## 제약\n\n- 짧은 제약\n" + long_rule + "\n- 뒤 제약\n")
+    _handoff(tmp_path, "p", "process", "s", "2026-11-10T10:00:00", _process("- 다음 " + "나" * (width - 5)))
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+    assert "가" * 100 not in resp["text"] and "나" * 100 not in resp["text"]
+    cons = _items(resp, "constraints")[0]
+    assert cons["shown"] == "partial" and "- 짧은 제약" in resp["text"]
+    om = next(o for o in resp["omissions"] if o["item"] == cons["id"])
+    assert om["reason"] == "line_too_long" and om["critical"] and om["structured_readable"] is False
+    assert om["read"] == {"rel_path": om["path"]}
+    assert resp["critical_omission"] is True and any(r["item"] == cons["id"] for r in resp["requires_read"])
+    gaps = [g for g in _section(resp, "gaps")["items"] if g["code"] == "line_exceeds_read_limit"]
+    assert {g["path"] for g in gaps} == {cons["path"], _items(resp, "follow_ups")[0]["path"]}
+    # 모든 발췌 줄은 실제로 structured read_note로 회수된다
+    for item in _all_items(resp):
+        for seg in item["segments"]:
+            page = _mcp_read_note(monkeypatch, tmp_path, {"rel_path": item["path"], "structured": True,
+                                                          "start_line": seg["start_line"],
+                                                          "max_lines": seg["end_line"] - seg["start_line"] + 1,
+                                                          "expected_version": item["source_version"]})
+            assert page["ok"] and page["content"] == seg["text"]
+    full = _mcp_read_note(monkeypatch, tmp_path, om["read"])
+    assert long_rule in full
+
+
+def _check_resume_info_matches_read_note(monkeypatch, vault, resp) -> int:
+    checked = 0
+    for om in resp["omissions"]:
+        if not om["structured_readable"]:
+            continue
+        page = _mcp_read_note(monkeypatch, vault, om["read"])
+        assert page["ok"], page
+        assert page["start_line"] == om["lines"][0]
+        assert page["end_line"] == om["first_read_end_line"]
+        assert om["read_continues"] == (page["end_line"] < om["lines"][1])
+        if om["read_continues"]:
+            assert page["next"]["start_line"] == page["end_line"] + 1
+        checked += 1
+    return checked
+
+
+@pytest.mark.parametrize("n_lines,width", [(100, 200), (30, 600), (900, 10), (90, 179)])
+def test_read_continues_matches_actual_read_note_paging(tmp_path, monkeypatch, n_lines, width):
+    """이어읽기 정보는 400줄 상한뿐 아니라 16000자 상한도 반영해 실제 read_note의 end_line·next와 같다."""
+    rows = "".join(f"- 규칙 {i:03d} " + "가" * (width - 10) + "\n" for i in range(n_lines))
+    _ctx(tmp_path, "## 원칙\n\n" + rows * 2 + "\n## 배경\n\n" + rows)  # 제약 초과 + 맥락 상한 초과
+    resp = _brief(tmp_path)
+    assert _check_resume_info_matches_read_note(monkeypatch, tmp_path, resp) >= 1
+    if n_lines * width > 16100:
+        assert any(o["read_continues"] for o in resp["omissions"])

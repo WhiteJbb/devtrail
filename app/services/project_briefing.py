@@ -50,8 +50,8 @@ SECTION_TITLES = {
 }
 # 예산 배정 순서 (확정 설계 #7): 제약 → 프로젝트 맥락 → 명시된 후속 항목 → 최근 결과·결정.
 # 표시 순서(DISPLAY_ORDER)와 다르다 — 후속 항목은 맥락 뒤에 표시되지만 최근 결과·결정보다 먼저 예산을 받는다.
-# 고정부(머리말·상태 줄·세션/결정 목록 줄·gaps·경고·출처 목록)와 항목별 위치 안내 한 줄 예약은 text 상한 안에서 먼저
-# 잡히지만, 발췌 본문의 배정 순서는 이 순서만 따른다. 맥락 안에서는 Context.md 절 → CurrentFocus → Lessons → 공통
+# 고정부(머리말·상태 줄·세션/결정 목록 줄·후속 기록 위치 목록·gaps·경고·출처 목록)는 text 상한 안에서 먼저 잡히지만,
+# 발췌 본문은 미리 잡는 자리 없이 이 순서대로만 배정된다. 맥락 안에서는 Context.md 절 → CurrentFocus → Lessons → 공통
 # OpenLoops, 최근 결과·결정 안에서는 기존 구현의 결정 → What Changed → Plan Goal 순서를 유지한다(설계가 하위 순서를 정하지 않음).
 BUDGET_ORDER = (
     "constraint",
@@ -94,19 +94,6 @@ ITEM_CAPS: dict[str, int | None] = {
 }
 # 꼬리부터 배정하는 묶음 — append형 파일이라 최신 블록이 뒤에 있다 (기본 briefing의 tail 절단과 같은 이유)
 _TAIL_GROUPS = frozenset({"lessons", "common_open_loops"})
-# 내용이 모두 빠져도 본문에 위치 안내 한 줄은 남기는 묶음 — 두 가지로 나눈다.
-# - 미리 예약: 후속 항목·최근 결과/결정. 제약이 예산을 다 써도 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이
-#   없게 하는 고정부 성격의 자리다. 항목 수는 창으로 묶이지 않는다(Process 하나에 Next Session 절이 여럿, OpenLoops 프로젝트
-#   블록은 패치마다 하나씩 쌓인다) — 그래서 예약 수를 _UPFRONT_MAX_STUBS로 자르고, 크기는 항목 전체 발췌 비용과 안내 줄 중
-#   작은 쪽으로 잡는다(작은 항목은 예약만큼만 쓴다 — 쓰지 않을 자리를 잡아 제약을 밀어내지 않게).
-# - 단계 시작 때 예약: Context 절. 모르는 제목까지 항목이 되어 개수에 상한이 없으므로, 미리 예약하면 많은 맥락 절의 안내 줄이
-#   제약 발췌를 밀어낸다(예산 순서 위반). 그래서 제약 배정이 끝난 뒤, 맥락 단계에 들어갈 때 남은 예산 안에서만 예약한다.
-# CurrentFocus·Lessons·공통 OpenLoops는 예약하지 않는다 — 못 넣으면 JSON omissions와 본문의 "안내도 못 낸 생략 N건"으로 드러난다.
-_UPFRONT_RESERVED = frozenset({"next_session", "project_open_loops", "decision", "session_result", "plan_goal"})
-_STAGE_RESERVED = frozenset({"context_section"})
-# 미리 예약하는 항목 수 상한 — 기본 창 크기(결정 5건 + 3세션 × Next Session·What Changed·Plan Goal + OpenLoops 1)와 같다.
-# 제약이 이 예약 때문에 덜 받는 몫은 최대 이 수만큼의 안내 줄(각 수백 자)이다.
-_UPFRONT_MAX_STUBS = 15
 _RECENT_DECISIONS = 5  # 기본 briefing과 같은 창
 _GAPS_TEXT_CAP = 20
 _FIELD_CHARS = 200  # 본문 고정부에 싣는 문서 유래 문자열(제목·session_id 등) 상한
@@ -892,10 +879,35 @@ def _read_args(doc: Any, start: int, end: int) -> dict[str, Any]:
     return {"rel_path": doc.rel}
 
 
-def _read_info(doc: Any, start: int, end: int) -> dict[str, bool]:
+def _first_read_end(doc: Any, start: int, end: int) -> int:
+    """`read_note(structured=True, start_line=start, max_lines=min(구간, MAX_LINES))` 한 번이 돌려주는 마지막 줄 번호.
+
+    source_reader.read_source의 페이지 규칙을 그대로 따른다: max_lines, max_chars(기본=최대 16000, 줄 사이 개행 포함),
+    max_chars보다 긴 줄 앞에서 멈춤. 첫 줄부터 못 읽으면 start - 1.
+    """
+    max_lines = min(end - start + 1, READ_MAX_LINES)
+    used = 0
+    last = start - 1
+    for n in range(start, end + 1):
+        if n - start >= max_lines:
+            break
+        text = doc.source.lines[n - 1]
+        if len(text) > READ_MAX_CHARS:
+            break
+        cost = len(text) + (1 if n > start else 0)
+        if used + cost > READ_MAX_CHARS:
+            break
+        used += cost
+        last = n
+    return last
+
+
+def _read_info(doc: Any, start: int, end: int) -> dict[str, Any]:
+    first_end = _first_read_end(doc, start, end)
     return {
-        # max_lines 상한(400)보다 긴 구간 — 응답의 next(start_line·expected_version)로 이어 읽는다
-        "read_continues": end - start + 1 > READ_MAX_LINES,
+        # read 한 번으로 구간 끝까지 못 읽는다(400줄·16000자 상한, 또는 긴 줄) — 응답의 next(start_line·expected_version)로 이어 읽는다
+        "read_continues": first_end < end,
+        "first_read_end_line": first_end,  # 첫 read가 돌려주는 마지막 줄 (start - 1이면 첫 줄부터 structured로 못 읽는다)
         "structured_readable": not any(len(doc.source.lines[n - 1]) > READ_MAX_CHARS for n in range(start, end + 1)),
     }
 
@@ -944,13 +956,6 @@ def _omission_reserve(item: _Item) -> int:
     return len(_omission_line(item, {"lines": [t, t], "reason": "line_too_long", "read": worst})) + 1
 
 
-def _stub_cost(item: _Item) -> int:
-    """전부 생략될 때의 한 줄 안내 길이(+항목 사이 빈 줄) — 이유는 가장 긴 값으로 잡는다."""
-    rng = [item.candidates[0], item.candidates[-1]]
-    om = _omission(item.doc, rng, "line_too_long")
-    return len(_render_item(_Item(**{**item.__dict__, "stub": True, "omission": om}))) + 2
-
-
 def _full_cost(item: _Item) -> int:
     """항목 전체를 생략 없이 실을 때의 본문 비용(_allocate와 같은 계산: 머리줄+항목 사이 빈 줄, 구간 표시 줄, 발췌 줄)."""
     width = len(_seg_label(item.doc.source.total_lines, item.doc.source.total_lines)) + 1
@@ -977,34 +982,19 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
     """BUDGET_ORDER대로 완전한 줄만 배정한다. (남은 예산, 본문에서 한 줄 안내도 못 낸 생략 수)."""
     group_used: dict[str, int] = {}
     aggregated = 0
-    # 위치 안내 한 줄 예약(_UPFRONT_RESERVED·_STAGE_RESERVED 설명 참조). 예약은 항목 차례가 오면 돌려받으므로 발췌 본문의
-    # 배정 순서는 BUDGET_ORDER 그대로다. 예약은 BUDGET_ORDER 순으로, 남은 예산 안에 들어가는 만큼만 한다.
+    # 미리 잡아 두는 자리(예약)는 없다 — 발췌 본문은 BUDGET_ORDER 그대로 앞 묶음부터 남은 예산을 쓴다. 뒤 묶음의 위치는
+    # 고정부(후속 기록 위치 목록·결정/세션 목록)와 JSON omissions가 맡는다. 예약을 두면 그만큼 뒤 묶음의 발췌가 제약보다
+    # 먼저 예산을 갖게 된다(설계 #7 예산 순서 위반).
     order = {g: i for i, g in enumerate(BUDGET_ORDER)}
-    reserve: dict[int, int] = {}
-
-    def reserve_for(groups: frozenset[str], limit: int | None = None) -> None:
-        nonlocal remaining
-        targets = sorted((i for i in b.items if i.group in groups and i.candidates), key=lambda i: order[i.group])
-        for it in targets[:limit]:
-            cost = min(_stub_cost(it), _full_cost(it))
-            if cost >= remaining:
-                break
-            reserve[id(it)] = cost
-            remaining -= cost
-
-    reserve_for(_UPFRONT_RESERVED, _UPFRONT_MAX_STUBS)
     by_group: dict[str, list[_Item]] = {}
     for item in b.items:
         by_group.setdefault(item.group, []).append(item)
     for group in sorted(by_group, key=order.__getitem__):
-        if group in _STAGE_RESERVED:
-            reserve_for(frozenset({group}))
         items = by_group[group]
         if group in _TAIL_GROUPS:
             items = list(reversed(items))
         gcap = GROUP_CAPS.get(group)
         for item in items:
-            remaining += reserve.pop(id(item), 0)
             lines = item.lines
             width = len(_seg_label(item.doc.source.total_lines, item.doc.source.total_lines)) + 1
             header = len(_header(item)) + 1 + 2  # 항목 사이 빈 줄 몫
@@ -1019,11 +1009,11 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
             item.tail = group in _TAIL_GROUPS
             seq = list(reversed(item.candidates)) if item.tail else item.candidates
             step = -1 if item.tail else 1
-            # 항목 전체가 남은 예산·상한 안에 들어가면 생략 안내 줄 자리 없이 통째로 넣는다. 줄마다 생략 줄 자리를 남기는
-            # 아래 판정만 쓰면, 실제 비용으로 예약한 작은 항목(_full_cost < 안내 줄)이 자기 예약 안에서도 첫 줄을 못 넣고
-            # 위치 안내 줄마저 못 내는 일이 생긴다.
+            # 항목 전체가 남은 예산·상한 안에 들어가면 생략 안내 줄 자리 없이 통째로 넣는다(아래 줄 단위 판정은 줄마다 생략 줄
+            # 자리를 남겨, 딱 들어가는 항목도 꼬리를 잃는다). 원문 읽기로 회수할 수 없는 줄(READ_MAX_CHARS 초과)이 있으면 안 된다.
             full_text = sum(len(lines[n - 1]) + 1 for n in seq)
             if (_full_cost(item) <= remaining and (icap is None or full_text <= icap)
+                    and not any(len(lines[n - 1]) > READ_MAX_CHARS for n in seq)
                     and (gcap is None or group_used.get(group, 0) + full_text <= gcap)):
                 seq = []
                 chosen = list(item.candidates)
@@ -1041,9 +1031,13 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
                     limits.append("group_cap")
                 if need > remaining:
                     limits.append("budget")
+                # read_note(structured)로 회수할 수 없는 줄은 발췌로 내지 않는다 — 근거 위치·버전으로 다시 읽을 수 없는
+                # 줄을 정상 발췌처럼 주지 않는다. 생략 구간의 read는 전문 읽기 인자가 된다(_read_args).
+                if len(lines[n - 1]) > READ_MAX_CHARS:
+                    limits.append("line_too_long")
                 if limits:
                     alone = len(lines[n - 1])
-                    caps = [c for c in (icap, gcap, TEXT_MAX_CHARS) if c is not None]
+                    caps = [c for c in (icap, gcap, TEXT_MAX_CHARS, READ_MAX_CHARS) if c is not None]
                     reason = "line_too_long" if alone > min(caps) else limits[0]
                     break
                 chosen.append(n)
@@ -1155,6 +1149,16 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
                 out.append(f"- {src['source']} {src['path']}{where}: {src['state']}")
             if len(unchecked) > list_cap:
                 out.append(f"- 그 밖에 {len(unchecked) - list_cap}개 출처 — JSON sources_checked 참조")
+            # 고정부: 후속 기록 위치 — 발췌가 예산 때문에 빠져도 어디 있는지는 본문에 남는다(예약 없이)
+            follow_items = [i for i in b.items if i.section == "follow_ups"]
+            if follow_items:
+                out.append("- 후속 기록 위치 (발췌가 빠져도 남는다 — 원문은 read_note):")
+                for i in follow_items[:list_cap]:
+                    where = f"세션 {i.extra['session_rank']} " if i.extra.get("session_rank") else ""
+                    state = " · 명시적 없음" if i.extra.get("follow_up_state") == "explicit_none" else ""
+                    out.append(f"  - {i.id} {where}{i.group}{state} · {i.doc.rel} L{i.span[0]}-L{i.span[1]}")
+                if len(follow_items) > list_cap:
+                    out.append(f"  - 그 밖에 {len(follow_items) - list_cap}건 — JSON sections.follow_ups.items 참조")
             if include_items:
                 add_items(items_of("follow_ups"))
         elif key == "gaps":
@@ -1322,6 +1326,15 @@ def build(
 
     # 고정부(최악 길이 안내 줄 포함)를 먼저 잡고 남은 예산을 BUDGET_ORDER대로 나눈다
     # 목록이 길어 고정부만으로 상한을 넘으면 목록 줄 수를 줄인다(넘는 몫은 개수만) — 상한을 넘는 응답을 내지 않는다
+    # 원문 읽기 상한보다 긴 줄은 어떤 예산에서도 발췌하지 않는다(회수 불가) — 고정부를 재기 전에 정보 부족으로 남긴다
+    for item in b.items:
+        for n in item.candidates:
+            if len(item.lines[n - 1]) > READ_MAX_CHARS:
+                b.gap("line_exceeds_read_limit",
+                      f"{n}행이 {len(item.lines[n - 1])}자라 read_note(structured)의 줄 상한 {READ_MAX_CHARS}자를 넘는다 — 회수할 수 "
+                      "없어 발췌하지 않았다. 전문 읽기(read_note(rel_path))로만 확인할 수 있고 버전 확인이 없다."
+                      + (" 제약 줄이다(critical_omission)." if item.section == "constraints" else ""),
+                      path=item.doc.rel, lines=[n, n])
     # 후속 항목 판단은 예산 배정 뒤 본문 생략까지 반영해 다시 정한다(_with_text_omissions). 고정부 크기는 생략이 가장 많을 때의
     # 메시지로 잡는다 — 배정 뒤 메시지가 길어져 상한을 넘지 않게.
     n_follow = sum(1 for i in b.items if i.section == "follow_ups")
