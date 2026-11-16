@@ -1504,3 +1504,35 @@ def test_constraint_heading_over_empty_bullet_is_named_in_gap(tmp_path):
     lines = [l for l in resp["text"].splitlines() if l.startswith("- [constraint_section_empty]")]
     n = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md").index("### main 브랜치에 직접 push 금지") + 1
     assert len(lines) == 1 and f"L{n} ### main 브랜치에 직접 push 금지" in lines[0]
+
+
+def _open_loops_block(vault: Path, body: str) -> None:
+    _w(vault, "40_AgentMemory/05_OpenLoops.md", _fm(type="agent_memory", scope="global", updated_at=TODAY)
+       + "# OpenLoops\n\n" + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n" + body)
+
+
+def test_four_space_indented_hash_line_in_open_loops_is_content_not_heading(tmp_path):
+    """4칸 들여쓴 '#' 줄은 제목이 아니다(CommonMark) — headings_only로 빠지지 않고 항목으로 본문에 남는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
+    _open_loops_block(tmp_path, "    # 마이그레이션 재실행 필요\n")
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert [x["state"] for x in fu["sources_checked"] if x["source"] == "project_open_loops"] == ["items"]
+    assert "    # 마이그레이션 재실행 필요" in resp["text"]
+
+
+def test_heading_gaps_keep_count_in_text_and_full_list_in_json(tmp_path):
+    """제목 목록 gap은 건수를 먼저 적어 본문 400자 자름에도 건수가 남고, JSON headings에는 전체 목록이 있다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
+    names = [f"### 분류 {k} " + "가" * 120 for k in range(8)]
+    _open_loops_block(tmp_path, "\n\n".join(names) + "\n")
+    resp = _brief(tmp_path)
+    gap = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_headings_only")
+    ol = _file_lines(tmp_path, "40_AgentMemory/05_OpenLoops.md")
+    assert [h["line"] for h in gap["headings"]] == [ol.index(n) + 1 for n in names]
+    assert all(h["text"] == ol[h["line"] - 1] for h in gap["headings"])
+    line = next(l for l in resp["text"].splitlines() if l.startswith("- [follow_up_headings_only]"))
+    assert "제목 8개만 남았다" in line and "외 3개" in line

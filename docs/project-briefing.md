@@ -133,7 +133,7 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 OpenLoops 블록에 불릿 없이 하위 제목만 남았으면 `headings_only`(확인 불가)다. `update_open_loops`는 할 일을 `- ` 불릿으로만 쓰고
 `section=`의 `### 분류` 제목은 resolve 뒤에도 남긴다 — 그래서 제목만 남은 블록은 할 일을 다 지운 분류일 수도, 사람이 제목으로 적은
 할 일(`### 결제 웹훅 재시도 미해결`)일 수도 있다. 어느 쪽인지 근거가 없어 '있음'(`items`)으로도 '없음'(`block_empty`)으로도 보지 않고,
-`follow_up_headings_only` gap에 제목 줄 위치(최대 5개)를 남긴다. 불릿이 하나라도 남은 블록은 `items`이고 빈 분류 제목은 발췌 안에 그대로 보인다.
+`follow_up_headings_only` gap에 제목 수와 제목 줄 위치를 남긴다(본문은 5개·제목 40자, JSON `headings`에 전체 `{line, text}`). 불릿이 하나라도 남은 블록은 `items`이고 빈 분류 제목은 발췌 안에 그대로 보인다.
 Next Session은 자유 서식이라 본문 없는 하위 제목도 내용이다(`없음` 아래 `### …` 제목이 더 있으면 `items` — 명시적 없음이 아니다).
 내용을 거느린 하위 제목(`### 기타` 아래 `- 없음`)은 내용 줄로 세지 않는다.
 명시적 없음은 내용이 `없음·없다·해당 없음·none·n/a·na`(대소문자 무시, 앞 불릿·끝 마침표 제외) 한 줄일 때만이다 — "없음 — 단 실측은 남음"은 항목으로 본다.
@@ -145,7 +145,7 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 
 `sections[constraints].state`(Context.md 기준)와 `memory_rule_items`(기억의 적용 규칙 항목 수). state: `items`, `heading_empty`(제약 제목 아래가 알려진 빈 틀뿐 —
 본문 없는 하위 제목은 내용이라 `items`. 빈 틀만 남아 항목이 되지 않은 제약 제목은 `constraint_section_empty` gap 메시지에 줄 번호와 함께
-최대 5개 실린다 — `### main 브랜치에 직접 push 금지` 아래 빈 불릿처럼 제목 자체가 규칙일 수 있어서다. 규칙인지는 판정하지 않는다), `none_found`(제약 제목 절 없음 —
+건수와 함께 최대 5개 실린다(JSON `headings`에 전체) — `### main 브랜치에 직접 push 금지` 아래 빈 불릿처럼 제목 자체가 규칙일 수 있어서다. 규칙인지는 판정하지 않는다), `none_found`(제약 제목 절 없음 —
 다른 제목 아래 제약성 문장은 판정 안 함), `no_context`(Context.md 없음), `unknown`(Context.md 또는 그 폴더를 읽지 못함 →
 `critical_omission`), `not_evaluated`.
 
@@ -278,8 +278,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 | 독립 리뷰 6차 지적 2건의 회귀 — 16000자 넘는 줄 하나가 뒤 제약 줄까지 숨기고 그 구간을 전문 읽기로 뭉갬, 최악 길이 생략 줄 예약 때문에 들어갈 제약 줄이 잘림 | `test_over_limit_line_does_not_hide_later_constraints_or_widen_their_read`, `test_line_over_read_limit_is_never_excerpted[*]`(뒤 제약 표시·비연속 구간), `test_budget_cut_uses_exact_omission_note_length`(경계 900자를 1자 단위로 훑음) (고치기 전 코드에서 5건 실패 확인). 리뷰어 퍼즈 220 시드 — 예산 순서 위반·긴 줄 뒤 누락·발췌 회수 실패·이어읽기 불일치·상한 초과 0건 | 통과 |
 | 독립 리뷰 7차 지적(BLOCK 1건·비차단 3건)의 회귀 — 본문 없이 제목만 있는 규칙·할 일을 빈 틀로 지워 제약이 `heading_empty`, 후속이 "없음"으로 바뀜(차단), 1~3칸 들여쓴 제약 제목을 못 알아봐 맥락 상한에 잘림, 발췌가 있는 결정에 고정부 목록 줄이 없음, 문서의 `na`·`line_exceeds_read_limit`·`sources_checked` 상태 누락 | `test_heading_only_rules_are_constraints_not_empty_scaffold`, `test_heading_only_follow_ups_are_not_reported_as_none`, `test_indented_constraint_heading_is_recognised_late_in_long_context`, `test_decisions_keep_fixed_list_line_when_excerpt_is_cut` (고치기 전 코드에서 4건 실패 확인), 정리 규칙을 좁히기만 했다는 보호 검사 `test_scaffold_emptied_constraint_heading_stays_heading_empty`·`test_heading_over_explicit_none_keeps_explicit_none` | 통과 |
 | 병합 리뷰 지적(BLOCK) 회귀 — 하위 절만 거느린 상위 제목("운영 서버에서만 적용" / "로컬 환경")을 정리하면서 두 `### 제약`이 적용 범위 없이 실림 | `test_parent_heading_scope_stays_with_constraints`(리뷰 원문 사례), `test_heading_path_lists_every_enclosing_level_but_not_doc_title`, `test_memory_rule_keeps_parent_heading_inside_its_block_only`, `test_heading_path_line_is_counted_in_text_budget` (고치기 전 코드에서 4건 실패 확인). 리뷰어 퍼즈 150 vault 재실행 — 상한·발췌 회수·예산 순서 위반 0건 | 통과 |
-| 독립 리뷰 8차 지적 — `update_open_loops(section=)`로 쓰고 resolve로 다 지운 뒤 남은 `### 분류` 제목을 후속 항목(`has_items`)으로 보고(차단, 63cf1bb 회귀), 빈 불릿 위 제목 규칙이 본문에서 사라짐(비차단) | `test_open_loops_category_left_after_resolve_is_not_reported_as_open_work`(제품 쓰기 함수로 재현), `test_heading_only_follow_ups_are_not_reported_as_none`(OpenLoops 제목만 → `headings_only`로 갱신), `test_constraint_heading_over_empty_bullet_is_named_in_gap` (고치기 전 코드에서 3건 실패 확인). 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 809 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 독립 리뷰 8차 지적 — `update_open_loops(section=)`로 쓰고 resolve로 다 지운 뒤 남은 `### 분류` 제목을 후속 항목(`has_items`)으로 보고(차단, 63cf1bb 회귀), 빈 불릿 위 제목 규칙이 본문에서 사라짐(비차단) | `test_open_loops_category_left_after_resolve_is_not_reported_as_open_work`(제품 쓰기 함수로 재현), `test_heading_only_follow_ups_are_not_reported_as_none`(OpenLoops 제목만 → `headings_only`로 갱신), `test_constraint_heading_over_empty_bullet_is_named_in_gap` (고치기 전 코드에서 3건 실패 확인). 퍼즈 150·40 vault 재실행 위반 0건. 재검토 비차단 지적 — 4칸 들여쓴 `#` 줄을 제목으로 봄, 본문 gap 400자 자름에 "외 N개"가 잘림: `test_four_space_indented_hash_line_in_open_loops_is_content_not_heading`, `test_heading_gaps_keep_count_in_text_and_full_list_in_json` (고치기 전 2건 실패 확인) | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 811 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
@@ -344,6 +344,8 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
   중요도를 판정하지 않는다.
 - 제약 판별은 제목 단어 목록에 의존한다. 목록에 없는 제목(예: "운영 메모") 아래 제약은 맥락으로 간다 — `no_constraint_heading`
   gap이 그 가능성을 알린다.
+- OpenLoops 블록에 빈 분류 제목과 사람이 손으로 쓴 `- 없음` 불릿이 함께 있으면, 불릿이 남은 블록이라 `items`다(빈 분류를 할 일로
+  보지는 않지만 블록 상태는 `has_items`). `update_open_loops`는 모든 불릿에 날짜를 붙여 쓰므로 이 형태는 손으로 고친 경우뿐이다.
 - 본문도 하위 제목도 없는 제약 제목 한 줄(`## 제약 / 원칙`만 있고 다음이 같은 단계 제목)은 제목으로 쓴 규칙(`### main 브랜치에 직접
   push 금지`)과 구조로 구분할 수 없어 `items`(제목 한 줄 항목)로 둔다. `heading_empty`는 알려진 빈 틀로 비게 된 경우만이다 —
   규칙을 빈 틀로 숨기는 쪽보다 빈 제목을 항목으로 보여주는 쪽을 택했다.

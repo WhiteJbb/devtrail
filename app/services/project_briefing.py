@@ -346,9 +346,9 @@ def _segments(nums: list[int]) -> list[tuple[int, int]]:
     return out
 
 
-def _content_lines(lines: list[str], nums: list[int]) -> list[str]:
-    """`_clean`이 남긴 줄 중 내용 줄. 아래에 내용을 거느린 제목은 빼고, 본문 없이 남은 제목(제목으로 쓴 규칙·할 일)은 센다."""
-    out: list[str] = []
+def _content_nums(lines: list[str], nums: list[int]) -> list[int]:
+    """`_clean`이 남긴 줄 중 내용 줄 번호. 아래에 내용을 거느린 제목은 빼고, 본문 없이 남은 제목(제목으로 쓴 규칙·할 일)은 센다."""
+    out: list[int] = []
     for i, n in enumerate(nums):
         text = lines[n - 1].strip()
         if not text:
@@ -359,8 +359,19 @@ def _content_lines(lines: list[str], nums: list[int]) -> list[str]:
             sub = _heading(lines[below - 1]) if below else None
             if below and not (sub and sub[0] <= h[0]):
                 continue
-        out.append(text)
+        out.append(n)
     return out
+
+
+def _content_lines(lines: list[str], nums: list[int]) -> list[str]:
+    return [lines[n - 1].strip() for n in _content_nums(lines, nums)]
+
+
+def _heading_list(lines: list[str], nums: list[int]) -> tuple[str, list[dict[str, Any]]]:
+    """gap에 싣는 제목 목록 — 본문용 짧은 목록(5개·제목 40자)과 JSON용 전체 목록(줄 번호·제목)."""
+    full = [{"line": n, "text": evidence_search._clip(lines[n - 1].strip(), _FIELD_CHARS)} for n in nums]
+    short = ", ".join(f"L{n} {evidence_search._clip(lines[n - 1].strip(), 40)}" for n in nums[:5])
+    return short + (f" 외 {len(nums) - 5}개" if len(nums) > 5 else ""), full
 
 
 def _has_content(lines: list[str], nums: list[int]) -> bool:
@@ -490,7 +501,7 @@ def _collect_context(b: _Build) -> None:
     starts += heads
     constraint_heads = 0
     constraint_items = 0
-    emptied_rules: list[str] = []  # 빈 틀만 남아 항목이 되지 않은 제약 제목 — 제목 자체가 규칙일 수 있어 본문에 위치를 남긴다
+    emptied_rules: list[int] = []  # 빈 틀만 남아 항목이 되지 않은 제약 제목 — 제목 자체가 규칙일 수 있어 본문에 위치를 남긴다
     for i, (n, level, text, is_constraint) in enumerate(starts):
         end = starts[i + 1][0] - 1 if i + 1 < len(starts) else total
         if is_constraint:
@@ -502,7 +513,7 @@ def _collect_context(b: _Build) -> None:
             if not any(lines[m - 1].strip() for m in range(n, end + 1)):
                 continue  # 빈 줄뿐인 머리말
             if is_constraint:
-                emptied_rules.append(f"L{n} {evidence_search._clip(lines[n - 1].strip(), 80)}")
+                emptied_rules.append(n)
             # 빈 틀·제목만 있는 절은 항목을 만들지 않고 정리 목록에만 남긴다. 하위 절만 거느린 상위 제목은 비어 있는 게
             # 아니라 하위 항목의 적용 범위다 — 하위 항목의 heading_path로 실리고, 정리 사유도 따로 적는다.
             parent = bool(level and i + 1 < len(starts) and starts[i + 1][1] > level
@@ -518,9 +529,10 @@ def _collect_context(b: _Build) -> None:
         b.states["constraints"] = "items"
     elif constraint_heads:
         b.states["constraints"] = "heading_empty"
-        b.gap("constraint_section_empty", "Context.md에 제약 제목 절은 있지만 내용이 비어 있다(빈 틀). 빈 틀만 남은 제약 제목: "
-              + ", ".join(emptied_rules[:5]) + (f" 외 {len(emptied_rules) - 5}개" if len(emptied_rules) > 5 else "")
-              + " — 제목 자체가 규칙인지는 판정하지 않았다.", path=doc.rel)
+        # 건수를 먼저 적는다 — 본문은 gap 메시지를 400자에서 자르므로 목록이 잘려도 건수는 남는다. 전체 목록은 JSON headings.
+        short, full = _heading_list(lines, emptied_rules)
+        b.gap("constraint_section_empty", f"Context.md에 제약 제목 절은 있지만 내용이 비어 있다(빈 틀). 빈 틀만 남은 제약 제목 "
+              f"{len(full)}개 — 제목 자체가 규칙인지는 판정하지 않았다: {short}", path=doc.rel, headings=full)
     else:
         b.states["constraints"] = "none_found"
         b.gap("no_constraint_heading",
@@ -652,9 +664,9 @@ def _collect_memory(b: _Build) -> None:
             # 내용이 "없음" 한 줄뿐이면 Next Session과 같이 명시적 없음 — 이 블록에만 해당하고, 원문 발췌는 남긴다.
             # update_open_loops는 할 일을 불릿으로만 쓰고 `### 분류` 제목은 resolve 뒤에도 남긴다. 불릿 없이 제목만 남은 블록은
             # 다 비운 분류인지 제목으로 적은 할 일인지 근거가 없다 — '있음'도 '없음'도 아닌 확인 불가(headings_only)로 둔다.
-            content = _content_lines(doc.source.lines, keep)
+            content = _content_nums(doc.source.lines, keep)  # 제목 판정은 원래 줄로 한다(4칸 들여쓰기는 제목이 아니다)
             state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
-                     else "headings_only" if content and all(_heading(line) for line in content)
+                     else "headings_only" if content and all(_heading(doc.source.lines[n - 1]) for n in content)
                      else "items" if content
                      else "empty" if any(r == "empty_scaffolding" for _, r in cleaned) else "block_empty")
             item = _add_item(b, "follow_ups", "project_open_loops", "프로젝트 Open Loops", doc, (unit.start, unit.end),
@@ -669,11 +681,10 @@ def _collect_memory(b: _Build) -> None:
                       path=doc.rel, lines=[unit.start, unit.end])
             elif state == "headings_only":
                 heads = [n for n in keep if doc.source.lines[n - 1].strip() and _heading(doc.source.lines[n - 1])]
-                listed = ", ".join(f"L{n} {evidence_search._clip(doc.source.lines[n - 1].strip(), 80)}" for n in heads[:5])
-                b.gap("follow_up_headings_only", f"OpenLoops의 이 프로젝트 블록에 불릿 항목 없이 제목만 남았다({listed}"
-                      + (f" 외 {len(heads) - 5}개" if len(heads) > 5 else "") + ") — 항목을 다 지운 분류 제목인지 제목으로 적은 "
-                      "할 일인지 판정하지 않았다. '없음'으로도 '있음'으로도 보지 않았다.",
-                      path=doc.rel, lines=[unit.start, unit.end])
+                short, full = _heading_list(doc.source.lines, heads)
+                b.gap("follow_up_headings_only", f"OpenLoops의 이 프로젝트 블록에 불릿 항목 없이 제목 {len(full)}개만 남았다 — 항목을 "
+                      "다 지운 분류 제목인지 제목으로 적은 할 일인지 판정하지 않았다('없음'·'있음' 모두 아님): " + short,
+                      path=doc.rel, lines=[unit.start, unit.end], headings=full)
         else:
             keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
             if _has_content(doc.source.lines, keep):
