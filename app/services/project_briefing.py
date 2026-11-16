@@ -112,7 +112,8 @@ _SCAFFOLD_LINES = frozenset({
     "_Fill this note with durable context that future agents should know._",
 })
 _EMPTY_BULLET_RE = re.compile(r"^(?:[-*+]|\d+[.)])$")
-_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
+# ATX 제목 — CommonMark처럼 들여쓰기 0~3칸까지 제목이다(펜스 규칙과 같은 기준). 들여쓴 제약 제목을 놓치면 맥락으로 잘린다.
+_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 # 제목만 본다. 이 단어가 없는 제목 아래의 제약성 문장은 "맥락"으로 남기고, 제약으로 승격하지 않는다.
@@ -290,23 +291,34 @@ def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tup
             cleaned.append((n, "repeated_title"))
             continue
         keep.append(n)
-    # 내용 없이 제목만 남은 절 — 같거나 높은 단계 제목 전까지 내용 줄이 없으면 그 제목도 뺀다
-    heads = {n: h for n in keep if n not in fenced and (h := _heading(lines[n - 1]))}
+    # 내용 없이 제목만 남은 절 — 알려진 정리(빈 틀·marker·반복 제목)로 비게 된 절, 그리고 하위 제목만 거느린 상위 제목
+    # (하위 절이 다른 항목으로 갈라진 경우 포함)만 뺀다. 원문부터 본문 없이 제목만 있는 절은 제목 자체가 내용(제목으로 쓴
+    # 규칙·할 일)일 수 있어 남긴다 — 빼면 제약이 '빈 틀'로, 후속 항목이 '없음'으로 둔갑한다.
+    removed = {n for n, _ in cleaned}
+    heads = {n: h for n in range(start, end + 1) if n not in fenced and (h := _heading(lines[n - 1]))}
     drop: set[int] = set()
-    for i, n in enumerate(keep):
-        if n not in heads:
-            continue
+    for n in sorted((n for n in keep if n in heads), reverse=True):  # 하위 절을 먼저 판정한다
         level = heads[n][0]
-        has_content = False
-        for m in keep[i + 1:]:
-            if m in heads:
-                if heads[m][0] <= level:
-                    break
+        has_content = emptied = False
+        boundary = None
+        for m in range(n + 1, end + 1):
+            if m in heads and heads[m][0] <= level:
+                boundary = m
+                break
+            if m in removed or m in drop:
+                emptied = True
                 continue
             if lines[m - 1].strip():
-                has_content = True
+                has_content = True  # 남은 하위 제목도 내용이다
                 break
-        if not has_content:
+        if has_content:
+            continue
+        container = False
+        if boundary is None:
+            nxt = next((m for m in range(end + 1, len(lines) + 1) if lines[m - 1].strip()), None)
+            sub = _heading(lines[nxt - 1]) if nxt else None
+            container = bool(sub and sub[0] > level)
+        if emptied or container:
             drop.add(n)
     if drop:
         cleaned.extend((n, "empty_section") for n in sorted(drop))
@@ -334,12 +346,29 @@ def _segments(nums: list[int]) -> list[tuple[int, int]]:
     return out
 
 
+def _content_lines(lines: list[str], nums: list[int]) -> list[str]:
+    """`_clean`이 남긴 줄 중 내용 줄. 아래에 내용을 거느린 제목은 빼고, 본문 없이 남은 제목(제목으로 쓴 규칙·할 일)은 센다."""
+    out: list[str] = []
+    for i, n in enumerate(nums):
+        text = lines[n - 1].strip()
+        if not text:
+            continue
+        h = _heading(lines[n - 1])
+        if h:
+            below = next((m for m in nums[i + 1:] if lines[m - 1].strip()), None)
+            sub = _heading(lines[below - 1]) if below else None
+            if below and not (sub and sub[0] <= h[0]):
+                continue
+        out.append(text)
+    return out
+
+
 def _has_content(lines: list[str], nums: list[int]) -> bool:
-    return any(lines[n - 1].strip() and not _heading(lines[n - 1]) for n in nums)
+    return bool(_content_lines(lines, nums))
 
 
 def _explicit_none(lines: list[str], nums: list[int]) -> bool:
-    content = [lines[n - 1].strip() for n in nums if lines[n - 1].strip() and not _heading(lines[n - 1])]
+    content = _content_lines(lines, nums)
     if len(content) != 1:
         return False
     text = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", content[0]).strip().rstrip(".").strip()
@@ -1156,7 +1185,11 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
             if not b.decisions:
                 out.append("- 기록된 결정 없음")
             for d in b.decisions:
-                if d.get("state") != "excerpt":
+                if d.get("state") == "excerpt":
+                    # 발췌가 예산으로 빠져도 어떤 결정이 있었는지는 본문에 남는다 (세션 목록 줄과 같은 고정부)
+                    out.append(f"- {d['item']}: {c(d.get('title') or '(제목 없음)')} · {d['status']} · "
+                               f"{c(d.get('date') or '날짜 없음', 40)} · {d['path']}")
+                else:
                     out.append(f"- {c(d.get('title') or '(제목 미표시 — 검증 전)')} · {d['status']} · "
                                f"{c(d.get('date') or '날짜 없음', 40)} · {d['path']} · "
                                f"발췌 없음({d.get('state')}) → read_note(\"{d['path']}\")")

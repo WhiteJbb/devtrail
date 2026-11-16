@@ -1309,3 +1309,89 @@ def test_budget_cut_uses_exact_omission_note_length(tmp_path, monkeypatch):
         assert len(pb._render_item(trial)) + 3 + label_slack > budget, budget
         hits += 1
     assert hits > 0  # 예산 때문에 잘리는 경계를 실제로 지나갔다
+
+
+# ── 독립 리뷰 7차 지적 회귀 — 제목으로 쓴 규칙·할 일, 들여쓴 제목, 결정 고정부 목록 줄 ─────────────────
+
+
+def test_heading_only_rules_are_constraints_not_empty_scaffold(tmp_path):
+    """본문 없이 제목만 있는 규칙(`### …금지`)은 내용이다 — 빈 틀(heading_empty)로 지우지 않는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 배경\n\n- 배경 내용\n\n## 제약 / 원칙\n\n"
+                   "### main 브랜치에 직접 push 금지\n\n### 운영 DB 스키마 변경은 사용자 승인 후에만\n\n## 관련 문서\n\n- 링크\n")
+    resp = _brief(tmp_path)
+    cons = _section(resp, "constraints")
+    assert cons["state"] == "items"
+    assert "constraint_section_empty" not in {g["code"] for g in _items(resp, "gaps")}
+    shown = [seg["text"] for it in cons["items"] for seg in it["segments"]]
+    assert "### main 브랜치에 직접 push 금지" in shown
+    assert "### 운영 DB 스키마 변경은 사용자 승인 후에만" in shown
+    assert "main 브랜치에 직접 push 금지" in resp["text"] and "운영 DB 스키마 변경" in resp["text"]
+    # 하위 절만 거느린 상위 제목은 따로 보여줄 내용이 없어 정리 목록에 남는다
+    assert {"제약 / 원칙"} <= {c["heading"] for c in _section(resp, "context")["cleaned_sections"]}
+
+
+def test_scaffold_emptied_constraint_heading_stays_heading_empty(tmp_path):
+    """알려진 빈 틀(빈 불릿)만 있던 제약 절은 여전히 heading_empty — 정리 규칙을 좁혔지 없앤 게 아니다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 배경\n\n- 배경 내용\n\n## 제약 / 원칙\n\n- \n\n### 세부\n\n- \n")
+    resp = _brief(tmp_path)
+    assert _section(resp, "constraints")["state"] == "heading_empty"
+    assert "constraint_section_empty" in {g["code"] for g in _items(resp, "gaps")}
+
+
+def test_heading_only_follow_ups_are_not_reported_as_none(tmp_path):
+    """할 일을 제목으로 적은 Next Session·OpenLoops 블록을 '명시된 후속 작업 없음'으로 판정하지 않는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00",
+             "# Process\n\n## What Changed\n\n- x\n\n## Next Session\n\n없음\n\n### 배포 스크립트 롤백 확인 필요\n")
+    _w(tmp_path, "40_AgentMemory/05_OpenLoops.md", _fm(type="agent_memory", scope="global", updated_at=TODAY)
+       + "# OpenLoops\n\n" + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n### 결제 웹훅 재시도 미해결\n")
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert fu["state"] == "has_items"
+    states = {s["source"]: s["state"] for s in fu["sources_checked"]}
+    assert states == {"next_session": "items", "project_open_loops": "items"}
+    assert "### 배포 스크립트 롤백 확인 필요" in resp["text"] and "### 결제 웹훅 재시도 미해결" in resp["text"]
+
+
+def test_heading_over_explicit_none_keeps_explicit_none(tmp_path):
+    """내용을 거느린 하위 제목은 내용 줄로 세지 않는다 — `### 기타` 아래 '없음' 한 줄은 그대로 명시적 없음이다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("### 기타\n\n- 없음"))
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert [s["state"] for s in fu["sources_checked"] if s["source"] == "next_session"] == ["explicit_none"]
+
+
+def test_indented_constraint_heading_is_recognised_late_in_long_context(tmp_path):
+    """CommonMark처럼 0~3칸 들여쓴 제목도 제목이다 — 긴 Context 뒤의 들여쓴 제약 절이 맥락 상한에 잘려 사라지지 않는다."""
+    filler = "".join(f"- 배경 {i:03d} " + "가" * 60 + "\n" for i in range(110))
+    _ctx(tmp_path, "\n# Devtrail\n\n## 배경\n\n" + filler + "\n   ## 제약 / 원칙\n\n- main 브랜치에 직접 push 금지\n")
+    resp = _brief(tmp_path)
+    cons = _section(resp, "constraints")
+    assert cons["state"] == "items"
+    assert "- main 브랜치에 직접 push 금지" in resp["text"]
+    lines = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md")
+    for seg in (s for it in cons["items"] for s in it["segments"]):
+        assert seg["text"] == "\n".join(lines[seg["start_line"] - 1:seg["end_line"]])
+    # 4칸 이상 들여쓴 '#' 줄은 제목이 아니다
+    assert pb._heading("    ## 코드") is None and pb._heading("   ## 제목") == (2, "제목")
+
+
+def test_decisions_keep_fixed_list_line_when_excerpt_is_cut(tmp_path):
+    """제약이 예산을 다 써서 결정 발췌가 빠져도 결정 제목·상태·경로는 고정부 목록 줄로 본문에 남는다."""
+    rules = "".join(f"- 규칙 {i:04d} " + "나" * 80 + "\n" for i in range(260))
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + rules)
+    for i in range(2):
+        _w(tmp_path, f"60_Candidates/Decisions/dec{i}.md",
+           _fm(type="candidate", candidate_type="decision", title=f"결정제목{i}", project="Devtrail",
+               status="candidate", created_at=f"2026-11-0{i + 1}") + f"# 결정제목{i}\n\n## 결정\n\n- 결정 내용 {i}\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 다음 일"))
+    resp = _brief(tmp_path)
+    assert resp["critical_omission"] is True and len(resp["text"]) <= pb.TEXT_MAX_CHARS
+    decisions = _section(resp, "recent")["decisions"]
+    assert [d["state"] for d in decisions] == ["excerpt", "excerpt"]
+    block = resp["text"][resp["text"].index("### 결정"):resp["text"].index("### 세션 결과")]
+    for d in decisions:
+        assert f"- {d['item']}: {d['title']} · candidate · {d['date']} · {d['path']}" in block
+    assert "- 결정 내용" not in resp["text"]  # 발췌 자체는 예산 순서대로 빠졌다
