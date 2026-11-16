@@ -58,6 +58,11 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
   빠진 줄은 `cleaned`에 이유와 함께 남는다.
 - 세션 항목은 `session_rank, session_id, handoff_type, recorded_at{value, source}, host, agent`, 결정 항목은
   `decision_status(candidate|promoted), recorded_at`, 메모리 블록은 `block_evidence`(marker 근거)를 더 단다.
+- Context·메모리 블록 항목은 감싸는 상위 제목이 있으면 `heading_path: [{line, level, text}]`(바깥부터, 원문 줄 번호·단계·제목
+  그대로)를 단다. 본문에는 머리줄 바로 아래 `  ⤷ 상위 제목: L10 ## 운영 서버에서만 적용 › L14 ### …` 한 줄로 실리고 머리줄과
+  같이 예산에 잡힌다. 하위 절만 거느려 따로 항목이 되지 않는 상위 제목("운영 서버에서만 적용" 아래 `### 제약`)의 적용 범위가 제약에서
+  떨어지지 않게 하기 위해서다. 문서 제목(H1 반복 제목)·메모리 블록 제목(`## <프로젝트>`)과 블록 밖 제목은 넣지 않는다 — 블록 귀속
+  경계를 넘지 않는다. 결정·세션 항목은 정해진 절(`## 결정`·`## Next Session`…)이라 달지 않는다.
 - 다시 읽기: `read_note(path, structured=True, start_line, max_lines, expected_version=source_version)`. 그 사이 파일이
   바뀌었으면 `version_mismatch`로 거절된다.
 
@@ -157,14 +162,15 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 - `repeated_title`: 이미 항목 이름으로 드러난 제목 — 문서 H1(`# Process`, `# Plan`, `# OpenLoops`, Context 제목),
   `## Next Session`·`## What Changed`·`## Goal`·`## 결정`, OpenLoops의 `## <프로젝트>`
 - `empty_section`: 위를 빼고 나니 내용 없이 제목만 남은 절, 그리고 하위 제목만 거느린 상위 제목(하위 절이 다른 항목으로
-  갈라진 경우 포함 — 하위 제목이 내용으로 남는다). **원문부터 본문 없이 제목만 있는 절은 지우지 않는다** — 제목 자체가 규칙·할 일
+  갈라진 경우 포함 — 하위 제목이 내용으로 남고, 상위 제목은 하위 항목의 `heading_path`로 실린다). **원문부터 본문 없이 제목만 있는 절은 지우지 않는다** — 제목 자체가 규칙·할 일
   (`### main 브랜치에 직접 push 금지`)일 수 있어, 지우면 제약이 `heading_empty`로, 후속 항목이 "없음"으로 바뀐다.
 
 제목은 CommonMark ATX 규칙처럼 들여쓰기 0~3칸까지 인정한다(4칸 이상은 제목이 아니다).
 코드 블록 안 줄은 건드리지 않고 제목으로도 보지 않는다. 코드 블록 판정은 CommonMark 펜스 규칙을 따른다 — 여는 펜스는
 들여쓰기 0~3칸의 ` 또는 ~ 3개 이상, 닫는 펜스는 **같은 문자·여는 길이 이상**이고 뒤에 공백 말고는 없어야 한다
 (`~~~markdown` 블록 안의 단독 ``` 줄은 블록을 닫지 않는다). 제목 탐지·정리·`unclosed_code_fence` 판정이 같은 규칙을 쓴다. 템플릿과 비슷하게 생긴 사용자 문장(`_(직접 쓴 메모)_`), 모르는 제목과 그 내용은 남는다.
-빈 틀뿐인 Context 절은 항목을 만들지 않고 `sections[context].cleaned_sections`에 남긴다.
+빈 틀뿐인 Context 절은 항목을 만들지 않고 `sections[context].cleaned_sections`에 남긴다(`reason: empty_section`). 하위 절만
+거느린 상위 제목은 `reason: parent_heading`으로 남고, 그 제목은 하위 항목의 `heading_path`·본문 `상위 제목` 줄로 실린다.
 
 ## 표시 순서와 예산 — text 20000자
 
@@ -266,7 +272,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 | 병합 리뷰 4차(BLOCK) 지적 3건의 회귀 — 위치 안내·발췌 예약이 제약 예산을 먼저 가져감(예약 제거, 후속 위치는 고정부 목록), 16000자 넘는 줄을 회수 불가 발췌로 반환, 이어읽기 정보가 16000자 상한을 무시 | `test_constraint_that_fits_is_never_cut_for_later_stages`(고정부 뒤 남은 예산 = 제약 전체 비용으로 직접 재현), `test_line_over_read_limit_is_never_excerpted[16001/17000/19000]`(모든 발췌를 structured `read_note`로 회수), `test_read_continues_matches_actual_read_note_paging[*]`(실제 `read_note`의 end_line·next와 비교), `test_small_follow_up_keeps_location_*`, `test_follow_ups_keep_a_location_line_*` (고치기 전 코드에서 12건 실패 확인). 퍼즈 200 시드 — 모든 발췌가 structured 읽기(페이지 이어읽기)로 원문과 일치, 생략 440건의 `first_read_end_line`·`read_continues`가 실제 읽기와 일치 | 통과 |
 | 독립 리뷰 6차 지적 2건의 회귀 — 16000자 넘는 줄 하나가 뒤 제약 줄까지 숨기고 그 구간을 전문 읽기로 뭉갬, 최악 길이 생략 줄 예약 때문에 들어갈 제약 줄이 잘림 | `test_over_limit_line_does_not_hide_later_constraints_or_widen_their_read`, `test_line_over_read_limit_is_never_excerpted[*]`(뒤 제약 표시·비연속 구간), `test_budget_cut_uses_exact_omission_note_length`(경계 900자를 1자 단위로 훑음) (고치기 전 코드에서 5건 실패 확인). 리뷰어 퍼즈 220 시드 — 예산 순서 위반·긴 줄 뒤 누락·발췌 회수 실패·이어읽기 불일치·상한 초과 0건 | 통과 |
 | 독립 리뷰 7차 지적(BLOCK 1건·비차단 3건)의 회귀 — 본문 없이 제목만 있는 규칙·할 일을 빈 틀로 지워 제약이 `heading_empty`, 후속이 "없음"으로 바뀜(차단), 1~3칸 들여쓴 제약 제목을 못 알아봐 맥락 상한에 잘림, 발췌가 있는 결정에 고정부 목록 줄이 없음, 문서의 `na`·`line_exceeds_read_limit`·`sources_checked` 상태 누락 | `test_heading_only_rules_are_constraints_not_empty_scaffold`, `test_heading_only_follow_ups_are_not_reported_as_none`, `test_indented_constraint_heading_is_recognised_late_in_long_context`, `test_decisions_keep_fixed_list_line_when_excerpt_is_cut` (고치기 전 코드에서 4건 실패 확인), 정리 규칙을 좁히기만 했다는 보호 검사 `test_scaffold_emptied_constraint_heading_stays_heading_empty`·`test_heading_over_explicit_none_keeps_explicit_none` | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 803 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 병합 리뷰 지적(BLOCK) 회귀 — 하위 절만 거느린 상위 제목("운영 서버에서만 적용" / "로컬 환경")을 정리하면서 두 `### 제약`이 적용 범위 없이 실림 | `test_parent_heading_scope_stays_with_constraints`(리뷰 원문 사례), `test_heading_path_lists_every_enclosing_level_but_not_doc_title`, `test_memory_rule_keeps_parent_heading_inside_its_block_only`, `test_heading_path_line_is_counted_in_text_budget` (고치기 전 코드에서 4건 실패 확인). 리뷰어 퍼즈 150 vault 재실행 — 상한·발췌 회수·예산 순서 위반 0건 | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 807 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
@@ -279,17 +286,17 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 
 | 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | 확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission | 보존 제약·맥락·후속 기본→새 | 예산으로 준 항목(새) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 일반 | 7 | 5275→9001 | 6295→41974 | 7→7 | 0→7 | 6→1 | 8173→41974 | 1.0→3.9 | False | c2/2 x2/2 f3/3→c2/2 x2/2 f3/3 | - |
-| 긴 Context 후반 제약 | 3 | 8993→12386 | 9860→43974 | 2→3 | 0→3 | 3→1 | 32394→43974 | 0.7→3.7 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
-| 이전 세션의 긴 Next Session | 2 | 5512→8926 | 6327→37245 | 0→2 | 0→2 | 3→1 | 8615→37245 | 0.7→2.9 | False | f0/2→f2/2 | - |
-| 제약만 2만 자 초과 | 2 | 6127→19922 | 6702→57074 | 1→1 | 0→1 | 2→2 | 32108→64964 | 0.5→3.5 | True | c1/2→c1/2 | constraints 1, recent 6, follow_ups 3 |
-| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19765 | 13221→60110 | 6→7 | 0→7 | 6→1 | 27853→60110 | 0.9→4.3 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
+| 일반 | 7 | 5275→9001 | 6295→41975 | 7→7 | 0→7 | 6→1 | 8173→41975 | 1.0→4.0 | False | c2/2 x2/2 f3/3→c2/2 x2/2 f3/3 | - |
+| 긴 Context 후반 제약 | 3 | 8993→12386 | 9860→43975 | 2→3 | 0→3 | 3→1 | 32394→43975 | 0.7→4.2 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
+| 이전 세션의 긴 Next Session | 2 | 5512→8926 | 6327→37246 | 0→2 | 0→2 | 3→1 | 8615→37246 | 0.7→3.0 | False | f0/2→f2/2 | - |
+| 제약만 2만 자 초과 | 2 | 6127→19922 | 6702→57075 | 1→1 | 0→1 | 2→2 | 32108→64965 | 0.5→3.5 | True | c1/2→c1/2 | constraints 1, recent 6, follow_ups 3 |
+| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19765 | 13221→60111 | 6→7 | 0→7 | 6→1 | 27853→60111 | 1.0→4.4 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
 | init-project 템플릿 | 1 | 477→991 | 630→5136 | 1→1 | 0→1 | 2→1 | 969→5136 | 0.2→0.5 | False | c1/1→c1/1 | - |
 
 읽는 법:
 
-- **더 길고 느리다.** text는 1.4~3.3배, 응답 JSON 전체는 4.5~8.5배, 조립 시간은 약 2.5~7배(밀리초 단위)다.
-  "본문 예산 초과" 사례는 응답 JSON이 60110자로 `response_large` 경고(60000자) 기준을 넘는다 — 줄이지 않고 경고로 드러낸다.
+- **더 길고 느리다.** text는 1.4~3.3배, 응답 JSON 전체는 4.5~8.5배, 조립 시간은 약 2.5~7배(밀리초 단위, 실행마다 흔들린다)다.
+  "본문 예산 초과" 사례는 응답 JSON이 60111자로 `response_large` 경고(60000자) 기준을 넘는다 — 줄이지 않고 경고로 드러낸다.
   MCP 응답은 JSON 전체가 클라이언트 컨텍스트에 들어가므로 이 크기는 실제 비용이다. 성능 개선을 주장하지 않는다.
 - "확인 문자"는 새 쪽이 오히려 크다 — 기본 briefing은 목표 줄 파일을 전문으로 더 읽어도 structured 응답 하나보다 작은 경우가
   많다. 새 응답이 줄이는 것은 호출 수와 줄 번호를 직접 세는 수고이고, 글자 수가 아니다.
@@ -299,6 +306,8 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
   가 같은 구성으로 두 순서를 비교한다). 기본 briefing은 최신 Process 밖 Next Session을 400자로 잘라 후속 1개를 놓친다.
 - "제약만 2만 자 초과" 사례는 제약이 고정부 뒤 예산을 모두 쓰고, 후속·최근 발췌는 예산 때문에 빠진다(예산 순서 그대로). 후속 기록의
   위치는 고정부 `후속 기록 위치` 목록에 남고 후속 판단은 "후속 작업 유무를 확인하지 못한 기록 있음"을 붙인다.
+- 평가 fixture에는 하위 절만 거느린 상위 제목이 없어 `상위 제목` 줄은 text에 더해지지 않았다(응답은 정리 사유 이름 차이로 1자 늘었다).
+  상위 제목이 있는 vault에서는 그 줄만큼 머리줄이 길어지고 발췌 예산이 준다.
 - 결정 목록 줄(발췌가 있는 결정 포함)이 고정부에 들어가 직전 측정보다 "일반" text가 375자 늘었고, "본문 예산 초과" 사례는 그만큼
   최근 결과(What Changed) 발췌가 3줄 더 빠졌다 — 예산 순서대로 최근 결과 단계에서 줄어든 것이다.
 - 빈 틀뿐인 템플릿 Context도 새 응답이 더 길다 — 빈 틀은 지웠지만 매칭·상태·출처 줄이 더 붙는다.
@@ -311,7 +320,7 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 
 ### 응답 크기의 구성 — 무엇이 중복이고 왜 남겼나
 
-"일반" 사례(응답 41974자)의 JSON 직렬화 크기: `sections` 23551 · `text` 9203 · `sources` 7039 · `budget` 906 ·
+"일반" 사례(응답 41975자)의 JSON 직렬화 크기: `sections` 23552 · `text` 9203 · `sources` 7039 · `budget` 906 ·
 `source_refs` 665 · `matching` 287. `sections`의 34개 항목 중 발췌 원문(`segments[].text`, 문자 수)은 3089자뿐이고, 나머지는 항목마다
 붙는 위치·출처 메타데이터다(`segments` 구간 5131 · `cleaned` 1824 · `path` 1560 · `source_version` 1462 · `recorded_at` 1019 ·
 `label` 921 · `block_evidence` 848 …) 그리고 결정·세션·확인한 후속 출처 목록이다.

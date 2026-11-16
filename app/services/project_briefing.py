@@ -418,6 +418,23 @@ def _add_item(b: _Build, section: str, group: str, label: str, doc: Any, span: t
     return item
 
 
+def _heading_path(lines: list[str], lo: int, start: int, drop_titles: set[str]) -> list[dict[str, Any]]:
+    """[lo, start) 안에서 start 줄을 감싸는 상위 제목들(바깥부터). 상위 제목이 하위 절만 거느려 따로 항목이 되지 않아도
+    "운영 서버에서만 적용" 같은 적용 범위가 항목에서 떨어지지 않게 한다. 이미 항목·출처로 드러난 문서 제목은 뺀다."""
+    own = _heading(lines[start - 1])
+    level = own[0] if own else 7
+    out: list[dict[str, Any]] = []
+    for n, lv, text in reversed(_headings(lines, lo, start - 1)):
+        if lv >= level:
+            continue
+        level = lv
+        if _norm(text) not in drop_titles:
+            out.append({"line": n, "level": lv, "text": evidence_search._clip(text, _FIELD_CHARS)})
+        if lv == 1:
+            break
+    return out[::-1]
+
+
 def _safe_title(doc: Any, project: str) -> str:
     """응답에 싣는 문서 제목. marker 블록으로 나뉜 문서(40_AgentMemory)는 본문 '# ' 제목 줄이 이 프로젝트·공통 블록에
     있을 때만 그 제목을 쓰고, 다른 프로젝트·소속 불명 블록에 있으면 파일명으로 대체한다 — 근거 검색(evidence_search._score)과
@@ -483,14 +500,17 @@ def _collect_context(b: _Build) -> None:
         if not _has_content(lines, keep):
             if not any(lines[m - 1].strip() for m in range(n, end + 1)):
                 continue  # 빈 줄뿐인 머리말
-            # 빈 틀·제목만 있는 절은 항목을 만들지 않고 정리 목록에만 남긴다
+            # 빈 틀·제목만 있는 절은 항목을 만들지 않고 정리 목록에만 남긴다. 하위 절만 거느린 상위 제목은 비어 있는 게
+            # 아니라 하위 항목의 적용 범위다 — 하위 항목의 heading_path로 실리고, 정리 사유도 따로 적는다.
+            parent = bool(level and i + 1 < len(starts) and starts[i + 1][1] > level
+                          and not any(lines[m - 1].strip() for m in range(n + 1, end + 1)))
             b.states.setdefault("cleaned_sections", []).append({"path": doc.rel, "lines": [n, end], "heading": label,
-                                                                "reason": "empty_section"})
+                                                                "reason": "parent_heading" if parent else "empty_section"})
             continue
         if is_constraint:
             constraint_items += 1
         _add_item(b, section, group, label, doc, (n, end), drop, "project", heading_line=n if level else None,
-                  heading_level=level or None)
+                  heading_level=level or None, heading_path=_heading_path(lines, doc.body_start, n, drop))
     if constraint_items:
         b.states["constraints"] = "items"
     elif constraint_heads:
@@ -611,10 +631,11 @@ def _collect_memory(b: _Build) -> None:
                 if is_rule:
                     b.states["memory_rule_items"] = b.states.get("memory_rule_items", 0) + 1
                     _add_item(b, "constraints", "constraint", f"{label} · 적용 규칙: {heading}", doc, (start, end), drop,
-                              unit.scope, block_evidence=list(unit.evidence), heading_line=hline, memory_rule=True)
+                              unit.scope, block_evidence=list(unit.evidence), heading_line=hline, memory_rule=True,
+                              heading_path=_heading_path(lines, unit.start, start, drop))
                 else:
                     _add_item(b, "context", group, label, doc, (start, end), drop, unit.scope,
-                              block_evidence=list(unit.evidence))
+                              block_evidence=list(unit.evidence), heading_path=_heading_path(lines, unit.start, start, drop))
     open_units = _memory_units(b, "open_loops")
     project_blocks = 0
     for doc, unit in open_units:
@@ -966,7 +987,15 @@ def _header(item: _Item) -> str:
     if item.extra.get("follow_up_state") == "explicit_none":
         bits.append("명시적 없음 — 이 기록 범위 한정")
     bits.append(item.doc.rel)
-    return "▸ " + " · ".join(bits)
+    return "▸ " + " · ".join(bits) + _path_line(item)
+
+
+def _path_line(item: _Item) -> str:
+    """상위 제목 경로 줄(머리줄에 붙는다 — 머리줄 비용에 함께 잡힌다). 원문 줄 번호와 제목 단계를 그대로 보인다."""
+    path = item.extra.get("heading_path")
+    if not path:
+        return ""
+    return "\n  ⤷ 상위 제목: " + " › ".join(f"L{h['line']} {'#' * h['level']} {h['text']}" for h in path)
 
 
 def _seg_label(s: int, e: int) -> str:
@@ -1001,7 +1030,7 @@ def _full_cost(item: _Item) -> int:
 def _render_item(item: _Item) -> str:
     if item.stub:
         return f"▸ {item.label} · {item.doc.rel} · 본문 생략 L{item.omission['lines'][0]}-L{item.omission['lines'][1]} " \
-               f"({item.omission['reason']}) → {_call(item.omission['read'])}"
+               f"({item.omission['reason']}) → {_call(item.omission['read'])}" + _path_line(item)
     out = [_header(item)]
     if item.omission and item.tail:
         out.append(_omission_line(item, item.omission))
@@ -1300,7 +1329,9 @@ def _item_dict(item: _Item) -> dict[str, Any]:
     if item.skipped:
         out["unreadable_lines"] = list(item.skipped)  # 원문 읽기 상한 초과로 발췌하지 않은 줄 — omissions에 줄마다 있다
     for key in ("follow_up_state", "decision_status", "recorded_at", "session_rank", "session_id", "handoff_type", "host", "agent",
-                "heading_line", "excerpt_basis", "block_evidence", "memory_rule"):
+                "heading_line", "heading_path", "excerpt_basis", "block_evidence", "memory_rule"):
+        if key == "heading_path" and not item.extra.get(key):
+            continue  # 상위 제목이 없는 항목엔 키를 싣지 않는다 (응답 크기)
         if item.extra.get(key) not in (None, ""):
             out[key] = item.extra[key]
     return out

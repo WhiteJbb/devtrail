@@ -1395,3 +1395,70 @@ def test_decisions_keep_fixed_list_line_when_excerpt_is_cut(tmp_path):
     for d in decisions:
         assert f"- {d['item']}: {d['title']} · candidate · {d['date']} · {d['path']}" in block
     assert "- 결정 내용" not in resp["text"]  # 발췌 자체는 예산 순서대로 빠졌다
+
+
+# ── 병합 리뷰 지적 회귀 — 상위 제목이 담은 적용 범위 보존 ─────────────────────────────────────────────
+
+
+def test_parent_heading_scope_stays_with_constraints(tmp_path):
+    """하위 절만 거느린 상위 제목('운영 서버에서만 적용')은 따로 항목이 되지 않아도 하위 제약의 적용 범위로 남는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 운영 서버에서만 적용\n### 제약\n- 재시작 금지\n## 로컬 환경\n### 제약\n"
+                   "- 자유롭게 재시작 가능\n")
+    resp = _brief(tmp_path)
+    items = _items(resp, "constraints")
+    assert [(i["span"], i["heading_path"]) for i in items] == [
+        ([11, 12], [{"line": 10, "level": 2, "text": "운영 서버에서만 적용"}]),
+        ([14, 15], [{"line": 13, "level": 2, "text": "로컬 환경"}]),
+    ]
+    lines = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md")
+    for i in items:
+        for h in i["heading_path"]:  # 원문 줄 번호·단계·제목 그대로
+            assert lines[h["line"] - 1] == "#" * h["level"] + " " + h["text"]
+    text = resp["text"]
+    first, second = text.index("- 재시작 금지"), text.index("- 자유롭게 재시작 가능")
+    assert text.rindex("상위 제목: L10 ## 운영 서버에서만 적용", 0, first) < first
+    assert text.rindex("상위 제목: L13 ## 로컬 환경", 0, second) > first  # 두 번째 제약 바로 위는 자기 범위다
+    reasons = {c["heading"]: c["reason"] for c in _section(resp, "context")["cleaned_sections"]}
+    assert reasons["운영 서버에서만 적용"] == reasons["로컬 환경"] == "parent_heading"
+
+
+def test_heading_path_lists_every_enclosing_level_but_not_doc_title(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 운영\n\n- 운영 설명\n\n### 서울 리전\n\n#### 금지\n\n- 평일 배포 금지\n\n"
+                   "### 도쿄 리전\n\n- 도쿄 설명\n")
+    resp = _brief(tmp_path)
+    (rule,) = _items(resp, "constraints")
+    assert [(h["line"], h["level"], h["text"]) for h in rule["heading_path"]] == [(10, 2, "운영"), (14, 3, "서울 리전")]
+    assert "상위 제목: L10 ## 운영 › L14 ### 서울 리전" in resp["text"]
+    tokyo = next(i for i in _items(resp, "context") if i["label"] == "도쿄 리전")
+    assert [h["text"] for h in tokyo["heading_path"]] == ["운영"]  # 형제 절(서울 리전)은 상위가 아니다
+
+
+def test_memory_rule_keeps_parent_heading_inside_its_block_only(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md", _fm(type="agent_memory", scope="global", updated_at=TODAY)
+       + "# Lessons\n\n## 다른 블록 밖 제목\n\n"
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n### 배포 작업 때만\n\n#### 규칙\n\n- 배포 전 백업 확인\n")
+    resp = _brief(tmp_path)
+    rule = next(i for i in _items(resp, "constraints") if i.get("memory_rule"))
+    # 블록 제목(## Devtrail)·블록 밖 제목은 넣지 않는다 — 블록 귀속 경계를 넘지 않는다
+    assert [h["text"] for h in rule["heading_path"]] == ["배포 작업 때만"]
+    path_lines = [l for l in resp["text"].splitlines() if "상위 제목:" in l]
+    assert any("### 배포 작업 때만" in l for l in path_lines)
+    assert not any("다른 블록 밖 제목" in l for l in path_lines)  # 마커 앞(공통 블록) 제목은 이 블록의 상위가 아니다
+
+
+def test_heading_path_line_is_counted_in_text_budget(tmp_path):
+    """상위 제목 줄은 머리줄 비용에 함께 잡힌다 — 길어도 text 상한·완전한 줄·예산 순서가 그대로다."""
+    long_scope = "범위 " + "가" * 190
+    rules = "".join(f"- 규칙 {i:04d} " + "나" * 80 + "\n" for i in range(60))
+    body = "\n# Devtrail\n\n" + "".join(f"## {long_scope} {k}\n### 제약\n{rules}" for k in range(5))
+    _ctx(tmp_path, body)
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS and resp["budget"]["text_chars"] == len(resp["text"])
+    lines = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md")
+    for item in _items(resp, "constraints"):
+        assert item["heading_path"] and item["heading_path"][0]["text"].startswith("범위 ")
+        for seg in item["segments"]:
+            assert seg["text"] == "\n".join(lines[seg["start_line"] - 1:seg["end_line"]])
+            assert seg["text"] in resp["text"]
