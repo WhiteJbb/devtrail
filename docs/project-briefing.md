@@ -30,7 +30,7 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 | `candidates`, `source_refs` | 기본 호출과 같은 키. `candidates`는 확정하지 못했을 때 고를 프로젝트 이름(확정이면 `[]`), `source_refs`는 소속 검증을 통과해 실제로 쓴 문서 경로(읽은 순서 — `sources`에서 `excluded` 아닌 것과 같다) |
 | `matching` | 식별 결과 — `input, status, project, method, evidence, candidates, hint, basis` (+ 확정 못 했을 때 `registered_projects`) |
 | `sections` | 표시 순서대로 5개: `constraints`, `context`, `recent`, `follow_ups`, `gaps` |
-| `omissions` | 본문에 못 넣은 구간(한 항목에 여러 건일 수 있다 — 건너뛴 긴 줄마다 한 건 + 꼬리 구간 한 건) — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, first_read_end_line, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래) |
+| `omissions` | 본문에 못 넣은 구간(한 항목에 여러 건일 수 있다 — 건너뛴 긴 줄마다 한 건 + 예산·상한으로 못 넣은 나머지 구간 한 건. 나머지 구간은 보통 뒤쪽, append형 Lessons·공통 OpenLoops는 앞쪽) — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, first_read_end_line, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래) |
 | `critical_omission` | 제약이 일부라도 본문에 없거나, 제약 출처(Context.md)를 확인하지 못했다 |
 | `requires_read` | 먼저 읽어야 할 것 — `{path, lines, reason: critical_omission, item, read}`(빠진 제약 구간) 또는 `{path, reason: context_unreadable·context_unverifiable, read: {rel_path}, unverified?}`. `read`는 그대로 `read_note(**read)` |
 | `partial` | 일부 기록을 읽지 못했다(읽기 실패·frontmatter 해석 실패로 기본 목록에서 빠진 파일·등록부 미확인) |
