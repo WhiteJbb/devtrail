@@ -514,6 +514,27 @@ def _context_blocks(heads: list[tuple[int, int, str]]) -> list[tuple[int, int, s
     return out
 
 
+def _memory_pieces(lines: list[str], start: int, end: int) -> list[tuple[int, int, bool, str, int | None]]:
+    """메모리 블록 [start, end]를 규칙 절과 나머지로 나눈다. (시작, 끝, 규칙 여부, 규칙 제목, 제목 줄).
+
+    제약 여부는 Context.md와 같은 _context_blocks(제목 계층)로 정한다. 규칙이 아닌 이웃 구간은 하나로 합쳐 블록 단위
+    맥락 항목을 유지한다 — 규칙 제목이 없는 블록은 예전과 같은 항목 하나다.
+    """
+    blocks = _context_blocks(_headings(lines, start, end))
+    marks: list[tuple[int, bool, str]] = []
+    if not blocks or blocks[0][0] > start:
+        marks.append((start, False, ""))
+    marks += [(n, rule, text) for n, _, text, rule in blocks]
+    out: list[tuple[int, int, bool, str, int | None]] = []
+    for i, (n, rule, text) in enumerate(marks):
+        e = marks[i + 1][0] - 1 if i + 1 < len(marks) else end
+        if out and not rule and not out[-1][2]:
+            out[-1] = (out[-1][0], e, False, "", None)
+        else:
+            out.append((n, e, rule, text if rule else "", n if rule else None))
+    return out
+
+
 def _memory_units(b: _Build, key: str) -> list[tuple[Any, Any]]:
     """AgentMemory 파일 하나의 (문서, 블록) 중 이 프로젝트·공통 블록. 다른 프로젝트·귀속 불명 블록은 넣지 않는다."""
     rel = _MEMORY_FILES[key]
@@ -557,10 +578,20 @@ def _collect_memory(b: _Build) -> None:
             title = _safe_title(doc, b.project)
             drop = {_norm(title), project_key, "current focus", "currentfocus", "lessons", "openloops", "open loops"}
             label = title + (" — 프로젝트 블록" if unit.scope == "project" else " — 공통")
-            keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
-            if _has_content(doc.source.lines, keep):
-                _add_item(b, "context", group, label, doc, (unit.start, unit.end), drop, unit.scope,
-                          block_evidence=list(unit.evidence))
+            lines = doc.source.lines
+            # 블록 안의 명시적 규칙 제목 절(제약·원칙·규칙·금지·불변식…)은 제약으로 — Context.md와 같은 제목 계층 규칙.
+            # 공통/프로젝트 귀속은 그대로 두고, Context 제약과 충돌해도 어느 쪽을 우선하거나 합치지 않는다(둘 다 싣는다).
+            for start, end, is_rule, heading, hline in _memory_pieces(lines, unit.start, unit.end):
+                keep, _ = _clean(lines, start, end, drop)
+                if not _has_content(lines, keep):
+                    continue
+                if is_rule:
+                    b.states["memory_rule_items"] = b.states.get("memory_rule_items", 0) + 1
+                    _add_item(b, "constraints", "constraint", f"{label} · 적용 규칙: {heading}", doc, (start, end), drop,
+                              unit.scope, block_evidence=list(unit.evidence), heading_line=hline, memory_rule=True)
+                else:
+                    _add_item(b, "context", group, label, doc, (start, end), drop, unit.scope,
+                              block_evidence=list(unit.evidence))
     open_units = _memory_units(b, "open_loops")
     project_blocks = 0
     for doc, unit in open_units:
@@ -568,14 +599,17 @@ def _collect_memory(b: _Build) -> None:
         if unit.scope == "project":
             project_blocks += 1
             keep, cleaned = _clean(doc.source.lines, unit.start, unit.end, drop)
-            # 빈 틀(빈 불릿)만 남은 블록은 확인 불가, 제목만 있는 블록(항목을 다 지운 상태)은 기록된 항목 없음
-            state = ("items" if _has_content(doc.source.lines, keep)
+            # 빈 틀(빈 불릿)만 남은 블록은 확인 불가, 제목만 있는 블록(항목을 다 지운 상태)은 기록된 항목 없음.
+            # 내용이 "없음" 한 줄뿐이면 Next Session과 같이 명시적 없음 — 이 블록에만 해당하고, 원문 발췌는 남긴다.
+            state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
+                     else "items" if _has_content(doc.source.lines, keep)
                      else "empty" if any(r == "empty_scaffolding" for _, r in cleaned) else "block_empty")
             item = _add_item(b, "follow_ups", "project_open_loops", "프로젝트 Open Loops", doc, (unit.start, unit.end),
                              drop, "project", follow_up_state=state, block_evidence=list(unit.evidence))
+            shown_item = state in ("items", "explicit_none")
             b.follow_sources.append({"source": "project_open_loops", "path": doc.rel, "lines": [unit.start, unit.end],
-                                     "state": state, "item": item.id if state == "items" else None})
-            if state != "items":
+                                     "state": state, "item": item.id if shown_item else None})
+            if not shown_item:
                 b.items.remove(item)
             if state == "empty":
                 b.gap("follow_up_section_empty", "OpenLoops의 이 프로젝트 블록이 빈 틀뿐이다(데이터 부족) — '없음'으로 보지 않았다.",
@@ -592,15 +626,29 @@ def _collect_memory(b: _Build) -> None:
         b.follow_sources.append({"source": "project_open_loops", "path": _MEMORY_FILES["open_loops"], "state": "no_block"})
 
 
+_SHARED_DECISIONS_DIR = "60_Candidates/Decisions/"
+
+
 def _note_unlisted(b: _Build, unlisted: list[dict], follow_source: str = "") -> None:
-    """기본 목록이 건너뛴 파일. 읽기 경계 밖 링크(skip_only)는 정책상 제외라 partial이 아니지만 경고로 드러낸다."""
+    """기본 목록이 건너뛴 파일. 읽기 경계 밖 링크(skip_only)는 정책상 제외라 partial이 아니지만 경고로 드러낸다.
+
+    공유 후보 폴더(shared)의 파일은 소속을 확인하지 못했다 — 다른 프로젝트 것일 수 있으므로 파일명을 응답 어디에도 싣지
+    않고 사유별 건수만 폴더 경로와 함께 남긴다. 이 프로젝트 것일 수도 있어 partial 판정은 그대로 한다.
+    """
+    shared: dict[str, int] = {}
     for w in unlisted:
         if not w.get("skip_only"):
             b.partial = True
+        if w.get("shared"):
+            shared[w["code"]] = shared.get(w["code"], 0) + 1
+            continue
         b.warn(w["code"], w["message"], path=w["path"])
         if follow_source:
             b.follow_sources.append({"source": follow_source, "path": w["path"],
                                      "state": "link_skipped" if w.get("skip_only") else "unreadable"})
+    for code, n in shared.items():
+        b.warn(code, f"공유 후보 결정 폴더에서 {n}개 파일이 기본 목록에서 빠졌다({code}). 소속(이 프로젝트 여부)을 확인하지 "
+               "못해 파일명은 싣지 않는다.", path=_SHARED_DECISIONS_DIR, count=n, attribution="unverified")
 
 
 def _collect_decisions(b: _Build, decisions: list[dict], unlisted: list[dict]) -> None:
@@ -799,6 +847,27 @@ def _follow_up_state(b: _Build) -> dict[str, Any]:
         message = (f"{FOLLOW_UP_NONE} (범위: 최근 세션 Next Session·프로젝트 Open Loops 블록. 명시적 '없음'은 그 기록에만 "
                    "해당한다. 범위 밖 기록·현재 작업 상태는 판정하지 않았다).")
     return {"state": state, "message": message, "complete": not unknown, "unknown_reasons": reasons}
+
+
+def _with_text_omissions(follow: dict[str, Any], omitted: int) -> dict[str, Any]:
+    """예산 때문에 본문에서 일부·전부 빠진 후속 기록(omitted건)을 판단에 반영한다.
+
+    본문만 읽는 쪽은 빠진 후속 기록을 확인하지 못하므로 FOLLOW_UP_UNKNOWN을 함께 표시하고 complete=False로 둔다. 명시된
+    후속 항목이 있다는 판단(has_items)은 유지하고, '없음'으로 판단했던 경우(none_in_scope)는 확인 불가(unknown)로 바꾼다 —
+    빠진 기록이 명시적 '없음'이어도 본문으로는 그것을 확인할 수 없다. 원문은 omissions의 read로 읽는다.
+    """
+    if not omitted or follow["state"] == "not_evaluated":
+        return follow
+    out = {**follow, "complete": False,
+           "unknown_reasons": {**(follow.get("unknown_reasons") or {}), "omitted_from_text": omitted}}
+    note = f"본문에서 생략된 후속 기록 {omitted}건 — omissions의 read로 원문을 확인한다"
+    if follow["state"] == "none_in_scope":
+        out["state"] = "unknown"
+        out["message"] = (f"{FOLLOW_UP_UNKNOWN} — {note}. 읽은 기록은 모두 명시적 '없음'이거나 비어 있었지만, 생략된 기록은 "
+                          "본문으로 확인할 수 없다.")
+    else:
+        out["message"] = follow["message"] + f" 단 {FOLLOW_UP_UNKNOWN} — {note}."
+    return out
 
 
 # ── 예산 배정 ────────────────────────────────────────────────────────────────
@@ -1033,7 +1102,9 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
         if key == "constraints":
             state = b.states.get("constraints", "not_evaluated")
             if state != "items":
-                out.append(f"- 상태: {state} — 정보 부족 절 참조")
+                rules = b.states.get("memory_rule_items", 0)
+                out.append(f"- 상태(Context.md): {state} — 정보 부족 절 참조"
+                           + (f" · 기억의 적용 규칙 {rules}건은 아래에 있다" if rules else ""))
             if include_items:
                 add_items(items_of("constraints"))
         elif key == "context":
@@ -1092,7 +1163,7 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
                 # 제목 구실을 한다)가 본문에 실리지 않게, 그리고 경고 수가 늘어도 고정부가 제약 발췌를 밀어내지 않게 한다.
                 counts: dict[str, int] = {}
                 for w in b.warnings:
-                    counts[w["code"]] = counts.get(w["code"], 0) + 1
+                    counts[w["code"]] = counts.get(w["code"], 0) + int(w.get("count", 1))
                 out.extend(["", "### 경고 (코드별 건수 — 내용·경로는 JSON warnings)"])
                 out.append("- " + ", ".join(f"{c(code, 60)} {n}" for code, n in counts.items()))
     if aggregated or not include_items:
@@ -1142,7 +1213,7 @@ def _item_dict(item: _Item) -> dict[str, Any]:
     if item.omission:
         out["omission"] = {"lines": item.omission["lines"], "reason": item.omission["reason"]}
     for key in ("follow_up_state", "decision_status", "recorded_at", "session_rank", "session_id", "handoff_type", "host", "agent",
-                "heading_line", "excerpt_basis", "block_evidence"):
+                "heading_line", "excerpt_basis", "block_evidence", "memory_rule"):
         if item.extra.get(key) not in (None, ""):
             out[key] = item.extra[key]
     return out
@@ -1245,8 +1316,12 @@ def build(
 
     # 고정부(최악 길이 안내 줄 포함)를 먼저 잡고 남은 예산을 BUDGET_ORDER대로 나눈다
     # 목록이 길어 고정부만으로 상한을 넘으면 목록 줄 수를 줄인다(넘는 몫은 개수만) — 상한을 넘는 응답을 내지 않는다
+    # 후속 항목 판단은 예산 배정 뒤 본문 생략까지 반영해 다시 정한다(_with_text_omissions). 고정부 크기는 생략이 가장 많을 때의
+    # 메시지로 잡는다 — 배정 뒤 메시지가 길어져 상한을 넘지 않게.
+    n_follow = sum(1 for i in b.items if i.section == "follow_ups")
+    worst_follow = max((follow, _with_text_omissions(follow, n_follow)), key=lambda f: len(f["message"]))
     for list_cap in (_GAPS_TEXT_CAP, 5, 0):
-        skeleton = _render(b, matching, follow, generated_at, critical=True, aggregated=0, include_items=False,
+        skeleton = _render(b, matching, worst_follow, generated_at, critical=True, aggregated=0, include_items=False,
                            list_cap=list_cap)
         if len(skeleton) <= TEXT_MAX_CHARS:
             break
@@ -1258,6 +1333,8 @@ def build(
         for item in b.items:
             item.omission = _omission(item.doc, [item.span[0], item.span[1]], "budget")
             aggregated += 1
+
+    follow = _with_text_omissions(follow, sum(1 for i in b.items if i.section == "follow_ups" and i.omission))
 
     omissions = []
     for item in b.items:
@@ -1288,7 +1365,8 @@ def build(
         else:
             sec["items"] = [_item_dict(i) for i in b.items if i.section == key]
         if key == "constraints":
-            sec["state"] = b.states.get("constraints", "not_evaluated")
+            sec["state"] = b.states.get("constraints", "not_evaluated")  # Context.md 기준 상태
+            sec["memory_rule_items"] = b.states.get("memory_rule_items", 0)
         elif key == "follow_ups":
             sec.update(follow)
             sec["sources_checked"] = b.follow_sources

@@ -34,7 +34,7 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 | `critical_omission` | 제약이 일부라도 본문에 없거나, 제약 출처(Context.md)를 확인하지 못했다 |
 | `requires_read` | 먼저 읽어야 할 것 — `{path, lines, reason: critical_omission, item, read}`(빠진 제약 구간) 또는 `{path, reason: context_unreadable·context_unverifiable, read: {rel_path}, unverified?}`. `read`는 그대로 `read_note(**read)` |
 | `partial` | 일부 기록을 읽지 못했다(읽기 실패·frontmatter 해석 실패로 기본 목록에서 빠진 파일·등록부 미확인) |
-| `warnings` | `{code, message, path?}` — `read_failed`, `registry_unreadable`, `frontmatter_unparsed`, `document`, `response_large` … |
+| `warnings` | `{code, message, path?}` — `read_failed`, `registry_unreadable`, `frontmatter_unparsed`, `link_skipped`, `document`, `response_large` …. 공유 후보 결정 폴더(`60_Candidates/Decisions`)에서 빠진 파일은 소속을 확인할 수 없어 파일명 없이 사유별로 묶는다: `{code, message, path: "60_Candidates/Decisions/", count, attribution: "unverified"}` |
 | `sources` | 사용한 문서마다 `path, title, kind, record_tier, status, time, attribution, source_version, total_lines, frontmatter_lines`. 소속 검증에 실패한 문서는 `{path, excluded}`만 |
 | `text` | 사람·에이전트가 읽는 본문. **20000자 이하**, 완전한 줄만 |
 | `budget` | `text_max_chars, text_chars, response_chars, sources_meta_chars, sections_meta_chars, display_order, budget_order, group_caps, item_caps` |
@@ -80,12 +80,15 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 
 | 갈래 | 들어가는 것 | 근거 |
 |------|-------------|------|
-| 제약 `constraints` | Context.md의 제약 제목 절과 그 하위 절 (제목 단계 무관 — `#### 금지`도 따로 떼어 제약으로 둔다. 범위는 아래 계층 규칙) | 제목에 `제약·원칙·규칙·금지·불변식·constraint(s)·principle(s)·rule(s)·guardrail(s)·invariant(s)` |
-| 프로젝트 맥락 `context` | Context.md의 나머지 절(모르는 제목 포함), CurrentFocus·Lessons의 이 프로젝트 블록과 공통 블록, OpenLoops의 공통 블록 | 경로·marker 귀속 |
+| 제약 `constraints` | Context.md의 제약 제목 절과 그 하위 절 (제목 단계 무관 — `#### 금지`도 따로 떼어 제약으로 둔다. 범위는 아래 계층 규칙). CurrentFocus·Lessons의 이 프로젝트 블록·공통 블록 안에 있는 같은 규칙 제목 절(**기억의 적용 규칙**, `memory_rule: true`, `scope: project|common` 유지) | 제목에 `제약·원칙·규칙·금지·불변식·constraint(s)·principle(s)·rule(s)·guardrail(s)·invariant(s)` |
+| 프로젝트 맥락 `context` | Context.md의 나머지 절(모르는 제목 포함), CurrentFocus·Lessons의 이 프로젝트 블록과 공통 블록 중 규칙 절이 아닌 부분, OpenLoops의 공통 블록 | 경로·marker 귀속 |
 | 기록된 최근 결과·결정 `recent` | 최근 결정 최대 5건의 `## 결정` 절(없으면 한 줄짜리 frontmatter `summary:` 줄), 최근 3세션의 Process `## What Changed`, Plan `## Goal` | 제목·frontmatter |
 | 명시적 후속 항목 `follow_ups` | 최근 3세션 Process의 `## Next Session`, OpenLoops의 이 프로젝트 marker 블록 | 제목·marker |
 | 정보 부족·경고·근거 `gaps` | 아래 gaps 코드 목록. 본문에는 그 아래 `### 경고`(`warnings`의 **코드별 건수만** — 메시지·경로는 JSON에만)와 `### 근거 출처`(경로·source_version·줄 수)가 이어진다 | — |
 
+- 기억의 적용 규칙은 Context 제약과 같은 예산(제약 단계)·생략 처리를 받는다 — 잘리면 `critical_omission`·`requires_read`. 공통 규칙과
+  프로젝트 규칙, Context 제약이 서로 충돌해도 어느 쪽을 우선하거나 합치지 않고 출처(`scope`·경로)를 단 채 모두 싣는다.
+  다른 프로젝트·소속 불명 블록의 규칙은 넣지 않는다. 블록 안 규칙이 아닌 이웃 구간은 하나의 맥락 항목으로 남는다.
 - 제목에 위 단어가 없는 절의 제약성 문장("반드시 dev 브랜치에서")은 맥락으로 남긴다. 내용을 읽어 제약으로 올리지 않는다.
 - **제약 범위는 모든 제목의 계층으로 정한다.** 제목 하나는 자기 제목에 제약 단어가 있거나 상위 제목(자기보다 얕은 단계의 가장
   가까운 앞 제목들) 중 하나가 제약이면 제약이다. 같거나 얕은 단계의 제목이 나오면 그 범위가 끝난다. 항목은 1~3단계 제목과,
@@ -105,12 +108,14 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 
 | state | 뜻 |
 |-------|----|
-| `has_items` | 기록에 명시된 후속 항목이 있다(기록 당시). `complete=false`면 확인하지 못한 출처도 있다 — 메시지에 "후속 작업 유무를 확인하지 못한 기록 있음"이 붙는다 |
-| `none_in_scope` | 메시지 "**이 브리핑에 포함된 기록에는 명시된 후속 작업 없음**" — 대상 읽기가 완전하고, 최근 세션의 Next Session이 모두 명시적 "없음"이고 프로젝트 OpenLoops 블록이 없거나 비었다. 명시적 없음은 그 기록에만 해당하고, 범위 밖·현재 상태는 판정하지 않았다 |
-| `unknown` | 메시지 "**후속 작업 유무를 확인하지 못한 기록 있음**" — 읽기 실패·생략(`unreadable`·`attribution_mismatch`·`unattributed`·`link_skipped`·partial)이거나, 데이터 부족(세션 기록 없음, Next Session 절 없음 `missing`, 빈 틀 `empty`, Plan만 `no_process`)이다. 없다고 말할 수 없다 |
+| `has_items` | 기록에 명시된 후속 항목이 있다(기록 당시). `complete=false`면 확인하지 못한 출처가 있거나 후속 기록 일부가 본문에서 생략됐다 — 메시지에 "후속 작업 유무를 확인하지 못한 기록 있음"이 붙는다 |
+| `none_in_scope` | 메시지 "**이 브리핑에 포함된 기록에는 명시된 후속 작업 없음**" — 대상 읽기가 완전하고, 최근 세션의 Next Session과 프로젝트 OpenLoops 블록이 모두 명시적 "없음"이거나 OpenLoops 블록이 없거나 비었고, 그 후속 기록이 본문에서 생략되지 않았다. 명시적 없음은 그 기록에만 해당하고, 범위 밖·현재 상태는 판정하지 않았다 |
+| `unknown` | 메시지 "**후속 작업 유무를 확인하지 못한 기록 있음**" — 읽기 실패·생략(`unreadable`·`attribution_mismatch`·`unattributed`·`link_skipped`·partial)이거나, 데이터 부족(세션 기록 없음, Next Session 절 없음 `missing`, 빈 틀 `empty`, Plan만 `no_process`)이거나, 후속 기록(명시적 "없음" 포함)이 예산 때문에 본문에서 생략됐다. 없다고 말할 수 없다 |
 | `not_evaluated` | 프로젝트를 확정하지 못해 보지 않았다 |
 
-두 갈래는 `unknown_reasons`로 구분한다: `{read_failed_or_skipped, partial, data_insufficient, no_sessions}`. 데이터 부족은 gaps에도
+이유는 `unknown_reasons`로 구분한다: `{read_failed_or_skipped, partial, data_insufficient, no_sessions, omitted_from_text?}`.
+`omitted_from_text`는 예산 배정 **뒤**에 센다 — 후속 항목 판단은 배정 결과까지 반영해 최종 확정한다(고정부 크기는 생략이 가장 많을 때의
+메시지로 미리 잡아 상한을 넘지 않는다). 데이터 부족은 gaps에도
 `follow_up_section_missing`·`follow_up_section_empty`(OpenLoops 빈 틀 블록 포함)·`orphan_plan`·`no_sessions`로 남는다 — 읽기 실패와 섞지 않고,
 그 세션에 후속 작업이 있었는지 판정하지 않는다.
 
@@ -118,11 +123,13 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 `unattributed`는 OpenLoops의 소속 unknown/conflict 블록이다 — 이 프로젝트 것일 수 있어 확인 불가로 센다.
 OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 제목만 남았으면(항목을 다 지운 상태) `block_empty`(없음).
 명시적 없음은 내용이 `없음·없다·해당 없음·none·n/a` 한 줄일 때만이다 — "없음 — 단 실측은 남음"은 항목으로 본다.
+Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow_up_state: explicit_none`, 원문 발췌는 남는다). 명시적 없음은 그 기록에만
+해당한다 — 다른 세션·블록의 후속 항목을 지우거나 해결 처리하지 않는다.
 빈 틀("- ")은 없음이 아니라 확인 불가다.
 
 ### 제약 상태
 
-`sections[constraints].state`: `items`, `heading_empty`(제약 제목만 있고 빈 틀), `none_found`(제약 제목 절 없음 —
+`sections[constraints].state`(Context.md 기준)와 `memory_rule_items`(기억의 적용 규칙 항목 수). state: `items`, `heading_empty`(제약 제목만 있고 빈 틀), `none_found`(제약 제목 절 없음 —
 다른 제목 아래 제약성 문장은 판정 안 함), `no_context`(Context.md 없음), `unknown`(Context.md 또는 그 폴더를 읽지 못함 →
 `critical_omission`), `not_evaluated`.
 
@@ -177,7 +184,8 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
   - 예약은 항목 차례가 오면 돌려받아 그 항목의 발췌에 쓴다 — 발췌 본문의 순서는 위 예산 순서 그대로다. CurrentFocus·Lessons·
     공통 OpenLoops는 예약하지 않는다(못 넣으면 `omissions`와 본문의 "안내도 못 낸 생략 N건"으로 드러난다).
 - 본문의 경고는 코드별 건수 한 줄이다. 경고 수가 늘어도 고정부가 제약 발췌를 밀어내지 않고, 공유 후보 폴더의 다른 프로젝트 파일
-  경로(파일명이 제목 구실을 한다)가 본문에 실리지 않는다. 메시지·경로는 JSON `warnings`에 그대로 있다.
+  경로(파일명이 제목 구실을 한다)가 본문에 실리지 않는다. 메시지·경로는 JSON `warnings`에 있다 — 단 공유 후보 결정 폴더에서 빠진 파일은
+  소속을 확인할 수 없어 JSON에도 파일명 없이 폴더 경로·사유·건수(`count`)로만 남는다. 이 프로젝트 것일 수도 있어 `partial`은 켠다.
 - 항목은 앞에서부터 **완전한 줄**만 넣는다. 못 넣은 꼬리는 하나의 구간으로 `omissions`에 남고 본문에
   `⋯ 생략 L시작-L끝 (이유) → read_note(…)` 줄이 붙는다. 이유: `budget`, `item_cap`, `group_cap`, `line_too_long`.
   append형인 Lessons·공통 OpenLoops는 반대로 블록도, 블록 안 줄도 **뒤(최신)부터** 넣고 앞 구간을 생략으로 남긴다
@@ -239,6 +247,7 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 | 독립 리뷰 3차 지적 3건의 회귀 — 많은 맥락 절의 위치 안내 예약이 제약을 밀어냄, 본문 경고 목록이 제약을 밀어냄, 다른 프로젝트 파일 경로가 경고로 본문에 실림. 후속 항목 문구를 설계 문구 그대로·읽기 실패와 데이터 부족 구분 | `test_many_context_sections_do_not_crowd_out_*`, `test_many_warnings_do_not_push_*`, `test_other_project_file_paths_in_warnings_*` (고치기 전 코드에서 3건 실패 확인), `test_explicit_none_*`, `test_missing_*`, `test_partial_*` | 통과 |
 | 독립 리뷰 4차 지적 — Next Session 절 120개·OpenLoops 블록 120개일 때 미리 예약한 안내 줄이 제약을 밀어냄(예약 수 상한·실제 비용 크기로 고침) | `test_many_follow_up_items_do_not_displace_constraints[*]` (고치기 전 코드에서 2건 실패 확인), 리뷰어 fuzz 150 시드 재실행 — 여유 예산이 있는데 critical, 상한 초과, 조용한 누락 0건 | 통과 |
 | 독립 리뷰 5차 지적 — 실제 비용으로 예약한 작은 후속 항목(두 줄)이 줄마다 생략 줄 자리를 요구하는 판정 때문에 자기 예약 안에서도 못 실리고 안내 줄도 잃음(항목 전체가 들어가면 통째로 넣도록 고침) | `test_small_reserved_follow_up_is_shown_even_when_constraints_fill_budget[*]` (고치기 전 코드에서 2건 실패 확인), 리뷰어 fuzz 200 시드 재실행 — 상한 초과·예외·여유 있는 critical·안내 줄 유실 0건 | 통과 |
+| 병합 리뷰 BLOCK 지적 4건의 회귀 — 기억의 명시적 규칙 절을 제약으로(공통/프로젝트 귀속 유지, 잘리면 critical), 공유 후보 폴더의 귀속 불명 파일명을 JSON에서도 감춤(집계 경고), 프로젝트 OpenLoops의 명시적 없음, 예산 배정 뒤 후속 기록 생략을 최종 판단에 반영 | `test_memory_rule_headings_are_constraints_with_scope_kept`, `test_cut_memory_rule_raises_critical_omission_and_requires_read`, `test_other_project_file_paths_in_warnings_stay_out_of_text`, `test_links_outside_read_boundary_*`, `test_project_open_loops_explicit_none_is_scoped_like_next_session`, `test_follow_up_items_cut_from_text_mark_state_incomplete`, `test_explicit_none_records_cut_from_text_are_not_reported_as_none` (고치기 전 코드에서 8건 실패 확인) | 통과 |
 | 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 772 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
@@ -252,17 +261,17 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 
 | 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | 확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission | 보존 제약·맥락·후속 기본→새 | 예산으로 준 항목(새) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 일반 | 7 | 5275→8250 | 6295→41189 | 7→7 | 0→7 | 6→1 | 8173→41189 | 1.0→4.1 | False | c2/2 x2/2 f3/3→c2/2 x2/2 f3/3 | - |
-| 긴 Context 후반 제약 | 3 | 8993→12010 | 9860→43542 | 2→3 | 0→3 | 3→1 | 32394→43542 | 0.7→3.7 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
-| 이전 세션의 긴 Next Session | 2 | 5512→8550 | 6327→36840 | 0→2 | 0→2 | 3→1 | 8615→36840 | 0.7→2.9 | False | f0/2→f2/2 | - |
-| 제약만 2만 자 초과 | 2 | 6127→19809 | 6702→51745 | 1→1 | 0→1 | 2→2 | 32108→60757 | 0.5→3.4 | True | c1/2→c1/2 | constraints 1 |
-| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19778 | 13221→60501 | 6→7 | 0→7 | 6→1 | 27853→60501 | 0.9→4.3 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
-| init-project 템플릿 | 1 | 477→991 | 630→5112 | 1→1 | 0→1 | 2→1 | 969→5112 | 0.2→0.5 | False | c1/1→c1/1 | - |
+| 일반 | 7 | 5275→8250 | 6295→41213 | 7→7 | 0→7 | 6→1 | 8173→41213 | 1.0→3.9 | False | c2/2 x2/2 f3/3→c2/2 x2/2 f3/3 | - |
+| 긴 Context 후반 제약 | 3 | 8993→12010 | 9860→43566 | 2→3 | 0→3 | 3→1 | 32394→43566 | 0.7→3.6 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
+| 이전 세션의 긴 Next Session | 2 | 5512→8550 | 6327→36864 | 0→2 | 0→2 | 3→1 | 8615→36864 | 0.7→2.9 | False | f0/2→f2/2 | - |
+| 제약만 2만 자 초과 | 2 | 6127→19809 | 6702→51769 | 1→1 | 0→1 | 2→2 | 32108→60781 | 0.5→3.4 | True | c1/2→c1/2 | constraints 1 |
+| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19658 | 13221→60283 | 6→7 | 0→7 | 6→1 | 27853→60283 | 0.9→4.3 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
+| init-project 템플릿 | 1 | 477→991 | 630→5136 | 1→1 | 0→1 | 2→1 | 969→5136 | 0.2→0.5 | False | c1/1→c1/1 | - |
 
 읽는 법:
 
-- **더 길고 느리다.** text는 1.3~3.2배, 응답 JSON 전체는 4.4~8.1배, 조립 시간은 약 2.5~6.8배(밀리초 단위)다.
-  "본문 예산 초과" 사례는 응답 JSON이 60501자로 `response_large` 경고(60000자) 기준을 넘는다 — 줄이지 않고 경고로 드러낸다.
+- **더 길고 느리다.** text는 1.3~3.2배, 응답 JSON 전체는 4.4~8.2배, 조립 시간은 약 2.5~6.8배(밀리초 단위)다.
+  "본문 예산 초과" 사례는 응답 JSON이 60283자로 `response_large` 경고(60000자) 기준을 넘는다 — 줄이지 않고 경고로 드러낸다.
   MCP 응답은 JSON 전체가 클라이언트 컨텍스트에 들어가므로 이 크기는 실제 비용이다. 성능 개선을 주장하지 않는다.
 - "확인 문자"는 새 쪽이 오히려 크다 — 기본 briefing은 목표 줄 파일을 전문으로 더 읽어도 structured 응답 하나보다 작은 경우가
   많다. 새 응답이 줄이는 것은 호출 수와 줄 번호를 직접 세는 수고이고, 글자 수가 아니다.
@@ -280,7 +289,7 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 
 ### 응답 크기의 구성 — 무엇이 중복이고 왜 남겼나
 
-"일반" 사례(응답 41189자)의 JSON 직렬화 크기: `sections` 23527 · `text` 8442 · `sources` 7039 · `budget` 906 ·
+"일반" 사례(응답 41213자)의 JSON 직렬화 크기: `sections` 23551 · `text` 8442 · `sources` 7039 · `budget` 906 ·
 `source_refs` 665 · `matching` 287. `sections`의 34개 항목 중 발췌 원문(`segments[].text`)은 3168자뿐이고, 나머지는 항목마다
 붙는 위치·출처 메타데이터다(`segments` 구간 5131 · `cleaned` 1824 · `path` 1560 · `source_version` 1462 · `recorded_at` 1019 ·
 `label` 921 · `block_evidence` 848 …) 그리고 결정·세션·확인한 후속 출처 목록이다.

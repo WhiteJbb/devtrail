@@ -1060,7 +1060,10 @@ def get_structured_project_briefing(project_or_repo: str, settings: Settings | N
     def unlisted_decisions(project: str, project_dir: str, decisions: list[dict]) -> list[dict]:
         listed = {d["rel_path"] for d in decisions}
         # 후보 폴더의 다른 프로젝트·뒤집힌 결정은 정상적으로 빠진 것이다 — 해석은 성공했으니 여기 오지 않는다
-        out = _unlisted_files(vault_dir / "60_Candidates" / "Decisions", listed, vault_dir, lambda rel, text: False)
+        # 공유 후보 폴더는 모든 프로젝트의 결정 후보가 섞여 있다 — 빠진 파일의 소속을 확인할 수 없으므로 shared로 표시해
+        # 응답에는 파일명 없이 집계만 싣게 한다(파일명이 다른 프로젝트 결정의 제목 구실을 한다)
+        out = [{**w, "shared": True} for w in
+               _unlisted_files(vault_dir / "60_Candidates" / "Decisions", listed, vault_dir, lambda rel, text: False)]
         out += _unlisted_files(vault_dir / "30_Projects" / project_dir / "Decisions", listed, vault_dir,
                                lambda rel, text: str(frontmatter.loads(text).metadata.get("status", "") or "")
                                .strip().lower() != "superseded")

@@ -753,7 +753,12 @@ def test_links_outside_read_boundary_are_never_opened_or_described(tmp_path, mon
     assert "OUTSIDE" not in dumped
     assert str(secret_decision) not in opened and str(secret_handoff) not in opened
     skipped = {w["path"] for w in resp["warnings"] if w["code"] == "link_skipped"}
-    assert skipped == set(links)
+    # 공유 후보 폴더의 링크는 소속을 모르므로 파일명 없이 폴더 경로·건수로만 남는다
+    assert skipped == {"30_Projects/Devtrail/Decisions/link.md", "60_Candidates/SessionHandoffs/Devtrail/link.md",
+                       "60_Candidates/Decisions/"}
+    shared = next(w for w in resp["warnings"] if w["path"] == "60_Candidates/Decisions/")
+    assert shared["count"] == 1 and shared["attribution"] == "unverified"
+    assert "60_Candidates/Decisions/link.md" not in dumped
     # 건너뛴 세션 링크가 있으니 '없음'이라고 단정하지 않는다
     assert _section(resp, "follow_ups")["state"] == "unknown"
     # 기본 briefing은 그대로다 (링크를 따라 읽는 기존 동작은 바꾸지 않았다)
@@ -975,7 +980,8 @@ def test_many_warnings_do_not_push_constraints_out_of_text(tmp_path):
     for i in range(20):
         _w(tmp_path, f"60_Candidates/Decisions/Other-{i}-{'d' * 180}.md", "---\ntitle: [bad\n---\n")
     resp = _brief(tmp_path)
-    assert len(resp["warnings"]) >= 20 and resp["partial"] is True
+    shared = [w for w in resp["warnings"] if w["path"] == "60_Candidates/Decisions/"]
+    assert [w["count"] for w in shared] == [20] and resp["partial"] is True
     assert resp["critical_omission"] is False and [i["shown"] for i in _items(resp, "constraints")] == ["full"]
     assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
 
@@ -987,9 +993,18 @@ def test_other_project_file_paths_in_warnings_stay_out_of_text(tmp_path):
     rel = "60_Candidates/Decisions/Other-acquire-competitor-secretly.md"
     _w(tmp_path, rel, "---\nproject: Other\ntitle: [bad\n---\n# x\n")
     resp = _brief(tmp_path)
-    # 소속을 확인하지 못한 파일이라 JSON warnings에는 경로가 남는다(숨기지 않는다) — 본문에는 코드별 건수만
-    assert any(w.get("path") == rel for w in resp["warnings"])
-    assert "acquire-competitor" not in resp["text"] and "frontmatter_unparsed 1" in resp["text"]
+    # 소속을 확인하지 못한 공유 후보 파일은 JSON 어디에도 파일명을 싣지 않는다 — 폴더 경로와 건수로만 알린다(숨기지는 않는다)
+    assert "acquire-competitor" not in json.dumps(resp, ensure_ascii=False)
+    w = next(w for w in resp["warnings"] if w["code"] == "frontmatter_unparsed")
+    assert w["path"] == "60_Candidates/Decisions/" and w["count"] == 1 and w["attribution"] == "unverified"
+    assert resp["partial"] is True  # 이 프로젝트 것일 수도 있다 — 완전하다고 말하지 않는다
+    assert "frontmatter_unparsed 1" in resp["text"]
+    # 이 프로젝트 폴더의 해석 실패 파일은 이 프로젝트 소속 위치라 경로를 그대로 남긴다
+    own = "30_Projects/Devtrail/Decisions/broken.md"
+    _w(tmp_path, own, "---\ntitle: [bad\n---\n")
+    resp = _brief(tmp_path)
+    assert any(w["path"] == own for w in resp["warnings"])
+    assert "frontmatter_unparsed 2" in resp["text"]
 
 
 @pytest.mark.parametrize("mode", ["many_next_session_headings", "many_open_loops_blocks"])
@@ -1026,3 +1041,101 @@ def test_small_reserved_follow_up_is_shown_even_when_constraints_fill_budget(tmp
     assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
     assert [i["shown"] for i in _items(resp, "follow_ups")] == ["full"]
     assert "안내도 못 낸 생략" not in resp["text"]
+
+
+# ── 병합 리뷰 3차(BLOCK) 지적의 회귀 ─────────────────────────────────────────
+
+_MK = '<!-- devtrail-memory-patch: {"scope": "project", "project": "%s"} -->\n'
+
+
+def test_memory_rule_headings_are_constraints_with_scope_kept(tmp_path):
+    _ctx(tmp_path, "## 제약\n\n- CTX_RULE 공식 영역 직접 쓰기 금지\n\n## 배경\n\nx\n")
+    _w(tmp_path, "40_AgentMemory/01_CurrentFocus.md",
+       "# Current Focus\n\n- 공통 초점\n\n## 규칙\n\n- COMMON_RULE 먼저 측정한다\n\n"
+       + _MK % "Devtrail" + "## Devtrail\n\n- 지금 하는 일\n\n### 금지\n\n- PROJECT_RULE 운영 트리 직접 편집 금지\n\n"
+       "### 메모\n\n- 그냥 메모\n\n" + _MK % "Other" + "## Other\n\n### 규칙\n\n- OTHER_RULE 다른 프로젝트 규칙\n")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md", "# Lessons\n\n" + _MK % "Devtrail"
+       + "- 교훈 하나\n\n#### Guardrails\n\n- LESSON_RULE 같은 실수 반복 금지\n")
+    resp = _brief(tmp_path)
+    rules = [i for i in _items(resp, "constraints") if i.get("memory_rule")]
+    by_text = {seg["text"].splitlines()[-1]: i for i in rules for seg in i["segments"]}
+    assert set(by_text) == {"- COMMON_RULE 먼저 측정한다", "- PROJECT_RULE 운영 트리 직접 편집 금지",
+                            "- LESSON_RULE 같은 실수 반복 금지"}
+    assert by_text["- COMMON_RULE 먼저 측정한다"]["scope"] == "common"
+    assert by_text["- PROJECT_RULE 운영 트리 직접 편집 금지"]["scope"] == "project"
+    assert by_text["- LESSON_RULE 같은 실수 반복 금지"]["scope"] == "project"
+    assert all(i["kind"] == "constraint" for i in rules)
+    assert _section(resp, "constraints")["memory_rule_items"] == 3
+    # Context 제약은 그대로 있고, 둘을 합치거나 어느 쪽을 지우지 않는다
+    assert any("CTX_RULE" in s["text"] for i in _items(resp, "constraints") for s in i["segments"])
+    # 규칙이 아닌 부분은 맥락에 그대로 — '### 메모'처럼 규칙 뒤 같은 단계 제목부터는 맥락
+    ctx_text = json.dumps(_items(resp, "context"), ensure_ascii=False)
+    assert "그냥 메모" in ctx_text and "지금 하는 일" in ctx_text and "공통 초점" in ctx_text
+    assert "PROJECT_RULE" not in ctx_text and "COMMON_RULE" not in ctx_text
+    assert "OTHER_RULE" not in json.dumps(resp, ensure_ascii=False)
+    for i in rules:
+        lines = _file_lines(tmp_path, i["path"])
+        for seg in i["segments"]:
+            assert seg["text"] == "\n".join(lines[seg["start_line"] - 1:seg["end_line"]])
+
+
+def test_cut_memory_rule_raises_critical_omission_and_requires_read(tmp_path, monkeypatch):
+    _ctx(tmp_path, "## 배경\n\nx\n")
+    rules = "".join(f"- 규칙 {i:03d}: " + "지켜야 할 내용 " * 10 + "\n" for i in range(250))
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md", "# Lessons\n\n" + _MK % "Devtrail" + "## 원칙\n\n" + rules
+       + "- MEMORY_RULE_TAIL 마지막 원칙\n")
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+    assert resp["critical_omission"] is True and "MEMORY_RULE_TAIL" not in resp["text"]
+    om = next(o for o in resp["omissions"] if o["critical"])
+    assert om["path"] == "40_AgentMemory/06_Lessons.md" and om["kind"] == "constraint"
+    assert any(r["item"] == om["item"] for r in resp["requires_read"])
+    page = _mcp_read_note(monkeypatch, tmp_path, om["read"])
+    assert page["ok"] and page["start_line"] == om["lines"][0]
+
+
+def test_project_open_loops_explicit_none_is_scoped_like_next_session(tmp_path):
+    _ctx(tmp_path, "## 배경\n\nx\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-03T10:00:00", _process("없음"))
+    _w(tmp_path, "40_AgentMemory/05_OpenLoops.md", "# OpenLoops\n\n" + _MK % "Devtrail" + "## Devtrail\n\n- 없음\n")
+    resp = _brief(tmp_path)
+    sec = _section(resp, "follow_ups")
+    assert sec["state"] == "none_in_scope" and sec["complete"] is True
+    assert sec["message"].startswith(pb.FOLLOW_UP_NONE)
+    ol = next(i for i in sec["items"] if i["kind"] == "project_open_loops")
+    assert ol["follow_up_state"] == "explicit_none" and ol["segments"][-1]["text"].endswith("- 없음")
+    assert [s["state"] for s in sec["sources_checked"] if s["source"] == "project_open_loops"] == ["explicit_none"]
+    assert resp["text"].count("명시적 없음 — 이 기록 범위 한정") == 2
+
+    # 문장이 붙은 '없음'은 항목이다
+    _w(tmp_path, "40_AgentMemory/05_OpenLoops.md",
+       "# OpenLoops\n\n" + _MK % "Devtrail" + "## Devtrail\n\n- 없음 — 단 운영 반영 실측은 남음\n")
+    assert _section(_brief(tmp_path), "follow_ups")["state"] == "has_items"
+
+
+def test_follow_up_items_cut_from_text_mark_state_incomplete(tmp_path):
+    rules = "".join(f"- 규칙 {i:04d}: " + "지켜야 할 내용 " * 10 + "\n" for i in range(300))
+    _ctx(tmp_path, "## 원칙\n\n" + rules)
+    long_next = "".join(f"- 후속 {k}: " + "설명 " * 30 + "\n" for k in range(40))
+    _handoff(tmp_path, "p", "process", "s", "2026-11-10T10:00:00", _process(long_next))
+    resp = _brief(tmp_path)
+    sec = _section(resp, "follow_ups")
+    assert any(o["section"] == "follow_ups" for o in resp["omissions"])
+    assert sec["state"] == "has_items" and sec["complete"] is False
+    assert pb.FOLLOW_UP_UNKNOWN in sec["message"] and sec["unknown_reasons"]["omitted_from_text"] >= 1
+    assert sec["message"] in resp["text"] and len(resp["text"]) <= pb.TEXT_MAX_CHARS
+
+
+def test_explicit_none_records_cut_from_text_are_not_reported_as_none(tmp_path):
+    rules = "".join(f"- 규칙 {i:04d}: " + "지켜야 할 내용 " * 10 + "\n" for i in range(300))
+    _ctx(tmp_path, "## 원칙\n\n" + rules)
+    _handoff(tmp_path, "p", "process", "s", "2026-11-10T10:00:00", _process("없음"))
+    _w(tmp_path, "40_AgentMemory/05_OpenLoops.md",
+       "# OpenLoops\n\n" + "".join(_MK % "Devtrail" + "## Devtrail\n\n- 없음\n\n" for _ in range(120)))
+    resp = _brief(tmp_path)
+    sec = _section(resp, "follow_ups")
+    assert all(i["follow_up_state"] == "explicit_none" for i in sec["items"])
+    assert any(o["section"] == "follow_ups" for o in resp["omissions"])
+    assert sec["state"] == "unknown" and sec["complete"] is False
+    assert sec["message"].startswith(pb.FOLLOW_UP_UNKNOWN) and pb.FOLLOW_UP_NONE not in sec["message"]
+    assert sec["message"] in resp["text"] and len(resp["text"]) <= pb.TEXT_MAX_CHARS
