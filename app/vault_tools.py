@@ -222,13 +222,20 @@ def _canonicalize_project(vault_dir: Path, project: str) -> str:
     return match.project if match else project
 
 
-def _list_session_handoffs(vault_dir: Path, project: str) -> list[dict]:
-    """60_Candidates/SessionHandoffs/<project>/의 candidate를 frontmatter와 함께 반환한다."""
+def _list_session_handoffs(
+    vault_dir: Path, project: str, path_filter: Callable[[Path], bool] | None = None
+) -> list[dict]:
+    """60_Candidates/SessionHandoffs/<project>/의 candidate를 frontmatter와 함께 반환한다.
+
+    path_filter: 파일을 **열기 전에** 거르는 조건. None이면 기존 동작(링크도 따라 읽는다).
+    """
     handoff_dir = vault_dir / handoff_project_dir(project)
     if not handoff_dir.exists():
         return []
     items: list[dict] = []
     for md_path in sorted(handoff_dir.glob("*.md")):
+        if path_filter is not None and not path_filter(md_path):
+            continue
         try:
             post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
         except Exception:
@@ -468,13 +475,15 @@ def _load_project_config(repo_dir: Path) -> str:
 
 
 def _list_decisions(
-    vault_dir: Path, project: str, include_archived: bool = False, project_dir: str = ""
+    vault_dir: Path, project: str, include_archived: bool = False, project_dir: str = "",
+    path_filter: Callable[[Path], bool] | None = None,
 ) -> list[dict]:
     """프로젝트의 결정을 최신순으로 반환한다 — 승격 전 후보 + 승격된 정본 (+ 보관).
 
     후보만 읽으면 promote하는 순간 결정이 사라져, 검토를 성실히 할수록 컨텍스트를 잃는다.
     project_dir: 승격 결정을 읽을 30_Projects 폴더명. 비면 project(기존 동작) — Context.md가 선언한 이름과 폴더명이
     다른 프로젝트는 structured briefing이 실제 폴더를 넘긴다.
+    path_filter: 파일을 **열기 전에** 거르는 조건. None이면 기존 동작(링크도 따라 읽는다).
     """
     sources = [
         (vault_dir / "60_Candidates" / "Decisions", True, "candidate"),
@@ -488,6 +497,8 @@ def _list_decisions(
         if not dir_path.exists():
             continue
         for md_path in dir_path.glob("*.md"):
+            if path_filter is not None and not path_filter(md_path):
+                continue
             try:
                 post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
             except Exception:
@@ -976,10 +987,26 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
     )
 
 
+def _structured_source_ok(vault_dir: Path, path: Path) -> bool:
+    """structured briefing이 목록 단계에서 열어도 되는 파일 — 근거 검색 스캔(evidence_search.scan_vault)과 같은 경계.
+
+    링크 파일은 열지 않고, 링크 폴더를 거친 경로처럼 실제 위치가 요청 경로와 다르면 열지 않는다. 열기 전에 거르므로
+    범위 밖 문서의 제목·날짜 같은 메타데이터도 응답에 들어오지 않는다.
+    """
+    rel = path.relative_to(vault_dir).as_posix()
+    try:
+        if path.is_symlink():
+            return False
+    except OSError:
+        return False
+    return _real_scoped_rel(vault_dir, path) == rel
+
+
 def _unlisted_files(dir_path: Path, listed: set[str], vault_dir: Path, accept: Callable[[str, str], bool]) -> list[dict]:
     """기본 목록 함수가 조용히 건너뛴 파일 — 읽기·frontmatter 해석 실패. structured briefing이 partial로 드러낸다.
 
     accept(rel, text)가 False면 이 프로젝트 것이 아니라 정상적으로 빠진 파일로 보고 넘긴다.
+    읽기 경계 밖(링크) 파일은 열지 않고 경로만 알린다 — 내용·메타데이터를 응답에 싣지 않는다.
     """
     out: list[dict] = []
     try:
@@ -995,6 +1022,10 @@ def _unlisted_files(dir_path: Path, listed: set[str], vault_dir: Path, accept: C
     for md_path in paths:
         rel = str(md_path.relative_to(vault_dir)).replace("\\", "/")
         if rel in listed:
+            continue
+        if not _structured_source_ok(vault_dir, md_path):
+            out.append({"code": "link_skipped", "path": rel, "skip_only": True,
+                        "message": "링크 파일이거나 실제 경로가 요청 경로와 달라 열지 않았습니다(근거 검색과 같은 읽기 경계)."})
             continue
         try:
             text = md_path.read_text(encoding="utf-8")
@@ -1023,6 +1054,9 @@ def get_structured_project_briefing(project_or_repo: str, settings: Settings | N
 
     vault_dir = _vault_dir(settings)
 
+    def source_ok(path: Path) -> bool:
+        return _structured_source_ok(vault_dir, path)
+
     def unlisted_decisions(project: str, project_dir: str, decisions: list[dict]) -> list[dict]:
         listed = {d["rel_path"] for d in decisions}
         # 후보 폴더의 다른 프로젝트·뒤집힌 결정은 정상적으로 빠진 것이다 — 해석은 성공했으니 여기 오지 않는다
@@ -1038,8 +1072,8 @@ def get_structured_project_briefing(project_or_repo: str, settings: Settings | N
 
     return project_briefing.build(
         vault_dir, project_or_repo, project_map=_project_map_path(settings),
-        list_decisions=lambda p, folder: _list_decisions(vault_dir, p, project_dir=folder),
-        list_handoffs=lambda p: _list_session_handoffs(vault_dir, p),
+        list_decisions=lambda p, folder: _list_decisions(vault_dir, p, project_dir=folder, path_filter=source_ok),
+        list_handoffs=lambda p: _list_session_handoffs(vault_dir, p, path_filter=source_ok),
         recent_groups=_recent_session_groups,
         handoff_timestamp=_handoff_timestamp,
         unlisted_decisions=unlisted_decisions,

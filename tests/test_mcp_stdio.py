@@ -159,6 +159,9 @@ def test_cli_stdio_structured_briefing_then_evidence_read() -> None:
                          "## Next Session\n\n- 왕복 후속 항목\n",
             "60_Candidates/SessionHandoffs/Beta/process.md": "---\ntitle: Beta Process\nproject: Beta\n"
                          "handoff_type: process\nsession_id: b1\n---\n## Next Session\n\n- 베타 후속\n",
+            # 제약만으로 20000자를 넘는 프로젝트 — requires_read가 생긴다
+            "30_Projects/Gamma/Context.md": "---\nproject: Gamma\nupdated_at: 2099-01-01\n---\n## 원칙\n\n"
+                         + "".join(f"- 원칙 {i:03d}: " + "지켜야 할 내용 " * 10 + "\n" for i in range(250)),
         }
         for relative, text in notes.items():
             path = vault / relative
@@ -221,12 +224,19 @@ def test_cli_stdio_structured_briefing_then_evidence_read() -> None:
                         follow = sections["follow_ups"]["items"][0]
                         assert follow["segments"][0]["text"] == "- 왕복 후속 항목" and follow["path"] == process_rel
                         # 긴 배경 뒤의 제약이 남고, 잘린 배경은 생략 위치·이어읽기 인자로 회수된다
+                        # 반환된 read 객체를 변환 없이 그대로 read_note 인자로 넘긴다
                         om = next(o for o in brief["omissions"] if o["section"] == "context")
-                        page = await call("read_note", rel_path=om["path"], structured=True,
-                                          start_line=om["read"]["start_line"], max_lines=om["read"]["max_lines"],
-                                          expected_version=om["read"]["expected_version"])
+                        page = await call("read_note", **om["read"])
                         assert page["ok"] and page["start_line"] == om["lines"][0]
                         assert page["content"].splitlines()[0] == raw_lines[om["lines"][0] - 1]
+
+                        gamma = await call("get_project_briefing", project_or_repo="Gamma", structured=True)
+                        assert gamma["critical_omission"] is True and gamma["requires_read"]
+                        gamma_lines = (vault / "30_Projects/Gamma/Context.md").read_text(encoding="utf-8").splitlines()
+                        for need in gamma["requires_read"]:
+                            page = await call("read_note", **need["read"])
+                            assert page["ok"] and page["start_line"] == need["lines"][0]
+                            assert page["content"].splitlines() == gamma_lines[need["lines"][0] - 1:need["lines"][1]]
 
                         (vault / context_rel).write_text(notes[context_rel] + "- 바뀐 줄\n", encoding="utf-8")
                         seg = constraint["segments"][0]
@@ -234,6 +244,8 @@ def test_cli_stdio_structured_briefing_then_evidence_read() -> None:
                                              start_line=seg["start_line"], max_lines=1,
                                              expected_version=constraint["source_version"])
                         assert changed["ok"] is False and changed["error"]["code"] == "version_mismatch"
+                        stale = await call("read_note", **om["read"])  # 반환 인자 그대로도 변경을 잡는다
+                        assert stale["ok"] is False and stale["error"]["code"] == "version_mismatch"
 
         asyncio.run(exchange())
         print(json.dumps({"command": [sys.executable, "-m", "app.cli", "mcp-serve"], "exchanges": transcript},

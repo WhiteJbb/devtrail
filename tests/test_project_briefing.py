@@ -70,6 +70,15 @@ def _file_lines(vault: Path, rel: str) -> list[str]:
     return split_source_lines((vault / rel).read_bytes().decode("utf-8").lstrip("﻿"))[0]
 
 
+def _mcp_read_note(monkeypatch, vault: Path, read: dict):
+    """omissions/requires_read의 read 인자를 **그대로** MCP read_note tool 함수에 넘긴다 (인자 이름·추가 필드 검사)."""
+    from app import mcp_server
+
+    monkeypatch.setattr(mcp_server, "get_settings", lambda: _settings(vault))
+    monkeypatch.setattr(mcp_server, "_touch_session_marker", lambda: None)
+    return mcp_server.mcp._tool_manager.get_tool("read_note").fn(**read)
+
+
 def _all_items(resp: dict) -> list[dict]:
     return [i for s in resp["sections"] if s["key"] != "gaps" for i in s["items"]]
 
@@ -423,7 +432,7 @@ def test_crlf_and_bom_sources_keep_line_numbers(tmp_path):
 # ── AC-6: 예산·생략·판단 한계 ────────────────────────────────────────────────
 
 
-def test_late_constraint_in_long_context_is_kept_before_context(tmp_path):
+def test_late_constraint_in_long_context_is_kept_before_context(tmp_path, monkeypatch):
     background = "".join(f"- 배경 기록 {i}: " + "설명 " * 20 + "\n" for i in range(400))  # 약 4만 자
     _ctx(tmp_path, "## 배경\n\n" + background + "\n## 제약\n\n- LATE_CONSTRAINT 공식 영역 직접 쓰기 금지\n")
     # 기본 briefing은 로더 상한(5000자) 때문에 후반 제약이 보이지 않는다 — structured는 보인다
@@ -438,20 +447,20 @@ def test_late_constraint_in_long_context_is_kept_before_context(tmp_path):
     lines = _file_lines(tmp_path, om["path"])
     item = next(i for i in _items(resp, "context") if i["id"] == om["item"])
     assert om["lines"][0] == item["segments"][-1]["end_line"] + 1  # 생략은 보여준 줄 바로 다음부터
-    page = vault_tools.read_source(om["path"], **{k: om["read"][k] for k in ("start_line", "max_lines", "expected_version")},
-                                   settings=_settings(tmp_path))
+    page = _mcp_read_note(monkeypatch, tmp_path, om["read"])
     assert page["ok"] and page["start_line"] == om["lines"][0]
     assert page["content"].splitlines()[0] == lines[om["lines"][0] - 1]
 
 
-def test_constraints_over_budget_raise_critical_omission_with_exact_resume(tmp_path):
+def test_constraints_over_budget_raise_critical_omission_with_exact_resume(tmp_path, monkeypatch):
     rules = "".join(f"- 규칙 {i:04d}: " + "지켜야 할 내용 " * 10 + "\n" for i in range(300))  # 약 4만 자
     _ctx(tmp_path, "## 원칙\n\n" + rules)
     resp = _brief(tmp_path)
     assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
     assert resp["critical_omission"] is True and "critical_omission" in resp["text"]
     om = next(o for o in resp["omissions"] if o["critical"])
-    assert resp["requires_read"] == [om["read"]]
+    assert [r["read"] for r in resp["requires_read"]] == [om["read"]]
+    assert resp["requires_read"][0]["lines"] == om["lines"]
     item = _items(resp, "constraints")[0]
     assert item["shown"] == "partial"
     assert om["lines"][0] == item["segments"][-1]["end_line"] + 1 and om["lines"][1] == item["span"][1]
@@ -462,9 +471,14 @@ def test_constraints_over_budget_raise_critical_omission_with_exact_resume(tmp_p
     assert body_lines and all(l in shown for l in body_lines)
     assert f"생략 L{om['lines'][0]}-L{om['lines'][1]}" in resp["text"]
     assert om["read"]["max_lines"] == min(400, om["lines"][1] - om["lines"][0] + 1)
+    assert set(om["read"]) == {"rel_path", "structured", "start_line", "max_lines", "expected_version"}
+    page = _mcp_read_note(monkeypatch, tmp_path, resp["requires_read"][0]["read"])
+    assert page["ok"] and page["start_line"] == om["lines"][0]
+    assert page["content"].splitlines()[0] == lines[om["lines"][0] - 1]
+    assert page["end_line"] == om["lines"][1] or page["next"] is not None  # 남은 구간은 next로 이어진다
 
 
-def test_overlong_single_line_is_never_cut(tmp_path):
+def test_overlong_single_line_is_never_cut(tmp_path, monkeypatch):
     giant = "- " + "가" * 30000
     _ctx(tmp_path, "## 제약\n\n" + giant + "\n- 짧은 제약\n")
     long_next = "- " + "나" * 5000
@@ -474,12 +488,14 @@ def test_overlong_single_line_is_never_cut(tmp_path):
     assert "가" * 100 not in resp["text"] and "나" * 100 not in resp["text"]
     c = next(o for o in resp["omissions"] if o["section"] == "constraints")
     assert c["reason"] == "line_too_long" and c["line_chars"] == len(giant) and c["critical"]
-    assert c["read"]["structured_readable"] is False
+    # 16000자를 넘는 줄은 structured로 받을 수 없다 — 전문 읽기 인자를 준다
+    assert c["structured_readable"] is False and c["read"] == {"rel_path": c["path"]}
+    full = _mcp_read_note(monkeypatch, tmp_path, c["read"])
+    assert giant in full
     n = next(o for o in resp["omissions"] if o["section"] == "follow_ups")
-    assert n["reason"] == "line_too_long" and "structured_readable" not in n["read"]
-    page = vault_tools.read_source(n["path"], start_line=n["read"]["start_line"], max_lines=1,
-                                   expected_version=n["read"]["expected_version"], settings=_settings(tmp_path))
-    assert page["ok"] and page["content"] == long_next
+    assert n["reason"] == "line_too_long" and n["structured_readable"] is True
+    page = _mcp_read_note(monkeypatch, tmp_path, n["read"])
+    assert page["ok"] and page["content"].splitlines()[0] == long_next
     assert resp["critical_omission"] is True
 
 
@@ -492,8 +508,8 @@ def test_unreadable_context_is_critical_and_partial(tmp_path, monkeypatch):
     # 등록부가 그 폴더를 못 읽어도 세션 폴더로 프로젝트는 확정된다 — 이때 "Context 없음"으로 숨기지 않는다
     assert resp["matching"]["status"] == "resolved"
     assert _section(resp, "constraints")["state"] == "unknown"
-    assert {"path": "30_Projects/Devtrail/Context.md", "reason": "context_unverifiable", "unverified": True} \
-        in resp["requires_read"]
+    assert {"path": "30_Projects/Devtrail/Context.md", "reason": "context_unverifiable",
+            "read": {"rel_path": "30_Projects/Devtrail/Context.md"}, "unverified": True} in resp["requires_read"]
     assert not any(g["code"] == "no_context" for g in _section(resp, "gaps")["items"])
     assert "못 읽는 제약" not in resp["text"]
 
@@ -675,3 +691,98 @@ def test_append_files_keep_newest_lines_inside_one_block(tmp_path):
     assert om["lines"][0] == 3 and om["lines"][1] == item["segments"][0]["start_line"] - 1
     text = resp["text"]
     assert text.index(f"생략 L{om['lines'][0]}-L{om['lines'][1]}") < text.index("교훈 39")
+
+
+# ── 병합 리뷰 지적 회귀: 읽기 경계 밖 메타데이터, 펜스 규칙, 이어읽기 인자 ──────
+
+
+def test_links_outside_read_boundary_are_never_opened_or_described(tmp_path, monkeypatch):
+    _ctx(tmp_path, "## 제약\n\n- 우리 제약\n")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    secret_decision = outside / "decision.md"
+    secret_decision.write_text(_fm(title="OUTSIDE_TITLE", project="Devtrail", status="candidate",
+                                   created_at="2099-01-01", summary="OUTSIDE_SUMMARY") + "## 결정\n\nOUTSIDE_BODY\n",
+                               encoding="utf-8")
+    secret_handoff = outside / "handoff.md"
+    secret_handoff.write_text(_fm(title="OUTSIDE_HANDOFF", project="Devtrail", handoff_type="process",
+                                  session_id="OUTSIDE_SID", host="OUTSIDE_HOST", created_at="2099-01-01T00:00:00")
+                              + _process("- OUTSIDE_NEXT"), encoding="utf-8")
+    links = {
+        "60_Candidates/Decisions/link.md": secret_decision,
+        "30_Projects/Devtrail/Decisions/link.md": secret_decision,
+        "60_Candidates/SessionHandoffs/Devtrail/link.md": secret_handoff,
+    }
+    for rel, target in links.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).symlink_to(target)
+    _handoff(tmp_path, "p", "process", "s", "2026-11-10T10:00:00", _process("없음"))
+
+    opened: list[str] = []
+    real_bytes, real_text = Path.read_bytes, Path.read_text
+
+    def read_bytes(self):
+        opened.append(str(Path(self).resolve()))
+        return real_bytes(self)
+
+    def read_text(self, *a, **k):
+        opened.append(str(Path(self).resolve()))
+        return real_text(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(Path, "read_text", read_text)
+    resp = _brief(tmp_path)
+    dumped = json.dumps(resp, ensure_ascii=False)
+    assert "OUTSIDE" not in dumped
+    assert str(secret_decision) not in opened and str(secret_handoff) not in opened
+    skipped = {w["path"] for w in resp["warnings"] if w["code"] == "link_skipped"}
+    assert skipped == set(links)
+    # 건너뛴 세션 링크가 있으니 '없음'이라고 단정하지 않는다
+    assert _section(resp, "follow_ups")["state"] == "unknown"
+    # 기본 briefing은 그대로다 (링크를 따라 읽는 기존 동작은 바꾸지 않았다)
+    legacy = vault_tools.get_project_briefing("Devtrail", settings=_settings(tmp_path))
+    assert "OUTSIDE_TITLE" in legacy.text
+
+
+def test_attribution_failures_expose_only_path_and_state(tmp_path):
+    _ctx(tmp_path, "## 제약\n\n- 우리 제약\n")
+    _ctx(tmp_path, "## 배경\n\n다른 프로젝트\n", project="Other")
+    _w(tmp_path, "30_Projects/Devtrail/Decisions/foreign.md",
+       _fm(title="FOREIGN_TITLE", project="Other", status="accepted", created_at="2099-01-01") + "## 결정\n\nFOREIGN_BODY\n")
+    _w(tmp_path, "60_Candidates/SessionHandoffs/Devtrail/foreign.md",
+       _fm(title="FOREIGN_HANDOFF", project="Other", handoff_type="process", session_id="FOREIGN_SID",
+           host="FOREIGN_HOST", agent="FOREIGN_AGENT", created_at="2099-01-01T00:00:00") + _process("- FOREIGN_NEXT"))
+    resp = _brief(tmp_path)
+    assert "FOREIGN" not in json.dumps(resp, ensure_ascii=False)
+    recent = _section(resp, "recent")
+    assert {"path": "30_Projects/Devtrail/Decisions/foreign.md", "status": "promoted", "item": None,
+            "state": "attribution_mismatch"} in recent["decisions"]
+    session = recent["sessions"][0]
+    assert session["session_id"] is None and session["host"] is None
+    assert session["handoffs"] == [{"path": "60_Candidates/SessionHandoffs/Devtrail/foreign.md", "items": [],
+                                    "state": "attribution_mismatch"}]
+    assert _section(resp, "follow_ups")["state"] == "unknown"
+
+
+@pytest.mark.parametrize("block", [
+    "~~~markdown\n```\n# 안쪽 제목\n~~~\n",           # 다른 종류 펜스는 닫지 않는다
+    "````\n```\n# 안쪽 제목\n````\n",                 # 여는 길이보다 짧은 펜스는 닫지 않는다
+    "```python\n# 안쪽 제목\n``` 정보\n```\n",          # 정보 문자열이 붙은 펜스는 닫는 펜스가 아니다
+    "    ```\n    # 들여쓴 코드\n",                     # 4칸 들여쓴 줄은 펜스가 아니다
+])
+def test_fence_rules_keep_real_constraint_heading_after_code_block(tmp_path, block):
+    _ctx(tmp_path, "## 배경\n\n" + block + "\n## 제약\n\n- FENCE_AFTER_CONSTRAINT\n")
+    resp = _brief(tmp_path)
+    assert [i["label"] for i in _items(resp, "constraints")] == ["제약"]
+    assert "- FENCE_AFTER_CONSTRAINT" in resp["text"]
+    assert not any(g["code"] == "unclosed_code_fence" for g in _section(resp, "gaps")["items"])
+    ctx = _items(resp, "context")[0]
+    assert "# 안쪽 제목" in "\n".join(seg["text"] for seg in ctx["segments"]) or "들여쓴" in block
+
+
+def test_late_constraint_after_mixed_fence_in_long_context_is_critical_or_kept(tmp_path):
+    memo = "".join(f"- 메모 {i}: " + "설명 " * 30 + "\n" for i in range(120))
+    _ctx(tmp_path, "## 배경\n\n~~~markdown\n```\n~~~\n\n" + memo + "\n## 제약\n\n- LATE_FENCED_CONSTRAINT\n")
+    resp = _brief(tmp_path)
+    assert "- LATE_FENCED_CONSTRAINT" in resp["text"]
+    assert _section(resp, "constraints")["state"] == "items"

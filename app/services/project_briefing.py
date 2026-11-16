@@ -104,6 +104,8 @@ _SCAFFOLD_LINES = frozenset({
 })
 _EMPTY_BULLET_RE = re.compile(r"^(?:[-*+]|\d+[.)])$")
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 # 제목만 본다. 이 단어가 없는 제목 아래의 제약성 문장은 "맥락"으로 남기고, 제약으로 승격하지 않는다.
 _CONSTRAINT_HEADING_RE = re.compile(
     r"제약|원칙|규칙|금지|불변식|(?<![a-z])(?:constraints?|principles?|rules?|guardrails?|invariants?)(?![a-z])",
@@ -157,6 +159,7 @@ class _Build:
     follow_sources: list[dict[str, Any]] = field(default_factory=list)
     sessions: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
+    rejected: dict[str, str] = field(default_factory=dict)  # 소속 검증에 실패한 문서 rel → 사유 (내용 유래 값을 싣지 않는다)
     _seq: int = 0
 
     def next_id(self, prefix: str) -> str:
@@ -191,10 +194,11 @@ class _Build:
             self.partial = True
             self.warn("read_failed", f"파일을 읽지 못했습니다: {exc.strerror or exc}", path=rel)
             return None
-        self.docs[normalized] = doc
-        for w in doc.warnings[:5]:
-            self.warn("document", w, path=normalized)
+        self.docs[normalized] = doc  # 문서 경고는 소속 검증 뒤 사용한 문서에만 붙인다 (build 끝)
         return doc
+
+    def reject(self, rel: str, reason: str) -> None:
+        self.rejected[rel] = reason
 
 
 # ── 줄 단위 도구 ─────────────────────────────────────────────────────────────
@@ -209,22 +213,41 @@ def _norm(text: str) -> str:
     return " ".join(text.replace("—", "-").split()).casefold()
 
 
-def _is_fence(text: str) -> bool:
-    s = text.lstrip()
-    return s.startswith("```") or s.startswith("~~~")
+def _fence_map(lines: list[str], start: int, end: int) -> tuple[set[int], int | None]:
+    """[start, end]에서 코드 블록에 속한 줄(여닫는 펜스 줄 포함)과, 닫히지 않은 블록의 여는 줄 번호.
+
+    CommonMark 펜스 규칙을 따른다: 여는 펜스는 들여쓰기 0~3칸에 ` 또는 ~ 3개 이상(` 펜스의 정보 문자열에는 `가 없어야
+    한다). 닫는 펜스는 **같은 문자**로 **여는 길이 이상**, 뒤에 공백 말고는 없어야 한다. 종류·길이를 보지 않고 펜스마다
+    상태를 뒤집으면 `~~~markdown` 블록 안의 단독 ``` 줄 때문에 블록 밖의 실제 제목(제약 절 포함)을 코드로 오인한다.
+    제목 탐지·정리·미종료 판정이 모두 이 함수를 쓴다.
+    """
+    fenced: set[int] = set()
+    char = ""
+    length = 0
+    opened: int | None = None
+    for n in range(start, end + 1):
+        text = lines[n - 1]
+        if not char:
+            m = _FENCE_OPEN_RE.match(text)
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                char, length, opened = m.group(1)[0], len(m.group(1)), n
+                fenced.add(n)
+            continue
+        fenced.add(n)
+        m = _FENCE_CLOSE_RE.match(text)
+        if m and m.group(1)[0] == char and len(m.group(1)) >= length:
+            char, length, opened = "", 0, None
+    return fenced, opened
 
 
 def _headings(lines: list[str], start: int, end: int) -> list[tuple[int, int, str]]:
     """[start, end] 안의 제목 줄 (줄 번호, 단계, 제목). 코드 블록 안 '#' 줄은 제목이 아니다."""
     out: list[tuple[int, int, str]] = []
-    fence = False
+    fenced, _ = _fence_map(lines, start, end)
     for n in range(start, end + 1):
+        if n in fenced:
+            continue
         text = lines[n - 1]
-        if _is_fence(text):
-            fence = not fence
-            continue
-        if fence:
-            continue
         h = _heading(text)
         if h:
             out.append((n, h[0], h[1]))
@@ -239,18 +262,11 @@ def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tup
     """
     keep: list[int] = []
     cleaned: list[tuple[int, str]] = []
-    fenced: set[int] = set()  # 코드 블록 안 줄 — 제목·빈 틀로 보지 않는다
-    fence = False
+    fenced, _ = _fence_map(lines, start, end)  # 코드 블록 안 줄 — 제목·빈 틀로 보지 않는다
     for n in range(start, end + 1):
         text = lines[n - 1]
         s = text.strip()
-        if _is_fence(text):
-            fence = not fence
-            fenced.add(n)
-            keep.append(n)
-            continue
-        if fence:
-            fenced.add(n)
+        if n in fenced:
             keep.append(n)
             continue
         if text.startswith(evidence_search._MARKER_PREFIX):
@@ -409,10 +425,10 @@ def _collect_context(b: _Build) -> None:
         elif deep is not None and lv <= deep:
             heads.append((n, lv, text))
             deep = None
-    fences = [n for n in range(doc.body_start, total + 1) if _is_fence(lines[n - 1])]
-    if len(fences) % 2:
-        b.gap("unclosed_code_fence", f"Context.md {fences[-1]}행의 코드 블록이 닫히지 않아 그 뒤 제목(제약 절 포함)을 "
-              "제목으로 보지 않았다 — 그 뒤 내용은 맥락 항목의 코드로 남는다.", path=doc.rel, lines=[fences[-1], total])
+    _, unclosed = _fence_map(lines, doc.body_start, total)
+    if unclosed is not None:
+        b.gap("unclosed_code_fence", f"Context.md {unclosed}행의 코드 블록이 닫히지 않아 그 뒤 제목(제약 절 포함)을 "
+              "제목으로 보지 않았다 — 그 뒤 내용은 맥락 항목의 코드로 남는다.", path=doc.rel, lines=[unclosed, total])
     starts: list[tuple[int, int, str]] = []
     if not heads or heads[0][0] > doc.body_start:
         starts.append((doc.body_start, 0, ""))  # 첫 제목 앞 머리말
@@ -536,30 +552,41 @@ def _collect_memory(b: _Build) -> None:
         b.follow_sources.append({"source": "project_open_loops", "path": _MEMORY_FILES["open_loops"], "state": "no_block"})
 
 
-def _collect_decisions(b: _Build, decisions: list[dict], unlisted: list[dict]) -> None:
+def _note_unlisted(b: _Build, unlisted: list[dict], follow_source: str = "") -> None:
+    """기본 목록이 건너뛴 파일. 읽기 경계 밖 링크(skip_only)는 정책상 제외라 partial이 아니지만 경고로 드러낸다."""
     for w in unlisted:
-        b.partial = True
+        if not w.get("skip_only"):
+            b.partial = True
         b.warn(w["code"], w["message"], path=w["path"])
+        if follow_source:
+            b.follow_sources.append({"source": follow_source, "path": w["path"],
+                                     "state": "link_skipped" if w.get("skip_only") else "unreadable"})
+
+
+def _collect_decisions(b: _Build, decisions: list[dict], unlisted: list[dict]) -> None:
+    _note_unlisted(b, unlisted)
     for d in decisions[:_RECENT_DECISIONS]:
         doc = b.load(d["rel_path"])
-        entry = {"path": d["rel_path"], "title": d["title"], "status": d["status"], "date": d["date"], "item": None}
+        # 후보/승격 구분은 경로(폴더)에서 온다. 제목·날짜 같은 내용 유래 값은 읽기 경계·소속을 통과한 뒤에만 싣는다
+        entry: dict[str, Any] = {"path": d["rel_path"], "status": d["status"], "item": None}
         b.decisions.append(entry)
         if doc is None:
             entry["state"] = "unreadable"
             continue
         if not _attributed_to(doc, b.project):
             entry["state"] = "attribution_mismatch"
-            b.gap("attribution_mismatch",
-                  f"결정 '{d['title']}'은 기본 목록에 들었지만 소속 근거({', '.join(doc.file_unit.evidence)})가 이 프로젝트로 "
-                  "확정되지 않아 넣지 않았다.", path=d["rel_path"])
+            b.reject(doc.rel, "attribution_mismatch")
+            b.gap("attribution_mismatch", "결정 문서의 소속이 이 프로젝트로 확정되지 않아 제목·내용을 넣지 않았다.",
+                  path=d["rel_path"])
             continue
+        title = evidence_search._clip(doc.title, _FIELD_CHARS)
         recorded = _time_of(doc, ("updated_at", "created_at"))
-        entry["recorded_at"] = recorded
+        entry.update(title=title, date=recorded["value"][:10], recorded_at=recorded)
         meta = {"decision_status": d["status"], "recorded_at": recorded}
         spans = _sections_named(doc, _DECISION_HEADINGS)
         if spans:
             n, end = spans[0]
-            item = _add_item(b, "recent", "decision", f"결정: {d['title']}", doc, (n, end),
+            item = _add_item(b, "recent", "decision", f"결정: {title}", doc, (n, end),
                              {"결정", "decision"}, "project", **meta)
             entry["item"] = item.id
             entry["state"] = "excerpt" if item.candidates else "section_empty"
@@ -568,7 +595,7 @@ def _collect_decisions(b: _Build, decisions: list[dict], unlisted: list[dict]) -
             continue
         line = _summary_line(doc)
         if line:
-            item = _add_item(b, "recent", "decision", f"결정: {d['title']}", doc, (line, line), set(), "project",
+            item = _add_item(b, "recent", "decision", f"결정: {title}", doc, (line, line), set(), "project",
                              excerpt_basis="frontmatter summary", **meta)
             entry["item"] = item.id
             entry["state"] = "excerpt"
@@ -594,45 +621,54 @@ def _summary_line(doc: Any) -> int:
 
 def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                       timestamp: Callable[[dict], float]) -> None:
-    for w in unlisted:
-        b.partial = True
-        b.warn(w["code"], w["message"], path=w["path"])
-        b.follow_sources.append({"source": "session_handoff", "path": w["path"], "state": "unreadable"})
+    """최근 세션 창(기본 briefing과 같은 묶음·순서)의 Plan/Process.
+
+    목록 함수가 읽은 메타데이터는 순서를 정하는 데만 쓴다. session_id·host·agent·제목·유형처럼 응답에 싣는 값은
+    읽기 경계·소속 검증을 통과한 문서(load_doc)에서 다시 꺼낸다 — 검증에 실패한 문서는 경로와 상태만 남는다.
+    """
+    _note_unlisted(b, unlisted, "session_handoff")
     if not groups:
         if unlisted:
-            b.gap("sessions_unverifiable", "읽은 SessionHandoff 기록이 없지만 읽지 못한 파일·폴더가 있어 기록이 없다고 말할 수 없다.")
+            b.gap("sessions_unverifiable", "읽은 SessionHandoff 기록이 없지만 읽지 못한(또는 읽기 경계 밖) 파일·폴더가 있어 "
+                  "기록이 없다고 말할 수 없다.")
         else:
             b.gap("no_sessions", "이 프로젝트의 SessionHandoff(Plan/Process) 기록이 없다.")
+    meta_of = evidence_search._str_meta
     for rank, group in enumerate(groups, 1):
         ordered = sorted(group, key=timestamp, reverse=True)
-        main = next((h for h in ordered if h["handoff_type"] == "process"), ordered[0])
-        session = {"rank": rank, "session_id": main["session_id"], "host": main["host"], "agent": main["agent"],
-                   "handoffs": []}
+        session: dict[str, Any] = {"rank": rank, "session_id": None, "host": None, "agent": None, "handoffs": []}
         b.sessions.append(session)
-        has_process = any(h["handoff_type"] == "process" for h in group)
+        valid: list[tuple[Any, dict[str, Any]]] = []
         for h in ordered:
             doc = b.load(h["rel_path"])
-            entry = {"path": h["rel_path"], "handoff_type": h["handoff_type"], "title": h["title"], "items": []}
+            entry: dict[str, Any] = {"path": h["rel_path"], "items": []}
             session["handoffs"].append(entry)
             if doc is None:
                 entry["state"] = "unreadable"
-                if h["handoff_type"] == "process":
-                    b.follow_sources.append({"source": "next_session", "path": h["rel_path"], "state": "unreadable",
-                                             "session_id": h["session_id"]})
+                b.follow_sources.append({"source": "session_handoff", "path": h["rel_path"], "state": "unreadable"})
                 continue
-            entry["recorded_at"] = _time_of(doc, ("updated_at", "created_at"))
             if not _attributed_to(doc, b.project):
                 entry["state"] = "attribution_mismatch"
-                b.gap("attribution_mismatch",
-                      f"세션 기록 '{h['title']}'의 소속 근거({', '.join(doc.file_unit.evidence)})가 이 프로젝트로 확정되지 않아 "
-                      "넣지 않았다.", path=h["rel_path"])
-                if h["handoff_type"] == "process":
-                    b.follow_sources.append({"source": "next_session", "path": h["rel_path"], "state": "unreadable",
-                                             "session_id": h["session_id"]})
+                b.reject(doc.rel, "attribution_mismatch")
+                b.gap("attribution_mismatch", "세션 기록의 소속이 이 프로젝트로 확정되지 않아 제목·내용을 넣지 않았다.",
+                      path=h["rel_path"])
+                b.follow_sources.append({"source": "session_handoff", "path": h["rel_path"], "state": "attribution_mismatch"})
                 continue
-            meta = {"session_id": h["session_id"], "handoff_type": h["handoff_type"], "recorded_at": entry["recorded_at"],
-                    "host": h["host"], "agent": h["agent"], "session_rank": rank}
-            if h["handoff_type"] == "process":
+            valid.append((doc, entry))
+        kinds = [(meta_of(doc.meta, "handoff_type") or "").casefold() for doc, _ in valid]
+        main = next((doc for (doc, _), k in zip(valid, kinds) if k == "process"), valid[0][0] if valid else None)
+        if main is not None:
+            session.update(session_id=evidence_search._clip(meta_of(main.meta, "session_id") or "", _FIELD_CHARS),
+                           host=evidence_search._clip(meta_of(main.meta, "host") or "", 80),
+                           agent=evidence_search._clip(meta_of(main.meta, "agent") or "", 80))
+        for (doc, entry), kind in zip(valid, kinds):
+            recorded = _time_of(doc, ("updated_at", "created_at"))
+            entry.update(handoff_type=kind, title=evidence_search._clip(doc.title, _FIELD_CHARS), recorded_at=recorded)
+            sid = evidence_search._clip(meta_of(doc.meta, "session_id") or "", _FIELD_CHARS)
+            meta = {"session_id": sid, "handoff_type": kind, "recorded_at": recorded,
+                    "host": evidence_search._clip(meta_of(doc.meta, "host") or "", 80),
+                    "agent": evidence_search._clip(meta_of(doc.meta, "agent") or "", 80), "session_rank": rank}
+            if kind == "process":
                 for name, group_key, section, label in (
                     ("what changed", "session_result", "recent", "What Changed (기록된 결과)"),
                     ("next session", "next_session", "follow_ups", "Next Session"),
@@ -642,7 +678,7 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                         entry.setdefault("missing", []).append(name)
                         if section == "follow_ups":
                             b.follow_sources.append({"source": "next_session", "path": doc.rel, "state": "missing",
-                                                     "session_id": h["session_id"]})
+                                                     "session_id": sid})
                         continue
                     for n, end in spans:
                         drop = {name}
@@ -652,19 +688,19 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                                      else "items" if _has_content(doc.source.lines, keep) else "empty")
                             if state == "empty":
                                 b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
-                                                         "state": "empty", "session_id": h["session_id"]})
+                                                         "state": "empty", "session_id": sid})
                                 continue
                             item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project",
                                              follow_up_state=state, **meta)
                             b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
-                                                     "state": state, "session_id": h["session_id"], "item": item.id})
+                                                     "state": state, "session_id": sid, "item": item.id})
                         else:
                             if not _has_content(doc.source.lines, keep):
                                 entry.setdefault("empty", []).append(name)
                                 continue
                             item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project", **meta)
                         entry["items"].append(item.id)
-            elif h["handoff_type"] == "plan":
+            elif kind == "plan":
                 for n, end in _sections_named(doc, {"goal"}):
                     keep, _ = _clean(doc.source.lines, n, end, {"goal"})
                     if not _has_content(doc.source.lines, keep):
@@ -672,17 +708,20 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                     item = _add_item(b, "recent", "plan_goal", "Plan Goal (기록 당시 목표 — 완료 여부는 판정하지 않음)",
                                      doc, (n, end), {"goal"}, "project", **meta)
                     entry["items"].append(item.id)
-        if not has_process:
-            b.follow_sources.append({"source": "next_session", "path": ordered[0]["rel_path"], "state": "no_process",
-                                     "session_id": main["session_id"]})
-            b.gap("orphan_plan", f"세션 {main['session_id'] or ordered[0]['rel_path']}에 Plan만 있고 Process가 없다 — "
-                  "그 세션의 결과·후속 항목은 확인할 수 없다.", path=ordered[0]["rel_path"])
+        # 검증을 통과한 문서가 모두 있고 그중 Process가 없을 때만 "Plan만 있다"고 말한다 (실패한 문서가 Process였을 수 있다)
+        if valid and len(valid) == len(ordered) and "process" not in kinds:
+            path = valid[0][0].rel
+            b.follow_sources.append({"source": "next_session", "path": path, "state": "no_process",
+                                     "session_id": session["session_id"]})
+            b.gap("orphan_plan", f"세션 {session['session_id'] or path}에 Plan만 있고 Process가 없다 — "
+                  "그 세션의 결과·후속 항목은 확인할 수 없다.", path=path)
 
 
 def _follow_up_state(b: _Build) -> dict[str, Any]:
     states = [s["state"] for s in b.follow_sources]
     sessions_checked = [s for s in b.follow_sources if s["source"] in ("next_session", "session_handoff")]
-    unknown = [s for s in b.follow_sources if s["state"] in ("missing", "empty", "no_process", "unreadable", "unattributed")]
+    unknown = [s for s in b.follow_sources if s["state"] in ("missing", "empty", "no_process", "unreadable", "unattributed",
+                                                             "attribution_mismatch", "link_skipped")]
     if "items" in states:
         state = "has_items"
         message = "아래는 기록에 명시된 후속 항목이다(기록 당시). 완료 여부·현재 유효성은 판정하지 않았다."
@@ -707,21 +746,34 @@ def _follow_up_state(b: _Build) -> dict[str, Any]:
 
 
 def _read_args(doc: Any, start: int, end: int) -> dict[str, Any]:
-    """생략 구간을 read_note(structured=True)로 다시 읽는 인자. max_chars는 기본값(=최대)이라 넣지 않는다."""
-    count = end - start + 1
-    args: dict[str, Any] = {"path": doc.rel, "start_line": start, "max_lines": min(count, READ_MAX_LINES),
-                            "expected_version": doc.source.version, "end_line": end}
-    if count > READ_MAX_LINES:
-        args["continues"] = True  # 응답의 next로 이어 읽는다
-    if any(len(doc.source.lines[n - 1]) > READ_MAX_CHARS for n in range(start, end + 1)):
-        args["structured_readable"] = False  # 줄 단위로 줄 수 없는 줄이 있다 — read_note(structured=False)로 전문
-    return args
+    """생략 구간을 다시 읽는 MCP `read_note` 인자 — 이 dict를 그대로 `read_note(**read)`에 넘긴다.
+
+    안내 정보(구간 끝·이어읽기 필요 여부·structured로 읽을 수 있는지)는 섞지 않는다 — `_read_info`가 따로 준다.
+    max_chars는 기본값(=최대)이라 넣지 않는다. 16000자를 넘는 줄이 있으면 structured로는 그 줄을 받을 수 없어
+    전문 읽기(`{"rel_path": …}`)를 준다 — 이때는 버전 확인이 없다.
+    """
+    if _read_info(doc, start, end)["structured_readable"]:
+        return {"rel_path": doc.rel, "structured": True, "start_line": start,
+                "max_lines": min(end - start + 1, READ_MAX_LINES), "expected_version": doc.source.version}
+    return {"rel_path": doc.rel}
+
+
+def _read_info(doc: Any, start: int, end: int) -> dict[str, bool]:
+    return {
+        # max_lines 상한(400)보다 긴 구간 — 응답의 next(start_line·expected_version)로 이어 읽는다
+        "read_continues": end - start + 1 > READ_MAX_LINES,
+        "structured_readable": not any(len(doc.source.lines[n - 1]) > READ_MAX_CHARS for n in range(start, end + 1)),
+    }
+
+
+def _omission(doc: Any, rng: list[int], reason: str) -> dict[str, Any]:
+    return {"lines": rng, "reason": reason, "read": _read_args(doc, *rng), **_read_info(doc, *rng)}
 
 
 def _call(args: dict[str, Any]) -> str:
-    if args.get("structured_readable") is False:
-        return f'read_note("{args["path"]}")'
-    return (f'read_note("{args["path"]}", structured=True, start_line={args["start_line"]}, '
+    if not args.get("structured"):
+        return f'read_note("{args["rel_path"]}")'
+    return (f'read_note("{args["rel_path"]}", structured=True, start_line={args["start_line"]}, '
             f'max_lines={args["max_lines"]}, expected_version="{args["expected_version"]}")')
 
 
@@ -753,14 +805,15 @@ def _omission_line(item: _Item, om: dict[str, Any]) -> str:
 def _omission_reserve(item: _Item) -> int:
     """생략 안내 줄의 최대 길이(+줄바꿈). 줄 번호를 전체 줄 수 자릿수로 잡아 실제 줄은 이보다 짧거나 같다."""
     t = item.doc.source.total_lines
-    worst = {"path": item.doc.rel, "start_line": t, "max_lines": READ_MAX_LINES, "expected_version": item.doc.source.version}
+    worst = {"rel_path": item.doc.rel, "structured": True, "start_line": t, "max_lines": READ_MAX_LINES,
+             "expected_version": item.doc.source.version}
     return len(_omission_line(item, {"lines": [t, t], "reason": "line_too_long", "read": worst})) + 1
 
 
 def _stub_cost(item: _Item) -> int:
     """전부 생략될 때의 한 줄 안내 길이(+항목 사이 빈 줄) — 이유는 가장 긴 값으로 잡는다."""
     rng = [item.candidates[0], item.candidates[-1]]
-    om = {"lines": rng, "reason": "line_too_long", "read": _read_args(item.doc, *rng)}
+    om = _omission(item.doc, rng, "line_too_long")
     return len(_render_item(_Item(**{**item.__dict__, "stub": True, "omission": om}))) + 2
 
 
@@ -840,7 +893,7 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
             if len(chosen) < len(item.candidates):
                 first = seq[len(chosen)]  # 처음 못 넣은 줄
                 rng = ([item.candidates[0], first] if item.tail else [first, item.candidates[-1]])
-                item.omission = {"lines": rng, "reason": reason or "budget", "read": _read_args(item.doc, *rng)}
+                item.omission = _omission(item.doc, rng, reason or "budget")
                 if reason == "line_too_long":
                     item.omission["line_chars"] = len(lines[first - 1])
                 if not chosen:
@@ -906,7 +959,8 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
                 out.append("- 기록된 결정 없음")
             for d in b.decisions:
                 if d.get("state") != "excerpt":
-                    out.append(f"- {c(d['title'])} · {d['status']} · {c(d['date'] or '날짜 없음', 40)} · {d['path']} · "
+                    out.append(f"- {c(d.get('title') or '(제목 미표시 — 검증 전)')} · {d['status']} · "
+                               f"{c(d.get('date') or '날짜 없음', 40)} · {d['path']} · "
                                f"발췌 없음({d.get('state')}) → read_note(\"{d['path']}\")")
             if include_items:
                 add_items(items_of("recent", "decision"))
@@ -923,7 +977,7 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
                     if notes:
                         noted += 1
                         if noted <= list_cap:
-                            out.append(f"  - {c(h['handoff_type'], 40)} {h['path']}: {', '.join(notes)}")
+                            out.append(f"  - {c(h.get('handoff_type') or 'handoff', 40)} {h['path']}: {', '.join(notes)}")
                 if noted > list_cap:
                     out.append(f"  - 그 밖에 {noted - list_cap}개 파일 — JSON sections.recent.sessions 참조")
                 if include_items:
@@ -951,7 +1005,7 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
         out.extend(["", f"… 그 밖에 본문에 안내도 못 낸 생략 {aggregated if include_items else 99999}건 — JSON omissions 참조"])
     if b.docs:
         out.extend(["", "## 출처 (source_version — read_note expected_version)"])
-        docs = list(b.docs.items())
+        docs = [(rel, doc) for rel, doc in b.docs.items() if rel not in b.rejected]
         for rel, doc in docs[:list_cap * 2]:
             out.append(f"- {rel} · {doc.source.version} · {doc.source.total_lines}줄")
         if len(docs) > list_cap * 2:
@@ -1087,6 +1141,10 @@ def build(
         b.gap(f"project_{res.status}",
               "프로젝트를 명시적 근거로 확정하지 못해 어떤 프로젝트 기록도 넣지 않았다. 다른 프로젝트 근거로 채우지 않는다 — "
               "matching.candidates·hint를 보고 프로젝트명을 직접 넘긴다." + (f" ({res.hint})" if res.hint else ""))
+    for rel, doc in b.docs.items():
+        if rel not in b.rejected:
+            for w in doc.warnings[:5]:
+                b.warn("document", w, path=rel)
     follow = _follow_up_state(b) if res.status in ("resolved", "unregistered") else {
         "state": "not_evaluated", "message": "프로젝트가 확정되지 않아 확인하지 않았다.", "complete": False}
 
@@ -1103,22 +1161,21 @@ def build(
         remaining, aggregated = _allocate(b, remaining)
     else:
         for item in b.items:
-            item.omission = {"lines": [item.span[0], item.span[1]], "reason": "budget",
-                             "read": _read_args(item.doc, item.span[0], item.span[1])}
+            item.omission = _omission(item.doc, [item.span[0], item.span[1]], "budget")
             aggregated += 1
 
     omissions = []
     for item in b.items:
         if item.omission:
+            # read는 MCP read_note에 그대로 넘기는 인자, 나머지는 안내 정보
             om = {"item": item.id, "section": item.section, "kind": item.group, "path": item.doc.rel,
-                  "lines": item.omission["lines"], "reason": item.omission["reason"],
-                  "critical": item.section == "constraints", "read": item.omission["read"]}
-            if "line_chars" in item.omission:
-                om["line_chars"] = item.omission["line_chars"]
+                  "critical": item.section == "constraints", **item.omission}
             omissions.append(om)
     critical_gaps = [g for g in b.gaps if g.get("critical")]
-    requires_read = [om["read"] for om in omissions if om["critical"]]
-    requires_read += [{"path": g["path"], "reason": g["code"], **({"unverified": True} if g.get("unverified") else {})}
+    requires_read = [{"path": om["path"], "lines": om["lines"], "reason": "critical_omission", "item": om["item"],
+                      "read": om["read"]} for om in omissions if om["critical"]]
+    requires_read += [{"path": g["path"], "reason": g["code"], "read": {"rel_path": g["path"]},
+                       **({"unverified": True} if g.get("unverified") else {})}
                       for g in critical_gaps if g.get("path")]
     critical = bool(requires_read) or bool(critical_gaps)
 
@@ -1160,7 +1217,9 @@ def build(
         "sections": sections,
         "omissions": omissions,
         "warnings": b.warnings,
-        "sources": [_source_dict(d) for d in b.docs.values()],
+        # 소속 검증에 실패한 문서는 경로와 제외 사유만 — 제목·버전·귀속 근거(문서 내용에서 온 값)를 싣지 않는다
+        "sources": [{"path": rel, "excluded": b.rejected[rel]} if rel in b.rejected else _source_dict(d)
+                    for rel, d in b.docs.items()],
         "text": text,
         "budget": {
             "text_max_chars": TEXT_MAX_CHARS, "text_chars": len(text),

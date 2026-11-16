@@ -29,12 +29,12 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 | `project`, `matched` | 확정된 프로젝트 표기, 확정 여부(`matching.status == "resolved"`) |
 | `matching` | 식별 결과 — `input, status, project, method, evidence, candidates, hint, basis` (+ 확정 못 했을 때 `registered_projects`) |
 | `sections` | 표시 순서대로 5개: `constraints`, `context`, `recent`, `follow_ups`, `gaps` |
-| `omissions` | 본문에 못 넣은 구간 — `item, section, kind, path, lines:[시작,끝], reason, critical, read` (+ `line_chars`) |
+| `omissions` | 본문에 못 넣은 구간 — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래) |
 | `critical_omission` | 제약이 일부라도 본문에 없거나, 제약 출처(Context.md)를 확인하지 못했다 |
-| `requires_read` | 먼저 읽어야 할 구간 — 빠진 제약의 `read` 인자, 확인하지 못한 제약 출처 `{path, reason}` |
+| `requires_read` | 먼저 읽어야 할 것 — `{path, lines, reason: critical_omission, item, read}`(빠진 제약 구간) 또는 `{path, reason: context_unreadable·context_unverifiable, read: {rel_path}, unverified?}`. `read`는 그대로 `read_note(**read)` |
 | `partial` | 일부 기록을 읽지 못했다(읽기 실패·frontmatter 해석 실패로 기본 목록에서 빠진 파일·등록부 미확인) |
 | `warnings` | `{code, message, path?}` — `read_failed`, `registry_unreadable`, `frontmatter_unparsed`, `document`, `response_large` … |
-| `sources` | 읽은 문서마다 `path, title, kind, record_tier, status, time, attribution, source_version, total_lines, frontmatter_lines` |
+| `sources` | 사용한 문서마다 `path, title, kind, record_tier, status, time, attribution, source_version, total_lines, frontmatter_lines`. 소속 검증에 실패한 문서는 `{path, excluded}`만 |
 | `text` | 사람·에이전트가 읽는 본문. **20000자 이하**, 완전한 줄만 |
 | `budget` | `text_max_chars, text_chars, response_chars, sources_meta_chars, sections_meta_chars, display_order, budget_order, group_caps, item_caps` |
 | `elapsed_ms` | 조립 시간 |
@@ -59,6 +59,21 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
   `decision_status(candidate|promoted), recorded_at`, 메모리 블록은 `block_evidence`(marker 근거)를 더 단다.
 - 다시 읽기: `read_note(path, structured=True, start_line, max_lines, expected_version=source_version)`. 그 사이 파일이
   바뀌었으면 `version_mismatch`로 거절된다.
+
+### 이어읽기 인자 `read`
+
+`omissions[].read`와 `requires_read[].read`는 MCP `read_note`의 인자 이름 그대로이고 다른 필드를 섞지 않는다 — 변환 없이
+`read_note(**read)`로 넘긴다(stdio 왕복 테스트가 그대로 넘겨 확인한다).
+
+```json
+{"rel_path": "30_Projects/Devtrail/Context.md", "structured": true, "start_line": 192, "max_lines": 70,
+ "expected_version": "sha256:…"}
+```
+
+- 구간 끝·안내 정보는 생략 항목 쪽에 따로 있다: `lines`(정확한 [시작, 끝]), `read_continues`(구간이 400줄을 넘어 응답의
+  `next`로 이어 읽어야 함), `structured_readable`.
+- 16000자를 넘는 줄이 구간에 있으면 structured로 그 줄을 받을 수 없어 `structured_readable=false`, `read = {"rel_path": …}`
+  (전문 읽기, 버전 확인 없음)다.
 
 ## 다섯 갈래 — 분류 근거는 제목과 메타데이터뿐
 
@@ -120,7 +135,9 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
   `## Next Session`·`## What Changed`·`## Goal`·`## 결정`, OpenLoops의 `## <프로젝트>`
 - `empty_section`: 위를 빼고 나니 내용 없이 제목만 남은 절
 
-코드 블록 안 줄은 건드리지 않는다. 템플릿과 비슷하게 생긴 사용자 문장(`_(직접 쓴 메모)_`), 모르는 제목과 그 내용은 남는다.
+코드 블록 안 줄은 건드리지 않고 제목으로도 보지 않는다. 코드 블록 판정은 CommonMark 펜스 규칙을 따른다 — 여는 펜스는
+들여쓰기 0~3칸의 ` 또는 ~ 3개 이상, 닫는 펜스는 **같은 문자·여는 길이 이상**이고 뒤에 공백 말고는 없어야 한다
+(`~~~markdown` 블록 안의 단독 ``` 줄은 블록을 닫지 않는다). 제목 탐지·정리·`unclosed_code_fence` 판정이 같은 규칙을 쓴다. 템플릿과 비슷하게 생긴 사용자 문장(`_(직접 쓴 메모)_`), 모르는 제목과 그 내용은 남는다.
 빈 틀뿐인 Context 절은 항목을 만들지 않고 `sections[context].cleaned_sections`에 남긴다.
 
 ## 예산 — text 20000자, 제약부터
@@ -142,9 +159,9 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 - 고정부의 문서 유래 문자열(결정 제목·session_id·host 등)은 200자로 자르고, 목록(gaps·확인 못 한 출처·세션 파일 안내·출처)은
   20줄까지 낸다. 고정부만으로 상한을 넘으면 목록을 5줄, 0줄로 줄이고 개수만 적는다 — 어떤 vault에서도 text는 20000자를 넘지 않는다.
 - 한 줄이 상한보다 길면 자르지 않는다(`line_too_long`, `line_chars`). 그 줄이 16000자를 넘으면 structured 읽기로도 한
-  줄을 받을 수 없어 `read.structured_readable=false` — `read_note(path)` 전문으로 읽는다.
-- 이어읽기 인자의 `max_lines`는 최대 400이다. 구간이 더 길면 `continues: true` — 응답의 `next`로 이어 읽는다.
-- 제약이 일부라도 빠지면 `critical: true` 생략이 되고 `critical_omission=true`, `requires_read`에 그 `read` 인자가 들어간다.
+  줄을 받을 수 없어 `structured_readable=false`, `read`는 전문 읽기 인자다.
+- 이어읽기 인자의 `max_lines`는 최대 400이다. 구간이 더 길면 `read_continues: true` — 응답의 `next`로 이어 읽는다.
+- 제약이 일부라도 빠지면 `critical: true` 생략이 되고 `critical_omission=true`, `requires_read`에 그 구간과 `read` 인자가 들어간다.
   본문 머리에도 경고 줄이 붙는다.
 - 원문은 로더가 아니라 `evidence_search.load_doc`으로 직접 읽는다. 기본 briefing의 Context 5000자 사전 잘림이 후반 제약을
   숨기지 않는다. 로더(`ProjectMemoryLoader`·`AgentMemoryLoader`)는 바꾸지 않았다.
@@ -164,6 +181,13 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
   빠지지 않는다. 이를 위해 `_list_decisions`에 선택 인자 `project_dir`를 더했다(기본값이면 기존과 같다).
 - 기본 목록 함수는 읽기·해석에 실패한 파일을 조용히 건너뛰고, Python 3.11 `glob`은 목록을 못 읽는 폴더를 빈 결과로 넘긴다.
   structured는 결정·세션 폴더를 직접 열어 보고 빠진 파일을 다시 세어 `read_failed`·`frontmatter_unparsed`·partial로 드러낸다.
+- **읽기 경계**: structured는 결정·세션 목록 단계에서도 파일을 **열기 전에** 근거 검색 스캔(`evidence_search.scan_vault`)과 같은
+  경계로 거른다 — 링크 파일과 실제 경로가 요청 경로와 다른 파일은 열지 않고 `link_skipped` 경고(경로만)로 알린다. 그래서
+  vault 밖을 가리키는 링크의 제목·날짜도 응답에 들어오지 않는다. 이를 위해 `_list_decisions`·`_list_session_handoffs`에 선택
+  인자 `path_filter`를 더했다(기본값이면 링크도 따라 읽는 기존 동작 그대로). 건너뛴 세션 링크가 있으면 후속 항목은 `unknown`이다.
+- 소속 검증에 실패한 결정·세션 문서(`attribution_mismatch`)는 경로와 상태만 남긴다. 제목·날짜·session_id·host·agent·귀속 근거·
+  문서 경고처럼 내용에서 온 값은 응답 어디에도(`sections`·`sources`·`warnings`·`text`) 싣지 않는다. 세션의 session_id·host·
+  agent·유형도 목록 함수가 읽은 값이 아니라 검증을 통과한 문서에서 다시 꺼낸다.
 
 ## 검증
 
@@ -178,7 +202,8 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 | 20000자·완전한 줄·제약 우선·정확한 생략 위치, 긴 Context 후반 제약, 제약 초과 critical, 과도한 한 줄, Context 읽기 실패, 빈 vault·미등록, 응답 크기 측정 | `test_late_constraint_*`, `test_constraints_over_budget_*`, `test_overlong_*`, `test_unreadable_context_*`, `test_empty_vault_*`, `test_response_*`, `test_large_response_*`, `test_many_unreadable_*`, `test_follow_ups_keep_a_location_line_*` | 통과 |
 | 실제 stdio MCP 왕복: 도구 발견 → structured briefing → 근거 구간 읽기 → 원문 변경 후 버전 불일치 | `tests/test_mcp_stdio.py::test_cli_stdio_structured_briefing_then_evidence_read` (임시 vault, `python -m app.cli mcp-serve` 자식 프로세스) | 통과 |
 | 독립 리뷰가 재현한 결함 7건의 회귀 — 소속 불명 OpenLoops 블록, 고정부 길이 폭주, 목록 못 읽는 폴더, 4단계 제약 제목·닫히지 않은 코드 블록, 폴더명≠선언명 결정, 빈 틀 OpenLoops 블록, append형 파일 최신 줄 | `test_unattributed_open_loops_*`, `test_long_fixed_parts_*`, `test_unlistable_*`, `test_deep_constraint_*`, `test_promoted_decisions_*`, `test_scaffold_only_open_loops_*`, `test_append_files_*`, `test_permission_denied_memory_dir_*` | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 754개 | 통과 (지정 제외 3개는 변경 전부터 실패) |
+| 병합 리뷰 지적 3건의 회귀 — 읽기 경계 밖 링크를 열지도 싣지도 않음(열린 파일 기록으로 확인), 소속 실패 문서는 경로·상태만, 펜스 종류·길이·정보 문자열·들여쓰기 규칙, 반환된 `read`를 MCP `read_note`에 그대로 전달 | `test_links_outside_read_boundary_*`, `test_attribution_failures_expose_only_*`, `test_fence_rules_*`, `test_late_constraint_after_mixed_fence_*`, `test_constraints_over_budget_*`·`test_overlong_*`(tool 함수에 `**read`), stdio 테스트(`read_note(**om["read"])`, `requires_read[].read`, 변경 후 같은 인자로 `version_mismatch`) | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 통과 (지정 제외 3개는 변경 전부터 실패) |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
@@ -190,15 +215,15 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 
 | 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | 확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission |
 |---|---|---|---|---|---|---|---|---|---|
-| 일반 | 5 | 5275→8246 | 6295→40371 | 5→5 | 0→5 | 5→1 | 8114→40371 | 1.0→3.4 | False |
-| 긴 Context 후반 제약 | 2 | 8993→12006 | 9860→42863 | 1→2 | 0→2 | 3→1 | 32394→42863 | 0.7→3.2 | False |
-| 이전 세션의 긴 Next Session | 2 | 5512→8546 | 6327→36222 | 0→2 | 0→2 | 3→1 | 8615→36222 | 0.7→2.6 | False |
-| 제약만 2만 자 초과 | 2 | 6127→18896 | 6702→49207 | 1→1 | 0→1 | 2→2 | 32108→59137 | 0.5→3.1 | True |
+| 일반 | 5 | 5275→8246 | 6295→40371 | 5→5 | 0→5 | 5→1 | 8114→40371 | 1.0→3.7 | False |
+| 긴 Context 후반 제약 | 2 | 8993→12006 | 9860→42924 | 1→2 | 0→2 | 3→1 | 32394→42924 | 0.7→3.4 | False |
+| 이전 세션의 긴 Next Session | 2 | 5512→8546 | 6327→36222 | 0→2 | 0→2 | 3→1 | 8615→36222 | 0.7→2.8 | False |
+| 제약만 2만 자 초과 | 2 | 6127→18896 | 6702→49394 | 1→1 | 0→1 | 2→2 | 32108→59324 | 0.5→3.3 | True |
 | init-project 템플릿 | 1 | 477→962 | 630→4874 | 1→1 | 0→1 | 2→1 | 969→4874 | 0.2→0.5 | False |
 
 읽는 법:
 
-- **더 길고 느리다.** text는 1.3~3.1배, 응답 JSON 전체는 4.3~7.7배, 조립 시간은 약 2.5~6배(밀리초 단위)다. JSON이 큰 이유는
+- **더 길고 느리다.** text는 1.3~3.1배, 응답 JSON 전체는 4.3~7.7배, 조립 시간은 약 2.5~7배(밀리초 단위)다. JSON이 큰 이유는
   발췌 줄이 `text`와 `segments[].text`에 두 번 들어가고, 항목·출처마다 경로·버전·귀속 근거·정리 내역이 붙기 때문이다.
   MCP 응답은 JSON 전체가 클라이언트 컨텍스트에 들어가므로 이 크기는 실제 비용이다. 성능 개선을 주장하지 않는다.
 - 빈 틀뿐인 템플릿 Context도 새 응답이 더 길다 — 빈 틀은 지웠지만 매칭·상태·출처 줄이 더 붙는다.

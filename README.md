@@ -329,7 +329,7 @@ read_note("60_Candidates/SessionHandoffs/Devtrail/….md", structured=True, star
 get_project_briefing("Devtrail", structured=True)
   → sections: 제약 / 프로젝트 맥락 / 기록된 최근 결과·결정 / 명시적 후속 항목 / 정보 부족·판단 한계
     각 발췌 = 원문 줄 그대로 + path · @L시작-L끝 · source_version
-  → omissions[i].read = {path, start_line, max_lines, expected_version}  # read_note(structured=True)에 그대로
+  → omissions[i].read = {rel_path, structured, start_line, max_lines, expected_version}  # read_note(**read) 그대로
   → critical_omission=True면 requires_read(빠진 제약 구간)를 먼저 읽는다
 ```
 

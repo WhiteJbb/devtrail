@@ -189,8 +189,10 @@ def run_scenario(root: Path, scenario: Scenario) -> dict:
     t0 = time.perf_counter()
     confirm_chars = resp["budget"]["response_chars"]
     for r in reads:
-        page = vault_tools.read_source(r["path"], start_line=r["start_line"], max_lines=r["max_lines"],
-                                       expected_version=r["expected_version"], settings=settings)
+        # read는 MCP read_note 인자 그대로다 — structured면 구간 읽기, 아니면 전문
+        args = {k: v for k, v in r.items() if k not in ("rel_path", "structured")}
+        page = (vault_tools.read_source(r["rel_path"], **args, settings=settings) if r.get("structured")
+                else vault_tools.read_note(r["rel_path"], settings=settings))
         confirm_chars += _size(page)
     out["structured"] = {"text_chars": resp["budget"]["text_chars"], "response_chars": resp["budget"]["response_chars"],
                          "sources_meta_chars": resp["budget"]["sources_meta_chars"],

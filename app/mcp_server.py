@@ -124,7 +124,7 @@ def get_project_briefing(project_or_repo: str, structured: bool = False) -> dict
 
     structured=True: 제약·맥락·기록된 최근 결과/결정·명시적 후속 항목·정보 부족을 나눠 주고, 모든 발췌에
     원문 경로·줄(@L시작-L끝)·source_version을 단다. text 본문은 20000자 이하(완전한 줄만). 빠진 구간은
-    omissions의 read 인자로 read_note(structured=True)에 그대로 넘긴다. critical_omission=True면 requires_read를 먼저 읽는다.
+    omissions[].read를 변환 없이 read_note(**read)로 넘긴다. critical_omission=True면 requires_read[].read를 먼저 읽는다.
     프로젝트는 명시적 근거로만 확정한다(matching) — 확정 못 하면 어떤 프로젝트 기록도 넣지 않는다.
     """
     _touch_session_marker()
