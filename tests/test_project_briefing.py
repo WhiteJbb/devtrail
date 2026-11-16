@@ -1014,3 +1014,15 @@ def test_many_follow_up_items_do_not_displace_constraints(tmp_path, mode):
     assert all(any(o["item"] == i["id"] for o in resp["omissions"]) for i in hidden)
     if hidden and not all(i["path"] in resp["text"] for i in hidden):
         assert "안내도 못 낸 생략" in resp["text"]
+
+
+@pytest.mark.parametrize("n_rules", [200, 230, 257])
+def test_small_reserved_follow_up_is_shown_even_when_constraints_fill_budget(tmp_path, n_rules):
+    """실제 비용으로 예약한 작은 후속 항목(두 줄)은 제약이 예산을 다 써도 자기 예약 안에서 통째로 실린다 — 위치 안내도 없이
+    건수로만 남으면 안 된다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + "".join(f"- c{i} " + "가" * 80 + "\n" for i in range(n_rules)))
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- a\n- b"))
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+    assert [i["shown"] for i in _items(resp, "follow_ups")] == ["full"]
+    assert "안내도 못 낸 생략" not in resp["text"]

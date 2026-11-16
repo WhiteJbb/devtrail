@@ -944,6 +944,16 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
             item.tail = group in _TAIL_GROUPS
             seq = list(reversed(item.candidates)) if item.tail else item.candidates
             step = -1 if item.tail else 1
+            # 항목 전체가 남은 예산·상한 안에 들어가면 생략 안내 줄 자리 없이 통째로 넣는다. 줄마다 생략 줄 자리를 남기는
+            # 아래 판정만 쓰면, 실제 비용으로 예약한 작은 항목(_full_cost < 안내 줄)이 자기 예약 안에서도 첫 줄을 못 넣고
+            # 위치 안내 줄마저 못 내는 일이 생긴다.
+            full_text = sum(len(lines[n - 1]) + 1 for n in seq)
+            if (_full_cost(item) <= remaining and (icap is None or full_text <= icap)
+                    and (gcap is None or group_used.get(group, 0) + full_text <= gcap)):
+                seq = []
+                chosen = list(item.candidates)
+                cost = _full_cost(item)
+                text_used = full_text
             for idx, n in enumerate(seq):
                 line_cost = len(lines[n - 1]) + 1
                 seg_cost = width if prev is None or n != prev + step else 0
