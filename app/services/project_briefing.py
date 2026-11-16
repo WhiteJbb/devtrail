@@ -3,7 +3,7 @@
 기본 briefing(app/vault_tools.get_project_briefing)은 그대로 두고, 같은 창(최근 결정 5건·최근 세션 3개)과
 같은 정렬 위에 다음을 더한다 (사용법·계약: docs/project-briefing.md):
 
-- 구분: 제약 / 프로젝트 맥락 / 기록된 최근 결과·결정 / 명시적 후속 항목 / 정보 부족·판단 한계.
+- 구분: 제약 / 프로젝트 맥락 / 기록된 최근 결과·결정 / 명시적 후속 항목 / 정보 부족·경고·근거.
   분류 근거는 **명시적 제목과 메타데이터뿐**이다 — 내용을 읽고 중요도·해결 여부·현재 상태를 추론하지 않는다.
 - 근거 위치: 모든 발췌는 원문 줄 그대로이며 경로·1-based 줄(frontmatter 포함 파일 전체 기준)·source_version을
   단다. `read_note(structured=True, start_line, max_lines, expected_version)`로 그대로 다시 읽힌다.
@@ -46,15 +46,25 @@ SECTION_TITLES = {
     "context": "프로젝트 맥락",
     "recent": "기록된 최근 결과·결정",
     "follow_ups": "명시적 후속 항목",
-    "gaps": "정보 부족·판단 한계",
+    "gaps": "정보 부족·경고·근거",
 }
-# 예산 배정 순서. gaps·후속 항목 상태 줄·세션 머리줄 같은 고정부는 이보다 먼저 전부 잡힌다.
+# 예산 배정 순서 (확정 설계 #7): 제약 → 프로젝트 맥락 → 명시된 후속 항목 → 최근 결과·결정.
+# 표시 순서(DISPLAY_ORDER)와 다르다 — 후속 항목은 맥락 뒤에 표시되지만 최근 결과·결정보다 먼저 예산을 받는다.
+# 고정부(머리말·상태 줄·세션/결정 목록 줄·gaps·경고·출처 목록)와 항목별 위치 안내 한 줄 예약은 text 상한 안에서 먼저
+# 잡히지만, 발췌 본문의 배정 순서는 이 순서만 따른다. 맥락 안에서는 Context.md 절 → CurrentFocus → Lessons → 공통
+# OpenLoops, 최근 결과·결정 안에서는 기존 구현의 결정 → What Changed → Plan Goal 순서를 유지한다(설계가 하위 순서를 정하지 않음).
 BUDGET_ORDER = (
     "constraint",
-    "next_session", "project_open_loops",
-    "decision",
-    "session_result", "plan_goal",
     "context_section", "current_focus", "lessons", "common_open_loops",
+    "next_session", "project_open_loops",
+    "decision", "session_result", "plan_goal",
+)
+# 예산 단계(설계 #7의 네 단계)와 BUDGET_ORDER 묶음의 대응. 응답에는 budget_order만 싣는다(같은 정보를 두 번 싣지 않는다)
+BUDGET_STAGES = (
+    ("constraints", ("constraint",)),
+    ("context", ("context_section", "current_focus", "lessons", "common_open_loops")),
+    ("follow_ups", ("next_session", "project_open_loops")),
+    ("recent", ("decision", "session_result", "plan_goal")),
 )
 # 묶음별 본문 상한(발췌 줄 글자 수). None은 전체 예산만 적용. 기본 briefing의 값에서 가져왔다:
 # Context 5000자·CurrentFocus 2000자(앞)·OpenLoops/Lessons 6000자(뒤)·최신 Process 1200자.
@@ -84,7 +94,10 @@ ITEM_CAPS: dict[str, int | None] = {
 }
 # 꼬리부터 배정하는 묶음 — append형 파일이라 최신 블록이 뒤에 있다 (기본 briefing의 tail 절단과 같은 이유)
 _TAIL_GROUPS = frozenset({"lessons", "common_open_loops"})
-_STUB_RESERVED = frozenset({"constraint", "next_session", "project_open_loops", "decision", "session_result", "plan_goal"})
+# 내용이 모두 빠져도 본문에 위치 안내 한 줄은 남기는 묶음. append형(Lessons·공통 OpenLoops)·CurrentFocus는 블록이 많을 수
+# 있어 예약하지 않는다 — 못 넣으면 JSON omissions와 본문의 "안내도 못 낸 생략 N건"으로 드러난다.
+_STUB_RESERVED = frozenset({"constraint", "context_section", "next_session", "project_open_loops", "decision",
+                            "session_result", "plan_goal"})
 _RECENT_DECISIONS = 5  # 기본 briefing과 같은 창
 _GAPS_TEXT_CAP = 20
 _FIELD_CHARS = 200  # 본문 고정부에 싣는 문서 유래 문자열(제목·session_id 등) 상한
@@ -851,14 +864,18 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
     """BUDGET_ORDER대로 완전한 줄만 배정한다. (남은 예산, 본문에서 한 줄 안내도 못 낸 생략 수)."""
     group_used: dict[str, int] = {}
     aggregated = 0
-    # 맥락 묶음 밖의 항목은 전부 빠져도 본문에 위치 안내 한 줄은 남도록 그 자리를 먼저 예약한다 — 제약이 예산을 다 써도
-    # 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이 없게. 예약이 고정부 뒤 남은 예산을 넘으면 예약하지 않는다.
-    reserve = {id(i): _stub_cost(i) for i in b.items if i.group in _STUB_RESERVED and i.candidates}
-    if sum(reserve.values()) < remaining:
-        remaining -= sum(reserve.values())
-    else:
-        reserve = {}
+    # _STUB_RESERVED 항목은 내용이 전부 빠져도 본문에 위치 안내 한 줄은 남도록 그 자리를 먼저 예약한다 — 제약·맥락이 예산을
+    # 다 써도 후속 항목이 "있다"는 상태만 남고 어디 있는지 안 보이는 일이 없게. 예약은 항목 차례가 오면 돌려받으므로 발췌
+    # 본문의 배정 순서는 BUDGET_ORDER 그대로다. 예약도 BUDGET_ORDER 순으로, 남은 예산 안에 들어가는 만큼만 한다.
     order = {g: i for i, g in enumerate(BUDGET_ORDER)}
+    reserve: dict[int, int] = {}
+    for item in sorted((i for i in b.items if i.group in _STUB_RESERVED and i.candidates),
+                       key=lambda i: order[i.group]):
+        cost = _stub_cost(item)
+        if cost >= remaining:
+            break
+        reserve[id(item)] = cost
+        remaining -= cost
     by_group: dict[str, list[_Item]] = {}
     for item in b.items:
         by_group.setdefault(item.group, []).append(item)
@@ -1016,10 +1033,16 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
                 out.append(f"- [{g['code']}] {c(g['message'], 400)}" + (f" ({g['path']})" if g.get("path") else ""))
             if len(b.gaps) > list_cap:
                 out.append(f"- 그 밖에 {len(b.gaps) - list_cap}건 — JSON gaps 참조")
+            if b.warnings:
+                out.extend(["", "### 경고"])
+                for w in b.warnings[:list_cap]:
+                    out.append(f"- [{w['code']}] {c(w['message'], 400)}" + (f" ({c(w['path'], 300)})" if w.get("path") else ""))
+                if len(b.warnings) > list_cap:
+                    out.append(f"- 그 밖에 {len(b.warnings) - list_cap}건 — JSON warnings 참조")
     if aggregated or not include_items:
         out.extend(["", f"… 그 밖에 본문에 안내도 못 낸 생략 {aggregated if include_items else 99999}건 — JSON omissions 참조"])
     if b.docs:
-        out.extend(["", "## 출처 (source_version — read_note expected_version)"])
+        out.extend(["", "### 근거 출처 (source_version — read_note expected_version)"])
         docs = [(rel, doc) for rel, doc in b.docs.items() if rel not in b.rejected]
         for rel, doc in docs[:list_cap * 2]:
             out.append(f"- {rel} · {doc.source.version} · {doc.source.total_lines}줄")
@@ -1225,6 +1248,10 @@ def build(
         "generated_at": generated_at,
         "project": b.project,
         "matched": res.status == "resolved",
+        # 기본 호출과 같은 키 — candidates는 확정하지 못했을 때 고를 이름(기본 호출처럼 등록 프로젝트로 채운다),
+        # source_refs는 소속 검증을 통과해 실제로 쓴 문서 경로(읽은 순서)
+        "candidates": [] if res.status == "resolved" else list(res.candidates or reg.known_projects()[:50]),
+        "source_refs": [rel for rel in b.docs if rel not in b.rejected],
         "matching": matching,
         "partial": b.partial,
         "critical_omission": critical,

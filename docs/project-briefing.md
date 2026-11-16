@@ -27,6 +27,7 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 | `schema_version` | `"1"` |
 | `generated_at` | 응답을 만든 시각(ISO 8601, 시간대 포함). 발췌의 기록 시각과 다르다 |
 | `project`, `matched` | 확정된 프로젝트 표기, 확정 여부(`matching.status == "resolved"`) |
+| `candidates`, `source_refs` | 기본 호출과 같은 키. `candidates`는 확정하지 못했을 때 고를 프로젝트 이름(확정이면 `[]`), `source_refs`는 소속 검증을 통과해 실제로 쓴 문서 경로(읽은 순서 — `sources`에서 `excluded` 아닌 것과 같다) |
 | `matching` | 식별 결과 — `input, status, project, method, evidence, candidates, hint, basis` (+ 확정 못 했을 때 `registered_projects`) |
 | `sections` | 표시 순서대로 5개: `constraints`, `context`, `recent`, `follow_ups`, `gaps` |
 | `omissions` | 본문에 못 넣은 구간 — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래) |
@@ -83,7 +84,7 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 | 프로젝트 맥락 `context` | Context.md의 나머지 절(모르는 제목 포함), CurrentFocus·Lessons의 이 프로젝트 블록과 공통 블록, OpenLoops의 공통 블록 | 경로·marker 귀속 |
 | 기록된 최근 결과·결정 `recent` | 최근 결정 최대 5건의 `## 결정` 절(없으면 한 줄짜리 frontmatter `summary:` 줄), 최근 3세션의 Process `## What Changed`, Plan `## Goal` | 제목·frontmatter |
 | 명시적 후속 항목 `follow_ups` | 최근 3세션 Process의 `## Next Session`, OpenLoops의 이 프로젝트 marker 블록 | 제목·marker |
-| 정보 부족·판단 한계 `gaps` | 아래 코드 목록 | — |
+| 정보 부족·경고·근거 `gaps` | 아래 gaps 코드 목록. 본문에는 그 아래 `### 경고`(`warnings`)와 `### 근거 출처`(경로·source_version·줄 수)가 이어진다 | — |
 
 - 제목에 위 단어가 없는 절의 제약성 문장("반드시 dev 브랜치에서")은 맥락으로 남긴다. 내용을 읽어 제약으로 올리지 않는다.
 - **제약 범위는 모든 제목의 계층으로 정한다.** 제목 하나는 자기 제목에 제약 단어가 있거나 상위 제목(자기보다 얕은 단계의 가장
@@ -144,18 +145,26 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 (`~~~markdown` 블록 안의 단독 ``` 줄은 블록을 닫지 않는다). 제목 탐지·정리·`unclosed_code_fence` 판정이 같은 규칙을 쓴다. 템플릿과 비슷하게 생긴 사용자 문장(`_(직접 쓴 메모)_`), 모르는 제목과 그 내용은 남는다.
 빈 틀뿐인 Context 절은 항목을 만들지 않고 `sections[context].cleaned_sections`에 남긴다.
 
-## 예산 — text 20000자, 제약부터
+## 표시 순서와 예산 — text 20000자
 
 - 상한은 `text` 본문 길이(문자 수)다. JSON 전체 크기나 토큰 수 상한이 아니다. JSON 전체는 `budget.response_chars`로
   재고, 60000자를 넘으면 `response_large` 경고를 붙인다(줄이거나 숨기지 않는다).
-- **표시 순서**: 제약 → 맥락 → 최근 결과·결정 → 후속 항목 → 정보 부족.
-- **예산 배정 순서**: 고정부(머리말·상태 줄·세션/결정 목록 줄·gaps·출처 목록) → 제약 → Next Session·프로젝트 OpenLoops →
-  결정 → What Changed·Plan Goal → Context 나머지·CurrentFocus·Lessons·공통 OpenLoops.
+- **표시 순서**(`DISPLAY_ORDER`, 본문 `## 1.`~`## 5.`·`sections` 순서): 제약과 원칙 → 프로젝트 맥락 → 기록된 최근 결과와 결정 →
+  명시된 후속 항목 → 정보 부족·경고·근거.
+- **예산 배정 순서**(`BUDGET_ORDER`, 응답 `budget.budget_order`): 제약 → 프로젝트 맥락 → 명시된 후속 항목 → 최근 결과·결정.
+  묶음으로는 `constraint` → `context_section`(Context 나머지)·`current_focus`·`lessons`·`common_open_loops` →
+  `next_session`·`project_open_loops` → `decision`·`session_result`(What Changed)·`plan_goal`. 설계가 정하지 않은 단계 안
+  하위 순서는 기존 구현 순서를 유지했다. 후속 항목은 맥락 **뒤에 표시**되지만 최근 결과·결정보다 **먼저 예산을 받는다** —
+  표시 순서와 예산 순서는 다르다. 예산이 모자라면 최근 결과·결정 발췌부터 줄어든다(아래 고정 평가의 "본문 예산 초과" 사례).
+- 고정부(머리말·상태 줄·세션/결정 목록 줄·gaps·경고·출처 목록)는 text 20000자 **안에** 들어가고 발췌보다 먼저 자리를 잡는다.
+  고정부는 발췌의 배정 순서를 바꾸지 않는다.
 - 항목·묶음 상한(발췌 줄 글자 수): Next Session 1500/항목, 결정 600/항목, What Changed 1200/항목, Plan Goal 400/항목,
   프로젝트 OpenLoops 6000, Context 나머지 6000, CurrentFocus 2000, Lessons 6000(뒤부터), 공통 OpenLoops 2000(뒤부터).
   제약은 전체 예산만 적용한다. 값은 기본 briefing의 상한에서 가져왔다.
-- 제약 외 핵심 항목(후속·결정·세션 결과)은 위치 안내 한 줄 자리를 먼저 예약한다 — 제약이 예산을 다 써도 그 항목이 어디
-  있는지는 본문에 남는다.
+- 제약·Context 절·후속·결정·세션 결과·Plan Goal 항목은 내용이 다 빠져도 위치 안내 한 줄(`본문 생략 L…-L… → read_note(…)`)이
+  남도록 그 자리를 먼저 예약한다. 예약도 예산 순서대로 남은 예산 안에 들어가는 만큼만 하고, 항목 차례가 오면 돌려받아 그
+  항목의 발췌에 쓴다 — 발췌 본문의 순서는 위 예산 순서 그대로다. 블록이 많을 수 있는 CurrentFocus·Lessons·공통 OpenLoops는
+  예약하지 않는다(못 넣으면 `omissions`와 본문의 "안내도 못 낸 생략 N건"으로 드러난다).
 - 항목은 앞에서부터 **완전한 줄**만 넣는다. 못 넣은 꼬리는 하나의 구간으로 `omissions`에 남고 본문에
   `⋯ 생략 L시작-L끝 (이유) → read_note(…)` 줄이 붙는다. 이유: `budget`, `item_cap`, `group_cap`, `line_too_long`.
   append형인 Lessons·공통 OpenLoops는 반대로 블록도, 블록 안 줄도 **뒤(최신)부터** 넣고 앞 구간을 생략으로 남긴다
@@ -211,29 +220,38 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 | 독립 리뷰가 재현한 결함 7건의 회귀 — 소속 불명 OpenLoops 블록, 고정부 길이 폭주, 목록 못 읽는 폴더, 4단계 제약 제목·닫히지 않은 코드 블록, 폴더명≠선언명 결정, 빈 틀 OpenLoops 블록, append형 파일 최신 줄 | `test_unattributed_open_loops_*`, `test_long_fixed_parts_*`, `test_unlistable_*`, `test_deep_constraint_*`, `test_promoted_decisions_*`, `test_scaffold_only_open_loops_*`, `test_append_files_*`, `test_permission_denied_memory_dir_*` | 통과 |
 | 병합 리뷰 지적 3건의 회귀 — 읽기 경계 밖 링크를 열지도 싣지도 않음(열린 파일 기록으로 확인), 소속 실패 문서는 경로·상태만, 펜스 종류·길이·정보 문자열·들여쓰기 규칙, 반환된 `read`를 MCP `read_note`에 그대로 전달 | `test_links_outside_read_boundary_*`, `test_attribution_failures_expose_only_*`, `test_fence_rules_*`, `test_late_constraint_after_mixed_fence_*`, `test_constraints_over_budget_*`·`test_overlong_*`(tool 함수에 `**read`), stdio 테스트(`read_note(**om["read"])`, `requires_read[].read`, 변경 후 같은 인자로 `version_mismatch`) | 통과 |
 | 병합 리뷰 2차 지적 2건의 회귀 — 다른 프로젝트 블록 안 `# ` 제목이 항목 이름·`sources`·신선도 경고에 섞이지 않음(공통·자기 블록 제목은 유지), 중첩된 깊은 제약 절 뒤 같은 단계 제목부터는 맥락 | `test_title_line_inside_other_project_block_*`, `test_title_line_in_common_or_own_block_*`, `test_nested_deep_constraint_*`, `test_constraint_inheritance_uses_all_headings_*`, `test_context_blocks_unit` (고치기 전 코드에서 5건 실패 확인) | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 통과 (지정 제외 3개는 변경 전부터 실패) |
+| 확정 설계 #7 순서 — 표시 순서(본문 `## 1.`~`## 5.`, 최근 결과·결정 발췌가 후속 항목보다 앞, 5번째 갈래에 gaps→경고→근거 출처), 예산 순서(제약→맥락→후속→최근 결과·결정: 예산이 최근 결과에서 바닥나고 맥락·후속은 예산으로 잘리지 않음, 이전 순서면 맥락이 잘림), structured에도 기본 키(`candidates`·`source_refs`) | `test_display_and_budget_orders_follow_design_7`, `test_budget_runs_out_in_recent_stage_not_in_context`, `test_display_order_in_text_puts_follow_ups_after_recent_and_gaps_warnings_sources_last`, `test_default_briefing_keys_and_text_unchanged_by_structured_option`, `tests/test_briefing_eval.py::test_budget_order_keeps_context_and_follow_ups_before_recent` (고치기 전 코드에서 5건 실패 확인) | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 772 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
 
 ## 고정 평가 — 기본 vs structured
 
-`python -m tests.briefing_eval` (회귀: `tests/test_briefing_eval.py`). 합성 fixture vault 5개 사례. 측정 정의는 스크립트 머리말.
+`python -m tests.briefing_eval` (회귀: `tests/test_briefing_eval.py`). 합성 fixture vault 6개 사례. 측정 정의는 스크립트 머리말.
 조건: Python 3.11.2, Linux aarch64 컨테이너(10코어), 같은 프로세스 안 함수 호출(MCP 직렬화·전송 제외), briefing 5회 중앙값.
+목표 줄은 사례마다 반드시 전달돼야 하는 원문 줄이고 종류(c 제약 · x 맥락 · f 후속)를 따로 센다.
 
-| 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | 확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission |
-|---|---|---|---|---|---|---|---|---|---|
-| 일반 | 5 | 5275→8246 | 6295→40371 | 5→5 | 0→5 | 5→1 | 8114→40371 | 1.0→3.8 | False |
-| 긴 Context 후반 제약 | 2 | 8993→12006 | 9860→42924 | 1→2 | 0→2 | 3→1 | 32394→42924 | 0.7→3.5 | False |
-| 이전 세션의 긴 Next Session | 2 | 5512→8546 | 6327→36222 | 0→2 | 0→2 | 3→1 | 8615→36222 | 0.7→2.8 | False |
-| 제약만 2만 자 초과 | 2 | 6127→18896 | 6702→49394 | 1→1 | 0→1 | 2→2 | 32108→59324 | 0.5→3.2 | True |
-| init-project 템플릿 | 1 | 477→962 | 630→4874 | 1→1 | 0→1 | 2→1 | 969→4874 | 0.2→0.5 | False |
+| 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | 확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission | 보존 제약·맥락·후속 기본→새 | 예산으로 준 항목(새) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 일반 | 7 | 5275→8250 | 6295→41075 | 7→7 | 0→7 | 6→1 | 8173→41075 | 1.0→3.7 | False | c2/2 x2/2 f3/3→c2/2 x2/2 f3/3 | - |
+| 긴 Context 후반 제약 | 3 | 8993→12010 | 9860→43428 | 2→3 | 0→3 | 3→1 | 32394→43428 | 0.7→3.4 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
+| 이전 세션의 긴 Next Session | 2 | 5512→8550 | 6327→36726 | 0→2 | 0→2 | 3→1 | 8615→36726 | 0.7→2.7 | False | f0/2→f2/2 | - |
+| 제약만 2만 자 초과 | 2 | 6127→18799 | 6702→49591 | 1→1 | 0→1 | 2→2 | 32108→59623 | 0.5→3.2 | True | c1/2→c1/2 | constraints 1 |
+| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19778 | 13221→60387 | 6→7 | 0→7 | 6→1 | 27853→60387 | 0.8→4.1 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
+| init-project 템플릿 | 1 | 477→966 | 630→4948 | 1→1 | 0→1 | 2→1 | 969→4948 | 0.2→0.5 | False | c1/1→c1/1 | - |
 
 읽는 법:
 
-- **더 길고 느리다.** text는 1.3~3.1배, 응답 JSON 전체는 4.3~7.7배, 조립 시간은 약 2.5~7배(밀리초 단위)다. JSON이 큰 이유는
-  발췌 줄이 `text`와 `segments[].text`에 두 번 들어가고, 항목·출처마다 경로·버전·귀속 근거·정리 내역이 붙기 때문이다.
+- **더 길고 느리다.** text는 1.3~3.1배, 응답 JSON 전체는 4.4~7.9배, 조립 시간은 약 2.5~6.4배(밀리초 단위)다.
+  "본문 예산 초과" 사례는 응답 JSON이 60387자로 `response_large` 경고(60000자) 기준을 넘는다 — 줄이지 않고 경고로 드러낸다.
   MCP 응답은 JSON 전체가 클라이언트 컨텍스트에 들어가므로 이 크기는 실제 비용이다. 성능 개선을 주장하지 않는다.
+- "확인 문자"는 새 쪽이 오히려 크다 — 기본 briefing은 목표 줄 파일을 전문으로 더 읽어도 structured 응답 하나보다 작은 경우가
+  많다. 새 응답이 줄이는 것은 호출 수와 줄 번호를 직접 세는 수고이고, 글자 수가 아니다.
+- **예산 순서 확인**: "본문 예산 초과" 사례에서 예산은 최근 결과·결정 갈래(What Changed 2건)에서 바닥나고, 제약·맥락
+  (Context·CurrentFocus·Lessons 앞뒤 블록)·후속(두 세션 Next Session 끝 줄)은 모두 본문에 남는다. 이전 구현 순서(후속·결정·결과
+  다음에 맥락)였다면 같은 vault에서 Lessons 블록이 예산 때문에 빠진다(`tests/test_project_briefing.py::test_budget_runs_out_in_recent_stage_not_in_context`
+  가 같은 구성으로 두 순서를 비교한다). 기본 briefing은 최신 Process 밖 Next Session을 400자로 잘라 후속 1개를 놓친다.
 - 빈 틀뿐인 템플릿 Context도 새 응답이 더 길다 — 빈 틀은 지웠지만 매칭·상태·출처 줄이 더 붙는다.
 - 보존: 긴 Context 후반 제약과 이전 세션의 긴 Next Session 끝 줄은 기본 briefing text에 없고 새 text에는 있다.
   제약이 2만 자를 넘는 사례는 둘 다 꼬리 제약을 못 싣지만, 새 응답은 `critical_omission`과 정확한 이어읽기 구간을 낸다
@@ -241,6 +259,20 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 - "확인 호출"은 목표 줄을 경로·줄 번호와 함께 확보하는 데 드는 호출 수다. 기본 briefing은 줄 번호·버전을 주지 않아
   파일마다 전문을 읽고 줄을 직접 세야 한다(버전은 얻을 수 없다). 새 응답은 본문에 보이는 목표 줄의 위치·버전을 이미 담는다.
 - 합성 vault라 실제 사용자 vault의 문서 길이·세션 수 분포와 다를 수 있다. 실제 vault로는 재지 않았다.
+
+### 응답 크기의 구성 — 무엇이 중복이고 왜 남겼나
+
+"일반" 사례(응답 41075자)의 JSON 직렬화 크기: `sections` 23413 · `text` 8442 · `sources` 7039 · `budget` 906 ·
+`source_refs` 665 · `matching` 287. `sections`의 34개 항목 중 발췌 원문(`segments[].text`)은 3168자뿐이고, 나머지는 항목마다
+붙는 위치·출처 메타데이터다(`segments` 구간 5131 · `cleaned` 1824 · `path` 1560 · `source_version` 1462 · `recorded_at` 1019 ·
+`label` 921 · `block_evidence` 848 …) 그리고 결정·세션·확인한 후속 출처 목록이다.
+
+- 필수 중복으로 남긴 것: 발췌 줄이 `text`와 `segments[].text`에 두 번 들어간다(사람이 읽는 본문과, 줄 번호와 짝지은 기계 검증용).
+  항목마다 `path`·`source_version`을 다시 싣는다(`sources`를 찾아보지 않고 바로 `read_note(expected_version=…)`로 넘기게).
+  `source_refs`는 기본 호출과 같은 키를 유지하려고 `sources`의 경로를 다시 싣는다.
+- 이번에 줄인 것: 예산 단계 표(`budget_stages`)를 응답에 추가하려다 `budget_order`와 같은 정보라 싣지 않았다.
+- 줄이지 않은 것: `budget`의 정적 상수(`group_caps`·`item_caps`·순서, 약 900자)와 항목별 메타데이터 키는 문서화된 반환 계약이라
+  임의로 빼지 않았다. 더 줄이려면(예: 항목의 `path`·`source_version`을 `sources` 참조 번호로 대체) 계약 변경이므로 따로 결정이 필요하다.
 
 ## 한계 · 하지 않은 것
 

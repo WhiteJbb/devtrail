@@ -123,6 +123,12 @@ def test_default_briefing_keys_and_text_unchanged_by_structured_option(tmp_path)
     assert structured["schema_version"] == pb.SCHEMA_VERSION
     datetime.fromisoformat(structured["generated_at"])
     assert [s["key"] for s in structured["sections"]] == list(pb.DISPLAY_ORDER)
+    # structured도 기본 호출의 키를 모두 갖는다 — 같은 뜻(확정 프로젝트·후보·사용한 문서 경로)
+    assert set(default) <= set(structured)
+    assert structured["project"] == default["project"] and structured["matched"] is True
+    assert structured["candidates"] == []
+    assert structured["source_refs"] == [s["path"] for s in structured["sources"] if "excluded" not in s]
+    assert set(default["source_refs"]) <= set(structured["source_refs"])
 
 
 # ── AC-2: 구분·정리·보존 ─────────────────────────────────────────────────────
@@ -147,7 +153,7 @@ def test_sections_are_separated_by_explicit_headings_only(tmp_path):
     assert "목표 G" in resp["text"]
     text = resp["text"]
     assert text.index("## 1. 제약") < text.index("## 2. 프로젝트 맥락") < text.index("## 3. 기록된 최근 결과·결정") \
-        < text.index("## 4. 명시적 후속 항목") < text.index("## 5. 정보 부족·판단 한계")
+        < text.index("## 4. 명시적 후속 항목") < text.index("## 5. 정보 부족·경고·근거")
 
 
 def test_known_scaffolding_and_repeated_titles_are_cleaned_but_real_content_kept(tmp_path):
@@ -847,3 +853,88 @@ def test_context_blocks_unit():
              (13, 2, "규칙"), (15, 3, "하위")]
     assert pb._context_blocks(heads) == [
         (1, 2, "메모", False), (3, 4, "제약", True), (9, 4, "결과", False), (13, 2, "규칙", True), (15, 3, "하위", True)]
+
+
+# ── 확정 설계 #7: 표시 순서와 예산 배정 순서 ─────────────────────────────────
+
+
+def test_display_and_budget_orders_follow_design_7():
+    assert pb.DISPLAY_ORDER == ("constraints", "context", "recent", "follow_ups", "gaps")
+    assert [k for k, _ in pb.BUDGET_STAGES] == ["constraints", "context", "follow_ups", "recent"]
+    assert [g for _, gs in pb.BUDGET_STAGES for g in gs] == list(pb.BUDGET_ORDER)
+    assert set(pb.BUDGET_ORDER) == set(pb.GROUP_CAPS) == set(pb.ITEM_CAPS)
+    # 묶음이 속한 갈래와 예산 단계가 같다 — Plan Goal·결정·What Changed는 후속 항목이 아니라 최근 결과·결정 단계다
+    stage_of = {g: k for k, gs in pb.BUDGET_STAGES for g in gs}
+    assert stage_of["plan_goal"] == stage_of["decision"] == stage_of["session_result"] == "recent"
+    assert stage_of["next_session"] == stage_of["project_open_loops"] == "follow_ups"
+    assert stage_of["common_open_loops"] == "context"  # 공통 OpenLoops는 이 프로젝트 후속 항목이 아니다
+
+
+def _order_vault(tmp_path):
+    """제약 + 맥락(Context 6천 자대·CurrentFocus·Lessons) + 후속 3세션 + 결정 5건 + What Changed 3세션이 20000자를 조금 넘는다."""
+    _ctx(tmp_path, "## 제약\n\n- ORDER_CONSTRAINT 공식 영역 직접 쓰기 금지\n\n## 배경\n\n"
+         + "".join(f"- CTX_LINE {i}: " + "맥락 설명 " * 18 + "\n" for i in range(50)))
+    mk = '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+    _w(tmp_path, "40_AgentMemory/01_CurrentFocus.md",
+       "# Current Focus\n\n" + mk + "".join(f"- FOCUS_{k}: " + "초점 " * 30 + "\n" for k in range(10)))
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md",
+       "# Lessons\n\n" + "".join(mk + f"- LESSON_{k}: " + "교훈 " * 40 + "\n\n" for k in range(14)))
+    for r in range(3):
+        sid = f"s{r}"
+        nxt = "".join(f"- NEXT_{sid}_{k}: " + "후속 " * 30 + "\n" for k in range(6))
+        wc = "".join(f"- WC_{sid}_{k}: " + "결과 " * 35 + "\n" for k in range(10))
+        _handoff(tmp_path, f"proc-{sid}", "process", sid, f"2026-11-1{r}T10:00:00", _process(nxt, wc))
+    for i in range(5):
+        _w(tmp_path, f"30_Projects/Devtrail/Decisions/d{i}.md",
+           _fm(type="decision", title=f"결정 {i}", project="Devtrail", status="accepted", created_at=f"2026-11-0{i + 1}")
+           + f"# 결정 {i}\n\n## 결정\n\n" + "".join(f"- DEC_{i}_{k}: " + "결정 근거 " * 12 + "\n" for k in range(5)))
+
+
+def test_budget_runs_out_in_recent_stage_not_in_context(tmp_path, monkeypatch):
+    """예산이 모자라면 최근 결과·결정이 먼저 줄고, 맥락과 명시된 후속 항목은 예산 때문에 잘리지 않는다."""
+    _order_vault(tmp_path)
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+
+    def budget_cut(key):
+        return [i for i in _items(resp, key) if i.get("omission", {}).get("reason") == "budget"]
+
+    assert budget_cut("recent"), "fixture가 예산을 넘지 않는다 — 최근 결과·결정에서 예산이 바닥나야 한다"
+    assert not budget_cut("constraints") and not budget_cut("context") and not budget_cut("follow_ups")
+    assert all(i["shown"] == "full" for i in _items(resp, "follow_ups"))
+    assert all(i["shown"] == "full" for i in _items(resp, "context") if i["kind"] != "context_section")
+    ctx = next(i for i in _items(resp, "context") if i["kind"] == "context_section")
+    assert ctx["omission"]["reason"] == "group_cap"  # 맥락은 자기 상한(6000자)으로만 줄었다
+    for needle in ("ORDER_CONSTRAINT", "FOCUS_9", "LESSON_0", "LESSON_13", "NEXT_s0_5", "NEXT_s2_5"):
+        assert needle in resp["text"], needle
+    # 예산 때문에 내용을 못 넣은 항목도 위치 안내 줄은 본문에 남는다
+    for item in budget_cut("recent"):
+        om = next(o for o in resp["omissions"] if o["item"] == item["id"])
+        assert f"L{om['lines'][0]}-L{om['lines'][1]}" in resp["text"] and om["critical"] is False
+    assert resp["budget"]["budget_order"] == list(pb.BUDGET_ORDER)
+
+    # 같은 vault에서 이전 구현의 순서(후속·결정·결과 다음에 맥락)였다면 맥락이 예산 때문에 사라진다 — 이 검사가 순서를 가른다
+    monkeypatch.setattr(pb, "BUDGET_ORDER", ("constraint", "next_session", "project_open_loops", "decision",
+                                             "session_result", "plan_goal", "context_section", "current_focus",
+                                             "lessons", "common_open_loops"))
+    old = _brief(tmp_path)
+    assert [i for i in _items(old, "context") if i.get("omission", {}).get("reason") == "budget"]
+
+
+def test_display_order_in_text_puts_follow_ups_after_recent_and_gaps_warnings_sources_last(tmp_path, monkeypatch):
+    _order_vault(tmp_path)
+    ok = _handoff(tmp_path, "proc-x", "process", "sx", "2026-11-13T10:00:00", _process("- 못 읽는 후속"))
+    _deny_reads(monkeypatch, ok)
+    resp = _brief(tmp_path)
+    text = resp["text"]
+    heads = [text.index(f"## {n}. {pb.SECTION_TITLES[k]}") for n, k in enumerate(pb.DISPLAY_ORDER, 1)]
+    assert heads == sorted(heads)
+    # 표시: 최근 결과·결정의 발췌가 후속 항목보다 앞, 후속 항목이 정보 부족·경고·근거보다 앞
+    assert text.index("WC_s2_0") < text.index("## 4. 명시적 후속 항목") < text.index("NEXT_s2_0") < heads[4]
+    tail = text[heads[4]:]
+    assert resp["warnings"] and resp["partial"] is True
+    assert tail.index("[read_failed]") < tail.index("### 근거 출처")
+    assert tail.index("### 경고") < tail.index("### 근거 출처")
+    for src in resp["sources"]:
+        if "excluded" not in src:
+            assert f"{src['path']} · {src['source_version']}" in tail

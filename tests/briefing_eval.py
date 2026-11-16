@@ -10,6 +10,8 @@
 - text_chars: 응답 text 본문 길이
 - response_chars: 응답 전체 JSON 직렬화 길이 (기본 briefing은 dataclass asdict)
 - targets_in_text: 목표 줄 문구가 text에 그대로 있는 수
+- kept: 목표 줄 종류(제약 c·맥락 x·후속 f)별 text 보존 수 / 목표 수
+- budget_cut: structured에서 text 예산(`budget`) 때문에 발췌가 줄어든 항목 수를 갈래별로 (상한 cap 때문에 준 것은 세지 않는다)
 - located: 목표 줄의 경로·줄 번호·source_version을 응답만으로 아는 수 (기본 briefing은 줄 번호·버전을 주지 않는다)
 - confirm_calls: 모든 목표 줄을 경로·줄 번호와 함께 확보하기까지의 호출 수 — briefing 1회 + 추가 읽기.
   기본: 목표 줄이 있는 파일마다 read_note 전문 1회(줄 번호는 호출자가 직접 센다, 버전은 얻을 수 없다).
@@ -94,7 +96,7 @@ def _sessions(long_older: bool = False) -> dict[str, str]:
 class Scenario:
     name: str
     files: dict[str, str]
-    targets: tuple[tuple[str, str], ...]  # (경로, 그 줄에 있는 문구)
+    targets: tuple[tuple[str, str, str], ...]  # (경로, 그 줄에 있는 문구, 종류: constraint|context|follow_up)
     note: str
 
 
@@ -112,24 +114,56 @@ def _scenarios() -> tuple[Scenario, ...]:
     ctx = "30_Projects/Devtrail/Context.md"
     nxt = "60_Candidates/SessionHandoffs/Devtrail/process-%s.md"
     loops = "40_AgentMemory/05_OpenLoops.md"
+    focus = "40_AgentMemory/01_CurrentFocus.md"
+    lessons = "40_AgentMemory/06_Lessons.md"
     return (
         Scenario("일반", {ctx: _context(typical_ctx), **decisions, **_sessions(), **_MEMORY},
-                 ((ctx, "CONSTRAINT_A"), (ctx, "CONSTRAINT_B"), (nxt % "s3", "NEXT_TARGET_s3"),
-                  (nxt % "s2", "NEXT_TARGET_s2"), (loops, "OPENLOOP_TARGET")),
+                 ((ctx, "CONSTRAINT_A", "constraint"), (ctx, "CONSTRAINT_B", "constraint"),
+                  (ctx, "dev 브랜치 경유", "context"), (focus, "브리핑 개선", "context"),
+                  (nxt % "s3", "NEXT_TARGET_s3", "follow_up"), (nxt % "s2", "NEXT_TARGET_s2", "follow_up"),
+                  (loops, "OPENLOOP_TARGET", "follow_up")),
                  "Context 3천 자대, 세션 3개, 결정 7건, 메모리 3파일"),
         Scenario("긴 Context 후반 제약", {ctx: _context(long_ctx), **_sessions(), **_MEMORY},
-                 ((ctx, "CONSTRAINT_LATE"), (nxt % "s3", "NEXT_TARGET_s3")),
+                 ((ctx, "CONSTRAINT_LATE", "constraint"), (ctx, "배경 기록 0:", "context"),
+                  (nxt % "s3", "NEXT_TARGET_s3", "follow_up")),
                  "배경 약 3만 자 뒤에 제약 절"),
         Scenario("이전 세션의 긴 Next Session", {ctx: _context(typical_ctx), **_sessions(long_older=True), **_MEMORY},
-                 ((nxt % "s2", "NEXT_TARGET_s2"), (nxt % "s1", "NEXT_TARGET_s1")),
+                 ((nxt % "s2", "NEXT_TARGET_s2", "follow_up"), (nxt % "s1", "NEXT_TARGET_s1", "follow_up")),
                  "두 번째·세 번째 세션 Next Session 끝 줄"),
         Scenario("제약만 2만 자 초과", {ctx: _context(huge_ctx), **_sessions()},
-                 ((ctx, "원칙 000"), (ctx, "CONSTRAINT_TAIL")),
+                 ((ctx, "원칙 000", "constraint"), (ctx, "CONSTRAINT_TAIL", "constraint")),
                  "제약 절 약 3만 자 — 예산 초과"),
+        Scenario("본문 예산 초과 — 맥락·후속 vs 최근 결과", _over_budget_files(),
+                 ((ctx, "OB_CONSTRAINT", "constraint"), (ctx, "OB_CTX 0:", "context"), (focus, "OB_FOCUS_9", "context"),
+                  (lessons, "OB_LESSON_0", "context"), (lessons, "OB_LESSON_13", "context"),
+                  (nxt % "s1", "OB_NEXT_s1_5", "follow_up"), (nxt % "s3", "OB_NEXT_s3_5", "follow_up")),
+                 "제약·맥락·후속·결정·결과 합이 2만 자를 조금 넘음 — 예산이 어느 갈래에서 바닥나는지"),
         Scenario("init-project 템플릿", {ctx: _context(_TEMPLATE)},
-                 ((ctx, "사용자의 결정이 필요한 부분은"),),
+                 ((ctx, "사용자의 결정이 필요한 부분은", "constraint"),),
                  "빈 틀만 있는 Context"),
     )
+
+
+def _over_budget_files() -> dict[str, str]:
+    mk = '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+    files = {
+        "30_Projects/Devtrail/Context.md": _context(
+            "# Devtrail — Project Context\n\n## 제약\n\n- OB_CONSTRAINT 공식 영역 직접 쓰기 금지\n\n## 배경\n\n"
+            + "".join(f"- OB_CTX {i}: " + "맥락 설명 " * 18 + "\n" for i in range(50))),
+        "40_AgentMemory/01_CurrentFocus.md": _fm(updated_at="2099-01-01") + "# Current Focus\n\n" + mk
+        + "".join(f"- OB_FOCUS_{k}: " + "초점 " * 30 + "\n" for k in range(10)),
+        "40_AgentMemory/06_Lessons.md": _fm(updated_at="2099-01-01") + "# Lessons\n\n"
+        + "".join(mk + f"- OB_LESSON_{k}: " + "교훈 " * 40 + "\n\n" for k in range(14)),
+    }
+    for sid, at in (("s3", "2026-11-03T10:00:00"), ("s2", "2026-11-02T10:00:00"), ("s1", "2026-11-01T10:00:00")):
+        files[f"60_Candidates/SessionHandoffs/Devtrail/process-{sid}.md"] = _process(
+            sid, at, "".join(f"- OB_NEXT_{sid}_{k}: " + "후속 " * 30 + "\n" for k in range(6)).rstrip("\n"),
+            "".join(f"- OB_WC_{sid}_{k}: " + "결과 " * 35 + "\n" for k in range(10)).rstrip("\n"))
+    for i in range(5):
+        files[f"30_Projects/Devtrail/Decisions/d{i}.md"] = (
+            _fm(type="decision", title=f"결정 {i}", project="Devtrail", status="accepted", created_at=f"2026-10-{i + 10:02d}")
+            + f"# 결정 {i}\n\n## 결정\n\n" + "".join(f"- OB_DEC_{i}_{k}: " + "결정 근거 " * 12 + "\n" for k in range(5)))
+    return files
 
 
 def build_vault(root: Path, scenario: Scenario) -> Path:
@@ -137,7 +171,7 @@ def build_vault(root: Path, scenario: Scenario) -> Path:
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(text.encode("utf-8"))
-    for rel, needle in scenario.targets:
+    for rel, needle, _ in scenario.targets:
         assert needle in (root / rel).read_text(encoding="utf-8"), (scenario.name, rel, needle)
     return root
 
@@ -160,25 +194,46 @@ def _target_line(root: Path, rel: str, needle: str) -> int:
     return next(i for i, line in enumerate(lines, 1) if needle in line)
 
 
+_KINDS = (("constraint", "c"), ("context", "x"), ("follow_up", "f"))
+
+
+def _kept(scenario: Scenario, text: str) -> dict[str, str]:
+    out = {}
+    for kind, _ in _KINDS:
+        needles = [n for _, n, k in scenario.targets if k == kind]
+        if needles:
+            out[kind] = f"{sum(1 for n in needles if n in text)}/{len(needles)}"
+    return out
+
+
+def _budget_cut(resp: dict) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for om in resp["omissions"]:
+        if om["reason"] == "budget":
+            out[om["section"]] = out.get(om["section"], 0) + 1
+    return out
+
+
 def run_scenario(root: Path, scenario: Scenario) -> dict:
     settings = SimpleNamespace(obsidian_vault_root=str(root), devtrail_project_map="")
     out: dict = {"scenario": scenario.name, "note": scenario.note, "targets": len(scenario.targets)}
 
     ms, legacy = _median_ms(lambda: vault_tools.get_project_briefing("Devtrail", settings=settings))
     payload = asdict(legacy)
-    in_text = sum(1 for _, needle in scenario.targets if needle in legacy.text)
-    files = sorted({rel for rel, _ in scenario.targets})
+    in_text = sum(1 for _, needle, _ in scenario.targets if needle in legacy.text)
+    files = sorted({rel for rel, _, _ in scenario.targets})
     t0 = time.perf_counter()
     confirm_chars = _size(payload) + sum(len(vault_tools.read_note(rel, settings=settings)) for rel in files)
     out["legacy"] = {"text_chars": len(legacy.text), "response_chars": _size(payload), "targets_in_text": in_text,
-                     "located": 0, "confirm_calls": 1 + len(files), "confirm_chars": confirm_chars,
+                     "kept": _kept(scenario, legacy.text), "located": 0, "confirm_calls": 1 + len(files),
+                     "confirm_chars": confirm_chars,
                      "ms": round(ms + (time.perf_counter() - t0) * 1000, 1), "critical_omission": None}
 
     ms, resp = _median_ms(lambda: vault_tools.get_structured_project_briefing("Devtrail", settings=settings))
     items = [i for s in resp["sections"] if s["key"] != "gaps" for i in s["items"]]
     located = 0
     reads: list[dict] = []
-    for rel, needle in scenario.targets:
+    for rel, needle, _ in scenario.targets:
         line = _target_line(root, rel, needle)
         if any(i["path"] == rel and any(s["start_line"] <= line <= s["end_line"] for s in i["segments"]) for i in items):
             located += 1
@@ -196,7 +251,8 @@ def run_scenario(root: Path, scenario: Scenario) -> dict:
         confirm_chars += _size(page)
     out["structured"] = {"text_chars": resp["budget"]["text_chars"], "response_chars": resp["budget"]["response_chars"],
                          "sources_meta_chars": resp["budget"]["sources_meta_chars"],
-                         "targets_in_text": sum(1 for _, needle in scenario.targets if needle in resp["text"]),
+                         "targets_in_text": sum(1 for _, needle, _ in scenario.targets if needle in resp["text"]),
+                         "kept": _kept(scenario, resp["text"]), "budget_cut": _budget_cut(resp),
                          "located": located, "confirm_calls": 1 + len(reads), "confirm_chars": confirm_chars,
                          "ms": round(ms + (time.perf_counter() - t0) * 1000, 1),
                          "critical_omission": resp["critical_omission"], "follow_ups_state":
@@ -215,10 +271,15 @@ def run_eval() -> list[dict]:
     return rows
 
 
+def _kept_cell(kept: dict[str, str]) -> str:
+    return " ".join(f"{short}{kept[kind]}" for kind, short in _KINDS if kind in kept)
+
+
 def to_markdown(rows: list[dict]) -> str:
     head = ("| 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | "
-            "확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission |\n"
-            "|---|---|---|---|---|---|---|---|---|---|")
+            "확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission | 보존 제약·맥락·후속 기본→새 | "
+            "예산으로 준 항목(새) |\n"
+            "|---|---|---|---|---|---|---|---|---|---|---|---|")
     lines = [head]
     for r in rows:
         lg, st = r["legacy"], r["structured"]
@@ -226,7 +287,9 @@ def to_markdown(rows: list[dict]) -> str:
             f"| {r['scenario']} | {r['targets']} | {lg['text_chars']}→{st['text_chars']} | "
             f"{lg['response_chars']}→{st['response_chars']} | {lg['targets_in_text']}→{st['targets_in_text']} | "
             f"{lg['located']}→{st['located']} | {lg['confirm_calls']}→{st['confirm_calls']} | "
-            f"{lg['confirm_chars']}→{st['confirm_chars']} | {lg['ms']}→{st['ms']} | {st['critical_omission']} |"
+            f"{lg['confirm_chars']}→{st['confirm_chars']} | {lg['ms']}→{st['ms']} | {st['critical_omission']} | "
+            f"{_kept_cell(lg['kept'])}→{_kept_cell(st['kept'])} | "
+            f"{', '.join(f'{k} {v}' for k, v in st['budget_cut'].items()) or '-'} |"
         )
     return "\n".join(lines)
 

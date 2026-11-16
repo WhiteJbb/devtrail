@@ -37,3 +37,11 @@ def test_over_budget_constraints_are_flagged_not_silent(rows):
     # 빠진 목표 줄은 omissions의 이어읽기 1회로 회수된다
     assert huge["structured"]["confirm_calls"] == 2
     assert all(r["structured"]["critical_omission"] is False for n, r in rows.items() if n != "제약만 2만 자 초과")
+
+
+def test_budget_order_keeps_context_and_follow_ups_before_recent(rows):
+    """확정 설계 #7 예산 순서: 제약 → 맥락 → 후속 → 최근 결과·결정. 예산이 모자라면 최근 결과·결정에서 줄어든다."""
+    r = rows["본문 예산 초과 — 맥락·후속 vs 최근 결과"]["structured"]
+    assert r["kept"] == {"constraint": "1/1", "context": "4/4", "follow_up": "2/2"}
+    assert set(r["budget_cut"]) == {"recent"}
+    assert r["critical_omission"] is False and r["text_chars"] <= 20000

@@ -206,6 +206,11 @@ def test_cli_stdio_structured_briefing_then_evidence_read() -> None:
                         assert brief["schema_version"] == "1" and brief["matching"]["status"] == "resolved"
                         assert len(brief["text"]) <= 20000 and brief["partial"] is False
                         assert "베타" not in json.dumps(brief, ensure_ascii=False)
+                        assert set(default) <= set(brief) and brief["source_refs"] == [context_rel, process_rel]
+                        assert [s["key"] for s in brief["sections"]] == ["constraints", "context", "recent",
+                                                                         "follow_ups", "gaps"]
+                        order = brief["budget"]["budget_order"]
+                        assert order.index("context_section") < order.index("next_session") < order.index("decision")
                         sections = {s["key"]: s for s in brief["sections"]}
                         constraint = sections["constraints"]["items"][0]
                         assert len(constraint["segments"]) == 2 and constraint["contiguous"] is False
