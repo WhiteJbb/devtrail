@@ -30,7 +30,7 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 | `candidates`, `source_refs` | 기본 호출과 같은 키. `candidates`는 확정하지 못했을 때 고를 프로젝트 이름(확정이면 `[]`), `source_refs`는 소속 검증을 통과해 실제로 쓴 문서 경로(읽은 순서 — `sources`에서 `excluded` 아닌 것과 같다) |
 | `matching` | 식별 결과 — `input, status, project, method, evidence, candidates, hint, basis` (+ 확정 못 했을 때 `registered_projects`) |
 | `sections` | 표시 순서대로 5개: `constraints`, `context`, `recent`, `follow_ups`, `gaps` |
-| `omissions` | 본문에 못 넣은 구간 — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, first_read_end_line, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래) |
+| `omissions` | 본문에 못 넣은 구간(한 항목에 여러 건일 수 있다 — 건너뛴 긴 줄마다 한 건 + 꼬리 구간 한 건) — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, first_read_end_line, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래) |
 | `critical_omission` | 제약이 일부라도 본문에 없거나, 제약 출처(Context.md)를 확인하지 못했다 |
 | `requires_read` | 먼저 읽어야 할 것 — `{path, lines, reason: critical_omission, item, read}`(빠진 제약 구간) 또는 `{path, reason: context_unreadable·context_unverifiable, read: {rel_path}, unverified?}`. `read`는 그대로 `read_note(**read)` |
 | `partial` | 일부 기록을 읽지 못했다(읽기 실패·frontmatter 해석 실패로 기본 목록에서 빠진 파일·등록부 미확인) |
@@ -192,9 +192,14 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 - 고정부의 문서 유래 문자열(결정 제목·session_id·host 등)은 200자로 자르고, 목록(gaps·확인 못 한 출처·세션 파일 안내·출처)은
   20줄까지 낸다. 고정부만으로 상한을 넘으면 목록을 5줄, 0줄로 줄이고 개수만 적는다 — 어떤 vault에서도 text는 20000자를 넘지 않는다.
 - 한 줄이 상한보다 길면 자르지 않는다(`line_too_long`, `line_chars`). **16000자(`read_note` structured의 줄 상한)를 넘는 줄은
-  예산이 남아도 발췌하지 않는다** — 근거 위치·버전으로 회수할 수 없는 줄을 정상 발췌처럼 주지 않기 위해서다. 그 구간은
-  `structured_readable=false`, `read`는 전문 읽기 인자(버전 확인 없음)이고, `line_exceeds_read_limit` gap이 붙는다. 제약 줄이면
-  `critical_omission`·`requires_read`다. 본문의 모든 발췌 줄은 structured `read_note`로 회수된다.
+  예산이 남아도 발췌하지 않는다** — 근거 위치·버전으로 회수할 수 없는 줄을 정상 발췌처럼 주지 않기 위해서다. 그 줄 **하나만**
+  건너뛰고(본문에 `⋯ 생략 L n-L n (line_too_long) → read_note("경로")` 한 줄) 뒤의 읽을 수 있는 줄은 계속 배정한다 — 긴 줄 하나
+  때문에 뒤 제약이 사라지거나 그 구간까지 전문 읽기로 뭉개지지 않는다. 건너뛴 줄마다 `omissions`에 따로 한 건
+  (`lines:[n,n]`, `structured_readable=false`, `read`는 전문 읽기 인자 — 버전 확인 없음, `line_chars`)이 남고, 항목에는
+  `unreadable_lines`, `line_exceeds_read_limit` gap이 붙는다. 제약 줄이면 `critical_omission`·`requires_read`다. 본문의 모든 발췌
+  줄은 structured `read_note`(이어읽기 포함)로 회수된다.
+- 예산 판정은 줄을 넣은 뒤 남는 구간의 **실제** 생략 줄 길이(그 자리에서 멈출 때의 이유·`read` 인자 그대로)로 한다. 최악 길이로
+  잡아 들어갈 줄을 자르지 않는다. 남는 보수 오차는 구간 표시 줄(`@L…`)을 최대 자릿수로 잡은 몇 자뿐이다.
 - 이어읽기 정보는 실제 `read_note` 페이지 규칙(400줄, 16000자 — 줄 사이 개행 포함, 16000자 넘는 줄 앞에서 멈춤)을 그대로 계산한다.
   `first_read_end_line`은 `read` 한 번이 돌려주는 마지막 줄, `read_continues: true`면 그 줄이 구간 끝보다 앞이다 — 응답의
   `next`(start_line·expected_version)로 이어 읽는다.
@@ -250,7 +255,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 | 독립 리뷰 5차 지적 — 작은 후속 항목(두 줄)이 위치 안내 줄을 잃음 (지금은 위치를 고정부 `후속 기록 위치` 목록이 맡는다) | `test_small_follow_up_keeps_location_without_taking_constraint_budget[*]` | 통과 |
 | 병합 리뷰 BLOCK 지적 4건의 회귀 — 기억의 명시적 규칙 절을 제약으로(공통/프로젝트 귀속 유지, 잘리면 critical), 공유 후보 폴더의 귀속 불명 파일명을 JSON에서도 감춤(집계 경고), 프로젝트 OpenLoops의 명시적 없음, 예산 배정 뒤 후속 기록 생략을 최종 판단에 반영 | `test_memory_rule_headings_are_constraints_with_scope_kept`, `test_cut_memory_rule_raises_critical_omission_and_requires_read`, `test_other_project_file_paths_in_warnings_stay_out_of_text`, `test_links_outside_read_boundary_*`, `test_project_open_loops_explicit_none_is_scoped_like_next_session`, `test_follow_up_items_cut_from_text_mark_state_incomplete`, `test_explicit_none_records_cut_from_text_are_not_reported_as_none` (고치기 전 코드에서 8건 실패 확인) | 통과 |
 | 병합 리뷰 4차(BLOCK) 지적 3건의 회귀 — 위치 안내·발췌 예약이 제약 예산을 먼저 가져감(예약 제거, 후속 위치는 고정부 목록), 16000자 넘는 줄을 회수 불가 발췌로 반환, 이어읽기 정보가 16000자 상한을 무시 | `test_constraint_that_fits_is_never_cut_for_later_stages`(고정부 뒤 남은 예산 = 제약 전체 비용으로 직접 재현), `test_line_over_read_limit_is_never_excerpted[16001/17000/19000]`(모든 발췌를 structured `read_note`로 회수), `test_read_continues_matches_actual_read_note_paging[*]`(실제 `read_note`의 end_line·next와 비교), `test_small_follow_up_keeps_location_*`, `test_follow_ups_keep_a_location_line_*` (고치기 전 코드에서 12건 실패 확인). 퍼즈 200 시드 — 모든 발췌가 structured 읽기(페이지 이어읽기)로 원문과 일치, 생략 440건의 `first_read_end_line`·`read_continues`가 실제 읽기와 일치 | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 795 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 독립 리뷰 6차 지적 2건의 회귀 — 16000자 넘는 줄 하나가 뒤 제약 줄까지 숨기고 그 구간을 전문 읽기로 뭉갬, 최악 길이 생략 줄 예약 때문에 들어갈 제약 줄이 잘림 | `test_over_limit_line_does_not_hide_later_constraints_or_widen_their_read`, `test_line_over_read_limit_is_never_excerpted[*]`(뒤 제약 표시·비연속 구간), `test_budget_cut_uses_exact_omission_note_length`(경계 900자를 1자 단위로 훑음) (고치기 전 코드에서 5건 실패 확인). 리뷰어 퍼즈 220 시드 — 예산 순서 위반·긴 줄 뒤 누락·발췌 회수 실패·이어읽기 불일치·상한 초과 0건 | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 797 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).

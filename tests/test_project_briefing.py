@@ -1193,7 +1193,7 @@ def test_constraint_that_fits_is_never_cut_for_later_stages(tmp_path, monkeypatc
     assert len(cons) == 1 and len(cons[0].candidates) >= 11
     for budget in (pb._full_cost(cons[0]), pb._full_cost(cons[0]) + 30):
         for i in b.items:
-            i.shown, i.omission, i.stub, i.tail = [], None, False, False
+            i.shown, i.omission, i.stub, i.tail, i.skipped = [], None, False, False, []
         real(b, budget)
         assert cons[0].shown == cons[0].candidates and cons[0].omission is None, budget
         assert all(not i.shown for i in b.items if i.group != "constraint"), budget
@@ -1208,8 +1208,15 @@ def test_line_over_read_limit_is_never_excerpted(tmp_path, monkeypatch, width):
     assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
     assert "가" * 100 not in resp["text"] and "나" * 100 not in resp["text"]
     cons = _items(resp, "constraints")[0]
-    assert cons["shown"] == "partial" and "- 짧은 제약" in resp["text"]
+    # 긴 줄 하나만 건너뛰고 앞뒤 제약은 실린다(비연속 구간) — 긴 줄 때문에 뒤 제약까지 잃지 않는다
+    assert cons["shown"] == "partial" and "- 짧은 제약" in resp["text"] and "- 뒤 제약" in resp["text"]
+    lines = _file_lines(tmp_path, cons["path"])
+    long_no = lines.index(long_rule) + 1
+    assert cons["unreadable_lines"] == [long_no] and cons["contiguous"] is False and "omission" not in cons
+    assert [(s_["start_line"], s_["end_line"]) for s_ in cons["segments"]][-1][0] == long_no + 1
     om = next(o for o in resp["omissions"] if o["item"] == cons["id"])
+    assert om["lines"] == [long_no, long_no] and om["line_chars"] == len(long_rule)
+    assert f"생략 L{long_no}-L{long_no} (line_too_long) → read_note(\"{cons['path']}\")" in resp["text"]
     assert om["reason"] == "line_too_long" and om["critical"] and om["structured_readable"] is False
     assert om["read"] == {"rel_path": om["path"]}
     assert resp["critical_omission"] is True and any(r["item"] == cons["id"] for r in resp["requires_read"])
@@ -1252,3 +1259,53 @@ def test_read_continues_matches_actual_read_note_paging(tmp_path, monkeypatch, n
     assert _check_resume_info_matches_read_note(monkeypatch, tmp_path, resp) >= 1
     if n_lines * width > 16100:
         assert any(o["read_continues"] for o in resp["omissions"])
+
+
+def test_over_limit_line_does_not_hide_later_constraints_or_widen_their_read(tmp_path):
+    """긴 줄 뒤의 읽을 수 있는 제약 줄은 예산이 남으면 실리고, 그 줄들의 생략이 전문 읽기로 뭉개지지 않는다."""
+    _ctx(tmp_path, "## 제약\n\n- 짧은 제약\n- " + "가" * 16000 + "\n- 뒤 제약\n\n## 배경\n\n- 배경 줄\n")
+    resp = _brief(tmp_path)
+    assert "- 뒤 제약" in resp["text"] and "- 배경 줄" in resp["text"]
+    oms = [o for o in resp["omissions"] if o["critical"]]
+    assert len(oms) == 1 and oms[0]["lines"][0] == oms[0]["lines"][1]  # 긴 줄 한 줄만
+    assert oms[0]["read"] == {"rel_path": oms[0]["path"]}
+
+
+def test_budget_cut_uses_exact_omission_note_length(tmp_path, monkeypatch):
+    """예산 판정은 실제로 붙을 생략 줄 길이를 쓴다 — 최악 길이(구조화 인자) 때문에 들어갈 제약 줄을 자르지 않는다.
+    남는 보수 오차는 구간 표시 줄을 최대 자릿수로 잡은 몫뿐이다."""
+    _ctx(tmp_path, "## 제약\n\n- 짧은 제약\n- " + "다" * 15990 + "\n- " + "가" * 16500 + "\n- 끝 제약\n")
+    captured: dict = {}
+    real = pb._allocate
+
+    def spy(b, remaining):
+        captured["b"] = b
+        return real(b, remaining)
+
+    monkeypatch.setattr(pb, "_allocate", spy)
+    _brief(tmp_path)
+    b = captured["b"]
+    item = next(i for i in b.items if i.group == "constraint")
+    # 경계: 앞 두 줄(짧은 제약·약 16000자 줄)까지 넣는 비용 근처를 1자 단위로 훑는다
+    first_two = sum(len(item.lines[n - 1]) + 1 for n in item.candidates if len(item.lines[n - 1]) <= pb.READ_MAX_CHARS)
+    lo = first_two - 300
+    hits = 0
+    for budget in range(lo, lo + 900):
+        for i in b.items:
+            i.shown, i.omission, i.stub, i.tail, i.skipped = [], None, False, False, []
+        real(b, budget)
+        if not (item.omission and item.omission["reason"] == "budget") or item.omission["lines"][0] in item.skipped:
+            continue
+        k = item.omission["lines"][0]
+        if len(item.lines[k - 1]) > pb.READ_MAX_CHARS:
+            continue
+        # k를 더 넣은 가상 렌더 — 뒤에 남는 줄이 있으면 실제 생략 줄까지 포함
+        rest = [n for n in item.candidates if n > k]
+        trial = pb._Item(**{**item.__dict__, "shown": sorted(item.shown + [k]),
+                            "omission": pb._omission(item.doc, [rest[0], rest[-1]], "budget") if rest else None})
+        # 허용 오차: 구간 표시 줄을 최대 자릿수로 잡은 몫(구간마다)
+        t = item.doc.source.total_lines
+        label_slack = sum(len(pb._seg_label(t, t)) - len(pb._seg_label(a_, b_)) for a_, b_ in pb._segments(trial.shown))
+        assert len(pb._render_item(trial)) + 3 + label_slack > budget, budget
+        hits += 1
+    assert hits > 0  # 예산 때문에 잘리는 경계를 실제로 지나갔다

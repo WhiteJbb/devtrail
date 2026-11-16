@@ -144,6 +144,7 @@ class _Item:
     shown: list[int] = field(default_factory=list)
     omission: dict[str, Any] | None = None
     stub: bool = False
+    skipped: list[int] = field(default_factory=list)  # 원문 읽기 상한을 넘어 발췌하지 않고 건너뛴 줄(한 줄 안내만 낸다)
     tail: bool = False  # 뒤쪽 줄부터 넣었다 — 생략은 앞쪽 구간이고 본문에서 발췌 앞에 붙는다  # 전부 생략됐고 본문에 한 줄 안내를 냈다
 
     @property
@@ -956,6 +957,11 @@ def _omission_reserve(item: _Item) -> int:
     return len(_omission_line(item, {"lines": [t, t], "reason": "line_too_long", "read": worst})) + 1
 
 
+def _skip_omission(item: _Item, n: int) -> dict[str, Any]:
+    """원문 읽기 상한(READ_MAX_CHARS)을 넘는 줄 하나의 생략 — 전문 읽기 인자(버전 확인 없음)."""
+    return {**_omission(item.doc, [n, n], "line_too_long"), "line_chars": len(item.lines[n - 1])}
+
+
 def _full_cost(item: _Item) -> int:
     """항목 전체를 생략 없이 실을 때의 본문 비용(_allocate와 같은 계산: 머리줄+항목 사이 빈 줄, 구간 표시 줄, 발췌 줄)."""
     width = len(_seg_label(item.doc.source.total_lines, item.doc.source.total_lines)) + 1
@@ -970,9 +976,10 @@ def _render_item(item: _Item) -> str:
     out = [_header(item)]
     if item.omission and item.tail:
         out.append(_omission_line(item, item.omission))
-    for s, e in _segments(item.shown):
-        out.append(_seg_label(s, e))
-        out.extend(item.lines[s - 1:e])
+    parts: list[tuple[int, list[str]]] = [(s, [_seg_label(s, e), *item.lines[s - 1:e]]) for s, e in _segments(item.shown)]
+    parts += [(n, [_omission_line(item, _skip_omission(item, n))]) for n in item.skipped]
+    for _, rendered in sorted(parts, key=lambda p: p[0]):
+        out.extend(rendered)
     if item.omission and not item.tail:
         out.append(_omission_line(item, item.omission))
     return "\n".join(out)
@@ -1019,39 +1026,73 @@ def _allocate(b: _Build, remaining: int) -> tuple[int, int]:
                 chosen = list(item.candidates)
                 cost = _full_cost(item)
                 text_used = full_text
+            skipped: list[int] = []
+            stop: int | None = None  # seq에서 멈춘 위치 — 그 줄부터 끝까지(꼬리 묶음은 처음까지)가 생략 구간
+
+            def exact_reserve(idx: int, used: int) -> int:
+                """seq[idx]까지 넣고(본문 used자) 바로 다음 줄에서 멈출 때 실제로 붙을 생략 줄 길이(+줄바꿈).
+
+                멈춤 이유도 다음 줄에 아래 판정을 그대로 적용해 정한다. 다음 줄이 들어간다면 멈춤은 더 뒤에서 일어나고 그때
+                다시 판정하므로, 여기서는 '다음 줄에서 멈춘다'고 가정한 길이만 맞으면 된다.
+                """
+                nxt = seq[idx + 1]
+                rng = [item.candidates[0], nxt] if item.tail else [nxt, item.candidates[-1]]
+                nxt_chars = len(lines[nxt - 1])
+                caps = [c for c in (icap, gcap, TEXT_MAX_CHARS) if c is not None]
+                if nxt_chars <= READ_MAX_CHARS and nxt_chars > min(caps):
+                    why = "line_too_long"
+                elif nxt_chars <= READ_MAX_CHARS and icap is not None and used + nxt_chars + 1 > icap:
+                    why = "item_cap"
+                elif nxt_chars <= READ_MAX_CHARS and gcap is not None and group_used.get(group, 0) + used + nxt_chars + 1 > gcap:
+                    why = "group_cap"
+                else:
+                    why = "budget"
+                return len(_omission_line(item, _omission(item.doc, rng, why))) + 1
+
             for idx, n in enumerate(seq):
-                line_cost = len(lines[n - 1]) + 1
+                text = lines[n - 1]
+                is_last = idx == len(seq) - 1
+                if len(text) > READ_MAX_CHARS:
+                    # read_note(structured)로 회수할 수 없는 줄은 발췌하지 않고 한 줄 안내로 건너뛴 뒤 다음 줄을 계속 넣는다 —
+                    # 이 줄 때문에 뒤의 읽을 수 있는 줄(제약 포함)까지 생략하지 않는다
+                    note = len(_omission_line(item, _skip_omission(item, n))) + 1
+                    if cost + note + (0 if is_last else exact_reserve(idx, text_used)) > remaining:
+                        reason, stop = "budget", idx
+                        break
+                    skipped.append(n)
+                    cost += note
+                    prev = None
+                    continue
+                line_cost = len(text) + 1
                 seg_cost = width if prev is None or n != prev + step else 0
-                is_last = idx == len(item.candidates) - 1
-                need = cost + seg_cost + line_cost + (0 if is_last else om_reserve)
+                need = cost + seg_cost + line_cost
                 limits = []
                 if icap is not None and text_used + line_cost > icap:
                     limits.append("item_cap")
                 if gcap is not None and group_used.get(group, 0) + text_used + line_cost > gcap:
                     limits.append("group_cap")
-                if need > remaining:
+                # 뒤에 줄이 남으면 생략 줄 자리도 있어야 한다. 최악 길이로 먼저 보고, 모자라면 실제 길이로 다시 본다
+                if need + (0 if is_last else om_reserve) > remaining and (
+                        is_last or need + exact_reserve(idx, text_used + line_cost) > remaining):
                     limits.append("budget")
-                # read_note(structured)로 회수할 수 없는 줄은 발췌로 내지 않는다 — 근거 위치·버전으로 다시 읽을 수 없는
-                # 줄을 정상 발췌처럼 주지 않는다. 생략 구간의 read는 전문 읽기 인자가 된다(_read_args).
-                if len(lines[n - 1]) > READ_MAX_CHARS:
-                    limits.append("line_too_long")
                 if limits:
-                    alone = len(lines[n - 1])
-                    caps = [c for c in (icap, gcap, TEXT_MAX_CHARS, READ_MAX_CHARS) if c is not None]
-                    reason = "line_too_long" if alone > min(caps) else limits[0]
+                    caps = [c for c in (icap, gcap, TEXT_MAX_CHARS) if c is not None]
+                    reason = "line_too_long" if len(text) > min(caps) else limits[0]
+                    stop = idx
                     break
                 chosen.append(n)
                 cost += seg_cost + line_cost
                 text_used += line_cost
                 prev = n
             item.shown = sorted(chosen)
-            if len(chosen) < len(item.candidates):
-                first = seq[len(chosen)]  # 처음 못 넣은 줄
+            item.skipped = sorted(skipped)
+            if stop is not None:
+                first = seq[stop]  # 처음 못 넣은 줄
                 rng = ([item.candidates[0], first] if item.tail else [first, item.candidates[-1]])
                 item.omission = _omission(item.doc, rng, reason or "budget")
                 if reason == "line_too_long":
                     item.omission["line_chars"] = len(lines[first - 1])
-                if not chosen:
+                if not chosen and not skipped:
                     stub = len(_render_item(_Item(**{**item.__dict__, "stub": True}))) + 2
                     if stub <= remaining:
                         item.stub = True
@@ -1089,7 +1130,7 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
 
     def items_of(section: str, group: str | None = None) -> list[_Item]:
         return [i for i in b.items if i.section == section and (group is None or i.group == group)
-                and (i.shown or i.stub)]
+                and (i.shown or i.stub or i.skipped)]
 
     def add_items(items: list[_Item]) -> None:
         for item in items:
@@ -1139,7 +1180,7 @@ def _render(b: _Build, matching: dict[str, Any], follow: dict[str, Any], generat
                     out.append(f"  - 그 밖에 {noted - list_cap}개 파일 — JSON sections.recent.sessions 참조")
                 if include_items:
                     for item in [i for i in b.items if i.section == "recent" and i.group != "decision"
-                                 and i.extra.get("session_rank") == s["rank"] and (i.shown or i.stub)]:
+                                 and i.extra.get("session_rank") == s["rank"] and (i.shown or i.stub or i.skipped)]:
                         out.extend(["", _render_item(item)])
         elif key == "follow_ups":
             out.append(f"- 상태: {follow['state']} — {follow['message']}")
@@ -1210,7 +1251,8 @@ def _source_dict(doc: Any, project: str) -> dict[str, Any]:
 
 def _item_dict(item: _Item) -> dict[str, Any]:
     segs = [{"start_line": s, "end_line": e, "text": "\n".join(item.lines[s - 1:e])} for s, e in _segments(item.shown)]
-    shown = "full" if item.shown and not item.omission else "partial" if item.shown else "omitted"
+    shown = ("full" if item.shown and not item.omission and not item.skipped
+             else "partial" if item.shown or item.skipped else "omitted")
     out: dict[str, Any] = {
         "id": item.id, "kind": item.group, "label": item.label, "path": item.doc.rel,
         "span": list(item.span), "segments": segs, "shown": shown,
@@ -1222,6 +1264,8 @@ def _item_dict(item: _Item) -> dict[str, Any]:
         out["cleaned"] = [{"lines": [s, e], "reason": r} for s, e, r in _cleaned_ranges(item.cleaned)]
     if item.omission:
         out["omission"] = {"lines": item.omission["lines"], "reason": item.omission["reason"]}
+    if item.skipped:
+        out["unreadable_lines"] = list(item.skipped)  # 원문 읽기 상한 초과로 발췌하지 않은 줄 — omissions에 줄마다 있다
     for key in ("follow_up_state", "decision_status", "recorded_at", "session_rank", "session_id", "handoff_type", "host", "agent",
                 "heading_line", "excerpt_basis", "block_evidence", "memory_rule"):
         if item.extra.get(key) not in (None, ""):
@@ -1354,15 +1398,14 @@ def build(
             item.omission = _omission(item.doc, [item.span[0], item.span[1]], "budget")
             aggregated += 1
 
-    follow = _with_text_omissions(follow, sum(1 for i in b.items if i.section == "follow_ups" and i.omission))
+    follow = _with_text_omissions(follow, sum(1 for i in b.items if i.section == "follow_ups" and (i.omission or i.skipped)))
 
     omissions = []
     for item in b.items:
-        if item.omission:
-            # read는 MCP read_note에 그대로 넘기는 인자, 나머지는 안내 정보
-            om = {"item": item.id, "section": item.section, "kind": item.group, "path": item.doc.rel,
-                  "critical": item.section == "constraints", **item.omission}
-            omissions.append(om)
+        # read는 MCP read_note에 그대로 넘기는 인자, 나머지는 안내 정보. 건너뛴 긴 줄은 줄마다 따로 남는다(비연속 생략)
+        for om_ in [_skip_omission(item, n) for n in item.skipped] + ([item.omission] if item.omission else []):
+            omissions.append({"item": item.id, "section": item.section, "kind": item.group, "path": item.doc.rel,
+                              "critical": item.section == "constraints", **om_})
     critical_gaps = [g for g in b.gaps if g.get("critical")]
     requires_read = [{"path": om["path"], "lines": om["lines"], "reason": "critical_omission", "item": om["item"],
                       "read": om["read"]} for om in omissions if om["critical"]]
