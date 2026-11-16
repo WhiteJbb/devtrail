@@ -1139,3 +1139,24 @@ def test_explicit_none_records_cut_from_text_are_not_reported_as_none(tmp_path):
     assert sec["state"] == "unknown" and sec["complete"] is False
     assert sec["message"].startswith(pb.FOLLOW_UP_UNKNOWN) and pb.FOLLOW_UP_NONE not in sec["message"]
     assert sec["message"] in resp["text"] and len(resp["text"]) <= pb.TEXT_MAX_CHARS
+
+
+def test_unclosed_fence_in_memory_block_is_reported(tmp_path):
+    _ctx(tmp_path, "## 배경\n\nx\n")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md", "# Lessons\n\n" + _MK % "Devtrail"
+       + "- 교훈\n\n```bash\necho 열림\n\n## 규칙\n\n- HIDDEN_RULE\n")
+    resp = _brief(tmp_path)
+    gap = next(g for g in _section(resp, "gaps")["items"] if g["code"] == "unclosed_code_fence")
+    assert gap["path"] == "40_AgentMemory/06_Lessons.md"
+    assert not [i for i in _items(resp, "constraints") if i.get("memory_rule")]  # 판정하지 않고 알리기만 한다
+
+
+def test_unreadable_shared_decisions_folder_keeps_its_reason(tmp_path, deny_access):
+    _ctx(tmp_path, "## 제약\n\n- 제약\n")
+    _w(tmp_path, "60_Candidates/Decisions/Other-secret-plan.md", "---\ntitle: x\nproject: Other\n---\n")
+    deny_access.none("60_Candidates/Decisions")
+    resp = _brief(tmp_path)
+    assert deny_access.hits and resp["partial"] is True
+    w = next(w for w in resp["warnings"] if w["path"] == "60_Candidates/Decisions/")
+    assert w["code"] == "read_failed" and "폴더" in w["message"] and "count" not in w
+    assert "secret-plan" not in json.dumps(resp, ensure_ascii=False)

@@ -579,6 +579,12 @@ def _collect_memory(b: _Build) -> None:
             drop = {_norm(title), project_key, "current focus", "currentfocus", "lessons", "openloops", "open loops"}
             label = title + (" — 프로젝트 블록" if unit.scope == "project" else " — 공통")
             lines = doc.source.lines
+            _, unclosed = _fence_map(lines, unit.start, unit.end)
+            if unclosed is not None:
+                # 펜스는 블록 단위로 본다 — 닫히지 않은 펜스 뒤의 규칙 제목은 제목으로 보지 않으므로 숨기지 않고 알린다
+                b.gap("unclosed_code_fence", f"{doc.rel} {unclosed}행의 코드 블록이 이 메모리 블록 안에서 닫히지 않아 그 뒤 "
+                      "제목(규칙 절 포함)을 제목으로 보지 않았다 — 그 뒤 내용은 맥락 항목의 코드로 남는다.",
+                      path=doc.rel, lines=[unclosed, unit.end])
             # 블록 안의 명시적 규칙 제목 절(제약·원칙·규칙·금지·불변식…)은 제약으로 — Context.md와 같은 제목 계층 규칙.
             # 공통/프로젝트 귀속은 그대로 두고, Context 제약과 충돌해도 어느 쪽을 우선하거나 합치지 않는다(둘 다 싣는다).
             for start, end, is_rule, heading, hline in _memory_pieces(lines, unit.start, unit.end):
@@ -639,7 +645,7 @@ def _note_unlisted(b: _Build, unlisted: list[dict], follow_source: str = "") -> 
     for w in unlisted:
         if not w.get("skip_only"):
             b.partial = True
-        if w.get("shared"):
+        if w.get("shared") and not w["path"].endswith("/"):  # 폴더 자체를 못 읽은 경우는 파일명이 없다 — 사유를 그대로 둔다
             shared[w["code"]] = shared.get(w["code"], 0) + 1
             continue
         b.warn(w["code"], w["message"], path=w["path"])
@@ -1319,7 +1325,8 @@ def build(
     # 후속 항목 판단은 예산 배정 뒤 본문 생략까지 반영해 다시 정한다(_with_text_omissions). 고정부 크기는 생략이 가장 많을 때의
     # 메시지로 잡는다 — 배정 뒤 메시지가 길어져 상한을 넘지 않게.
     n_follow = sum(1 for i in b.items if i.section == "follow_ups")
-    worst_follow = max((follow, _with_text_omissions(follow, n_follow)), key=lambda f: len(f["message"]))
+    worst_follow = max((follow, _with_text_omissions(follow, n_follow)),
+                       key=lambda f: len(f["state"]) + len(f["message"]))  # 본문 상태 줄 = 상태 + 메시지
     for list_cap in (_GAPS_TEXT_CAP, 5, 0):
         skeleton = _render(b, matching, worst_follow, generated_at, critical=True, aggregated=0, include_items=False,
                            list_cap=list_cap)
