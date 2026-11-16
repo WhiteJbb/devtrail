@@ -291,12 +291,13 @@ def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tup
             cleaned.append((n, "repeated_title"))
             continue
         keep.append(n)
-    # 내용 없이 제목만 남은 절 — 알려진 정리(빈 틀·marker·반복 제목)로 비게 된 절, 그리고 하위 제목만 거느린 상위 제목
+    # 내용 없이 제목만 남은 절 — 알려진 정리(빈 틀·marker·반복 제목)로 비게 된 절(구간 전체가 빈 경우만), 그리고 하위 제목만 거느린 상위 제목
     # (하위 절이 다른 항목으로 갈라진 경우 포함)만 뺀다. 원문부터 본문 없이 제목만 있는 절은 제목 자체가 내용(제목으로 쓴
     # 규칙·할 일)일 수 있어 남긴다 — 빼면 제약이 '빈 틀'로, 후속 항목이 '없음'으로 둔갑한다.
     removed = {n for n, _ in cleaned}
     heads = {n: h for n in range(start, end + 1) if n not in fenced and (h := _heading(lines[n - 1]))}
     drop: set[int] = set()
+    emptied_only: set[int] = set()  # 정리로 비게 된 제목 (상위 제목 판정과 별개)
     for n in sorted((n for n in keep if n in heads), reverse=True):  # 하위 절을 먼저 판정한다
         level = heads[n][0]
         has_content = emptied = False
@@ -320,6 +321,12 @@ def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tup
             container = bool(sub and sub[0] > level)
         if emptied or container:
             drop.add(n)
+            if not container:
+                emptied_only.add(n)
+    # 빈 틀로 비게 된 제목은 구간 전체가 빈 틀일 때만 지운다(템플릿의 빈 절). 내용이 남는 구간 안에서는 빈 틀 줄만 빼고 제목은
+    # 남긴다 — 깊은 단계(4단계 이하) 규칙 제목·제목으로 적은 할 일이 상위 항목 안에서 소리 없이 사라지지 않게 한다.
+    if emptied_only and any(lines[n - 1].strip() for n in keep if n not in drop):
+        drop -= emptied_only
     if drop:
         cleaned.extend((n, "empty_section") for n in sorted(drop))
         keep = [n for n in keep if n not in drop]

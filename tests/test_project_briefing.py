@@ -1591,3 +1591,57 @@ def test_parent_constraint_heading_without_scaffold_is_not_a_scaffold_item(tmp_p
     items = _items(resp, "constraints")
     assert not [i for i in items if i.get("scaffold_only")]
     assert [h["text"] for h in items[0]["heading_path"]] == ["제약"]
+
+
+# ── 독립 리뷰 지적 회귀 — 내용 있는 항목 안의 깊은 제목은 빈 틀 아래여도 남는다 ─────────────────────────
+
+
+def test_deep_rule_heading_over_empty_bullet_inside_constraint_item_is_shown(tmp_path):
+    """4단계 이하 제목은 상위 항목 안에 남는다 — 빈 불릿 줄만 빼고 제목은 지우지 않는다(3단계 scaffold_only와 같은 결과)."""
+    _ctx(tmp_path, "# Devtrail\n\n## 제약\n\n- 공식 영역 직접 쓰기 금지\n\n#### main 브랜치에 직접 push 금지\n\n- \n\n"
+                   "#### 배포 규칙\n\n- 태그로만 배포\n")
+    resp = _brief(tmp_path)
+    (item,) = _items(resp, "constraints")
+    lines = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md")
+    n = lines.index("#### main 브랜치에 직접 push 금지") + 1
+    assert any(s["start_line"] <= n <= s["end_line"] for s in item["segments"])
+    assert {"lines": [n + 2, n + 2], "reason": "empty_scaffolding"} in item["cleaned"]
+    assert not any(c["reason"] == "empty_section" for c in item.get("cleaned", []))
+    assert "#### main 브랜치에 직접 push 금지" in resp["text"] and "- 태그로만 배포" in resp["text"]
+
+
+@pytest.mark.parametrize("rel", ["40_AgentMemory/01_CurrentFocus.md", "40_AgentMemory/06_Lessons.md"])
+def test_deep_memory_rule_heading_over_empty_bullet_is_shown(tmp_path, rel):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _w(tmp_path, rel, _fm(type="agent_memory", scope="global", updated_at=TODAY) + "# Memory\n\n"
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n### 규칙\n- 실제 기억 규칙\n#### 운영 DB 직접 수정 금지\n- \n#### 기타\n- 다른 규칙\n")
+    resp = _brief(tmp_path)
+    (rule,) = [i for i in _items(resp, "constraints") if i.get("memory_rule")]
+    shown = "\n".join(s["text"] for s in rule["segments"])
+    assert "#### 운영 DB 직접 수정 금지" in shown and "- 다른 규칙" in shown
+    assert "#### 운영 DB 직접 수정 금지" in resp["text"]
+
+
+def test_todo_heading_over_empty_bullet_beside_real_items_is_shown_in_follow_ups(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00",
+             _process("- 다음 일\n\n### 운영 DB 마이그레이션 롤백 확인\n\n- "))
+    _open_loops_block(tmp_path, "- (2026-11-10) 실제 할 일\n\n### 결제 웹훅 재시도 미해결\n\n- \n")
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert fu["state"] == "has_items"
+    shown = "\n".join(s["text"] for i in fu["items"] for s in i["segments"])
+    for heading in ("### 운영 DB 마이그레이션 롤백 확인", "### 결제 웹훅 재시도 미해결"):
+        assert heading in shown and heading in resp["text"]
+
+
+def test_whole_scaffold_only_sections_are_still_cleaned(tmp_path):
+    """구간 전체가 빈 틀인 절(템플릿)은 여전히 지운다 — 정리 규칙을 좁혔을 뿐 없애지 않았다."""
+    _ctx(tmp_path, TEMPLATE_CONTEXT)
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("### 기타\n\n- "))
+    resp = _brief(tmp_path)
+    assert {"배경", "목표"} <= {c["heading"] for c in _section(resp, "context")["cleaned_sections"]}
+    assert "## 목표" not in resp["text"]
+    fu = _section(resp, "follow_ups")
+    assert [s["state"] for s in fu["sources_checked"] if s["source"] == "next_session"] == ["empty"]

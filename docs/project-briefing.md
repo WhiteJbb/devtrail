@@ -150,7 +150,9 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 다른 제목 아래 제약성 문장은 판정 안 함), `no_context`(Context.md 없음), `unknown`(Context.md 또는 그 폴더를 읽지 못함 →
 `critical_omission`), `not_evaluated`.
 
-**빈 틀만 거느린 제약·규칙 제목은 제목만 담은 제약 항목으로 남는다**(`scaffold_only: true`, 본문 머리줄에 "본문은 빈 틀뿐 — 제목만 남김").
+**빈 틀만 거느린 제약·규칙 제목은 사라지지 않는다.** 항목 하나 전체(1~3단계 제목 절, 또는 제약 여부가 바뀌어 갈라진 절)가 빈 틀뿐이면
+제목만 담은 제약 항목으로 남는다(`scaffold_only: true`, 본문 머리줄에 "본문은 빈 틀뿐 — 제목만 남김"). 내용이 있는 항목 안의 깊은 제목
+(`#### …` 아래 빈 불릿)은 아래 정리 규칙대로 빈 틀 줄만 빠지고 제목은 그 항목 발췌에 남는다.
 `### main 브랜치 직접 push 금지` 아래 빈 불릿처럼 제목 자체가 규칙일 수 있어서다 — 규칙인지는 판정하지 않는다. 다른 제약 항목이 있든 없든
 (state가 `items`든 `heading_empty`든) 같고, Context 제약과 CurrentFocus·Lessons의 적용 규칙 절 모두에 적용된다. 이 항목은 제약 예산을 받고
 잘리면 다른 제약과 같이 `critical_omission`·`requires_read`가 된다. 항목 줄은 제목 줄뿐이고 빈 틀 줄은 `cleaned`(`empty_scaffolding`)에 남는다.
@@ -174,7 +176,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 - `empty_scaffolding`: init-project/init-vault 템플릿 안내 줄(정확히 같은 문자열), 빈 불릿(`-`, `*`, `1.`)
 - `repeated_title`: 이미 항목 이름으로 드러난 제목 — 문서 H1(`# Process`, `# Plan`, `# OpenLoops`, Context 제목),
   `## Next Session`·`## What Changed`·`## Goal`·`## 결정`, OpenLoops의 `## <프로젝트>`
-- `empty_section`: 위를 빼고 나니 내용 없이 제목만 남은 절, 그리고 하위 제목만 거느린 상위 제목(하위 절이 다른 항목으로
+- `empty_section`: 위를 빼고 나니 **항목 구간 전체**에 내용이 남지 않은 절(템플릿의 빈 절 — 구간에 내용이 하나라도 남으면 빈 틀 줄만 빼고
+  그 안의 제목은 남긴다. 깊은 규칙 제목·제목으로 적은 할 일이 상위 항목 안에서 사라지지 않게), 그리고 하위 제목만 거느린 상위 제목(하위 절이 다른 항목으로
   갈라진 경우 포함 — 하위 제목이 내용으로 남고, 상위 제목은 하위 항목의 `heading_path`로 실린다). **원문부터 본문 없이 제목만 있는 절은 지우지 않는다** — 제목 자체가 규칙·할 일
   (`### main 브랜치에 직접 push 금지`)일 수 있어, 지우면 제약이 `heading_empty`로, 후속 항목이 "없음"으로 바뀐다.
 
@@ -289,7 +292,8 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 | 병합 리뷰 지적(BLOCK) 회귀 — 하위 절만 거느린 상위 제목("운영 서버에서만 적용" / "로컬 환경")을 정리하면서 두 `### 제약`이 적용 범위 없이 실림 | `test_parent_heading_scope_stays_with_constraints`(리뷰 원문 사례), `test_heading_path_lists_every_enclosing_level_but_not_doc_title`, `test_memory_rule_keeps_parent_heading_inside_its_block_only`, `test_heading_path_line_is_counted_in_text_budget` (고치기 전 코드에서 4건 실패 확인). 리뷰어 퍼즈 150 vault 재실행 — 상한·발췌 회수·예산 순서 위반 0건 | 통과 |
 | 독립 리뷰 8차 지적 — `update_open_loops(section=)`로 쓰고 resolve로 다 지운 뒤 남은 `### 분류` 제목을 후속 항목(`has_items`)으로 보고(차단, 63cf1bb 회귀), 빈 불릿 위 제목 규칙이 본문에서 사라짐(비차단) | `test_open_loops_category_left_after_resolve_is_not_reported_as_open_work`(제품 쓰기 함수로 재현), `test_heading_only_follow_ups_are_not_reported_as_none`(OpenLoops 제목만 → `headings_only`로 갱신), `test_constraint_heading_over_empty_bullet_is_named_in_gap` (고치기 전 코드에서 3건 실패 확인). 퍼즈 150·40 vault 재실행 위반 0건. 재검토 비차단 지적 — 4칸 들여쓴 `#` 줄을 제목으로 봄, 본문 gap 400자 자름에 "외 N개"가 잘림: `test_four_space_indented_hash_line_in_open_loops_is_content_not_heading`, `test_heading_gaps_keep_count_in_text_and_full_list_in_json` (고치기 전 2건 실패 확인) | 통과 |
 | 병합 리뷰 지적(BLOCK) 회귀 — 다른 제약 항목이 있으면 빈 불릿만 거느린 규칙 제목(`### main 브랜치 직접 push 금지`)이 gap·critical 없이 사라짐(Context·CurrentFocus·Lessons) | `test_scaffold_only_rule_heading_kept_beside_real_constraints_in_context`, `test_scaffold_only_memory_rule_heading_kept_beside_real_rules[CurrentFocus·Lessons]`, `test_scaffold_only_rule_heading_cut_by_budget_is_critical` (고치기 전 코드에서 4건 실패 확인), 보호 검사 `test_parent_constraint_heading_without_scaffold_is_not_a_scaffold_item`. 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 816 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 독립 리뷰 지적(BLOCK) 회귀 — 내용 있는 항목 안의 4단계 이하 규칙 제목·제목으로 적은 할 일이 빈 불릿 아래면 `empty_section`으로 소리 없이 사라짐(Context·CurrentFocus·Lessons·OpenLoops·Next Session) | `test_deep_rule_heading_over_empty_bullet_inside_constraint_item_is_shown`, `test_deep_memory_rule_heading_over_empty_bullet_is_shown[CurrentFocus·Lessons]`, `test_todo_heading_over_empty_bullet_beside_real_items_is_shown_in_follow_ups` (고치기 전 코드에서 4건 실패 확인), 보호 검사 `test_whole_scaffold_only_sections_are_still_cleaned`. 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 821 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
