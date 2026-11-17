@@ -57,13 +57,14 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 - 정리로 빠진 줄이 있으면 구간이 여러 개(`contiguous: false`)가 되고, 본문에도 구간마다 `@L시작-L끝` 줄이 따로 붙는다.
   빠진 줄은 `cleaned`에 이유와 함께 남는다.
 - 세션 항목은 `session_rank, session_id, handoff_type, recorded_at{value, source}, host, agent`, 결정 항목은
-  `decision_status(candidate|promoted), recorded_at`, 메모리 블록은 `block_evidence`(marker 근거)를 더 단다. 빈 틀만 거느린 제약·규칙
-  제목 항목은 `scaffold_only: true`다(아래 "제약 상태").
+  `decision_status(candidate|promoted), recorded_at`, 메모리 블록은 `block_evidence`(marker 근거)를 더 단다. 빈 틀 말고는 제목만
+  남은 Context·메모리 항목은 `scaffold_only: true`다(아래 "제약 상태"·"정리").
 - Context·메모리 블록 항목은 감싸는 상위 제목이 있으면 `heading_path: [{line, level, text}]`(바깥부터, 원문 줄 번호·단계·제목
   그대로)를 단다. 본문에는 머리줄 바로 아래 `  ⤷ 상위 제목: L10 ## 운영 서버에서만 적용 › L14 ### …` 한 줄로 실리고 머리줄과
   같이 예산에 잡힌다. 하위 절만 거느려 따로 항목이 되지 않는 상위 제목("운영 서버에서만 적용" 아래 `### 제약`)의 적용 범위가 제약에서
-  떨어지지 않게 하기 위해서다. 문서 제목(H1 반복 제목)·메모리 블록 제목(`## <프로젝트>`)과 블록 밖 제목은 넣지 않는다 — 블록 귀속
-  경계를 넘지 않는다. 결정·세션 항목은 정해진 절(`## 결정`·`## Next Session`…)이라 달지 않는다.
+  떨어지지 않게 하기 위해서다. 빼는 것은 줄 위치로 정한 자리 제목 — 문서 제목 줄(본문 첫 제목이 1단계이고 1단계 제목이 그것 하나뿐일
+  때)과 프로젝트 메모리 블록 머리 제목(marker 바로 뒤 `## <프로젝트>`) — 과 블록 밖 제목뿐이다. 블록 귀속 경계를 넘지 않는다. 프로젝트
+  이름과 글자가 같은 다른 제목(`### Devtrail`)이나 1단계 제목이 여럿인 문서의 각 1단계 제목(`# 운영`·`# 로컬`)은 남는다. 결정·세션 항목은 정해진 절(`## 결정`·`## Next Session`…)이라 달지 않는다.
 - 다시 읽기: `read_note(path, structured=True, start_line, max_lines, expected_version=source_version)`. 그 사이 파일이
   바뀌었으면 `version_mismatch`로 거절된다.
 
@@ -124,8 +125,8 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 이유는 `unknown_reasons`로 구분한다: `{read_failed_or_skipped, partial, data_insufficient, no_sessions, omitted_from_text?}`.
 `omitted_from_text`는 예산 배정 **뒤**에 센다 — 후속 항목 판단은 배정 결과까지 반영해 최종 확정한다(고정부 크기는 생략이 가장 많을 때의
 메시지로 미리 잡아 상한을 넘지 않는다). 데이터 부족은 gaps에도
-`follow_up_section_missing`·`follow_up_section_empty`(OpenLoops 빈 틀 블록 포함 — 빈 틀 아래 제목이 있으면 할 일일 수 있어 메시지에 건수·줄을,
-JSON `headings`에 전체를 싣는다)·`follow_up_headings_only`·`orphan_plan`·`no_sessions`로 남는다 — 읽기 실패와 섞지 않고,
+`follow_up_section_missing`·`follow_up_section_empty`(OpenLoops 빈 틀 블록 포함 — 이제 제목이 없는 빈 틀뿐인 경우만이다)·
+`follow_up_headings_only`(빈 틀 말고는 제목만 남은 기록 — 할 일일 수 있어 메시지에 건수·줄을, JSON `headings`에 전체를 싣는다)·`orphan_plan`·`no_sessions`로 남는다 — 읽기 실패와 섞지 않고,
 그 세션에 후속 작업이 있었는지 판정하지 않는다.
 
 `sources_checked`에 출처마다 `items | explicit_none | empty | missing | no_process | unreadable | link_skipped | attribution_mismatch | unattributed | headings_only | block_empty | no_block`.
@@ -137,28 +138,32 @@ OpenLoops 블록에 불릿 없이 하위 제목만 남았으면 `headings_only`(
 할 일(`### 결제 웹훅 재시도 미해결`)일 수도 있다. 어느 쪽인지 근거가 없어 '있음'(`items`)으로도 '없음'(`block_empty`)으로도 보지 않고,
 `follow_up_headings_only` gap에 제목 수와 제목 줄 위치를 남긴다(본문은 5개·제목 40자, JSON `headings`에 전체 `{line, text}`). 불릿이 하나라도 남은 블록은 `items`이고 빈 분류 제목은 발췌 안에 그대로 보인다.
 Next Session은 자유 서식이라 본문 없는 하위 제목도 내용이다(`없음` 아래 `### …` 제목이 더 있으면 `items` — 명시적 없음이 아니다).
+단 빈 불릿만 거느린 제목만 남은 Next Session(`### 기타` + `- `)은 제목을 지우지 않되 그것을 근거로 할 일이 있다고도 하지 않는다 —
+`headings_only`(확인 불가)로 두고 `follow_up_headings_only` gap에 제목을 줄 번호와 함께 싣는다(제약의 `scaffold_only`와 같은 기준).
 내용을 거느린 하위 제목(`### 기타` 아래 `- 없음`)은 내용 줄로 세지 않는다.
 명시적 없음은 내용이 `없음·없다·해당 없음·none·n/a·na`(대소문자 무시, 앞 불릿·끝 마침표 제외) 한 줄일 때만이다 — "없음 — 단 실측은 남음"은 항목으로 본다.
 Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow_up_state: explicit_none`, 원문 발췌는 남는다). 명시적 없음은 그 기록에만
 해당한다 — 다른 세션·블록의 후속 항목을 지우거나 해결 처리하지 않는다.
-빈 틀("- ")은 없음이 아니라 확인 불가다.
+빈 틀("- ")은 없음이 아니라 확인 불가다. OpenLoops·Next Session에는 템플릿 빈 절 비교를 쓰지 않는다 — 지우는 제목은 절 머리 제목
+(`## Next Session`, 항목 이름으로 실림)과 블록 머리 제목(`## <프로젝트>`)뿐이다.
 
 ### 제약 상태
 
-`sections[constraints].state`(Context.md 기준)와 `memory_rule_items`(기억의 적용 규칙 항목 수). state: `items`, `heading_empty`(제약 제목 아래가 알려진 빈 틀뿐 —
-본문 없는 하위 제목은 내용이라 `items`. 이때 빈 틀만 남은 제약 제목은 `constraint_section_empty` gap 메시지에 건수·줄 번호와 함께 최대 5개
-실린다(JSON `headings`에 전체)), `none_found`(제약 제목 절 없음 —
+`sections[constraints].state`(Context.md 기준)와 `memory_rule_items`(기억의 적용 규칙 항목 수). state: `items`, `heading_empty`(제약 항목이 모두
+빈 틀 말고는 제목만 남은 `scaffold_only` — 빈 틀 없이 본문 없는 제목만 적은 절은 내용이라 `items`. 이때 그 제약 제목은 `constraint_section_empty`
+gap 메시지에 건수·줄 번호와 함께 최대 5개 실린다(JSON `headings`에 전체)), `none_found`(제약 제목 절 없음 —
 다른 제목 아래 제약성 문장은 판정 안 함), `no_context`(Context.md 없음), `unknown`(Context.md 또는 그 폴더를 읽지 못함 →
 `critical_omission`), `not_evaluated`.
 
-**빈 틀만 거느린 제약·규칙 제목은 사라지지 않는다.** 항목 하나 전체(1~3단계 제목 절, 또는 제약 여부가 바뀌어 갈라진 절)가 빈 틀뿐이면
-제목만 담은 제약 항목으로 남는다(`scaffold_only: true`, 본문 머리줄에 "본문은 빈 틀뿐 — 제목만 남김"). 내용이 있는 항목 안의 깊은 제목
-(`#### …` 아래 빈 불릿)은 아래 정리 규칙대로 빈 틀 줄만 빠지고 제목은 그 항목 발췌에 남는다.
+**빈 틀만 거느린 제약·규칙 제목은 사라지지 않는다.** 제약 절은 템플릿 빈 절이 아니므로(템플릿의 `## 제약 / 원칙`에는 실제 문장이 있다)
+제목은 언제나 남고 빈 틀 줄만 빠진다. 항목 하나(1~3단계 제목 절, 또는 제약 여부가 바뀌어 갈라진 절)에 빈 틀 말고는 제목만 남으면
+`scaffold_only: true`(본문 머리줄에 "본문은 빈 틀뿐 — 제목만 남김")로 표시한다. 내용이 있는 항목 안의 깊은 제목(`#### …` 아래 빈 불릿)도
+빈 틀 줄만 빠지고 제목은 그 항목 발췌에 남는다.
 `### main 브랜치 직접 push 금지` 아래 빈 불릿처럼 제목 자체가 규칙일 수 있어서다 — 규칙인지는 판정하지 않는다. 다른 제약 항목이 있든 없든
 (state가 `items`든 `heading_empty`든) 같고, Context 제약과 CurrentFocus·Lessons의 적용 규칙 절 모두에 적용된다. 이 항목은 제약 예산을 받고
 잘리면 다른 제약과 같이 `critical_omission`·`requires_read`가 된다. 항목 줄은 제목 줄뿐이고 빈 틀 줄은 `cleaned`(`empty_scaffolding`)에 남는다.
-`state`는 내용이 있는 제약 항목 수로만 정한다(제목만 남긴 항목은 `items`로 세지 않는다). 빈 틀 없이 하위 절만 거느린 상위 제목은 이 항목이
-되지 않고 하위 항목의 `heading_path`로 실린다.
+`state`는 내용이 있는 제약 항목 수로만 정한다(제목만 남긴 항목은 `items`로 세지 않는다). 이 구간에 본문 없이 하위 절만 거느린 상위
+제목은 항목이 되지 않고 하위 항목의 `heading_path`로 실린다(`parent_heading`).
 
 ### gaps 코드
 
@@ -169,26 +174,50 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 `project_<status>`(식별 실패), `follow_up_section_missing`·`follow_up_section_empty`·`follow_up_headings_only`(후속 항목 데이터 부족·판정 불가),
 `line_exceeds_read_limit`(16000자 넘는 줄을 발췌하지 못함 — 아래 예산 절).
 
-## 정리 — 알려진 것만, 줄 번호는 그대로
+## 정리 — 템플릿과 정확히 같은 빈 틀만, 줄 번호는 그대로
 
-정리는 줄을 **빼기만** 하고 줄 내용·번호를 바꾸지 않는다. 대상:
+정리는 줄을 **빼기만** 하고 줄 내용·번호를 바꾸지 않는다. **제목을 지우는 기준은 "저장소 템플릿의 빈 절과 정확히 같다"뿐이다.**
+본문이 없다, 템플릿과 비슷하다, 깊은 단계다, 다른 제약이 이미 있다, 프로젝트 이름과 글자가 같다 — 어느 것도 제목을 지울 이유가 아니다.
+제목은 규칙·할 일·적용 범위("운영 서버에서만 적용")일 수 있어서다. 남긴 제목을 근거로 규칙·할 일·완료 상태를 만들어 내지도 않는다.
+
+비교 기준(실제 템플릿, `tests/test_project_briefing.py::test_template_catalog_matches_real_repository_templates`가 템플릿 출력과 대조한다):
+
+| 템플릿 | 출처 | 빈 절(제목 → 본문) | 자리표시 줄 |
+|--------|------|------------------|------------|
+| 프로젝트 Context.md | `WikiService._default_project_context`(init-project) | `## 배경` → `_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_`, `## 목표` → `- ` | `> 이 파일은 \`get_project_briefing\`이 …`, `> 배경·목표·제약이 바뀔 때마다 갱신한다.` |
+| AgentMemory 파일 | `WikiService._default_agent_memory`(init-vault) | 없음(문서 제목 + 자리표시 한 줄 — 문서 제목 줄은 아래 `repeated_title`) | `_Fill this note with durable context that future agents should know._` |
+| Process | `write_session_process` | 없음(빈 필드는 `- ` — 절 머리 제목은 항목 이름이라 아래 `repeated_title`) | 빈 불릿 |
+| OpenLoops 블록 | `update_open_loops` | 없음(블록 머리 `## <프로젝트>` — 아래 `repeated_title`) | — |
+| Obsidian 수동 템플릿 | `docs/vault-templates/*.md` | 비교하지 않는다 — 사람이 복사해 채우는 문서다. `Decision.md`의 `## 결정` 자리표시 `(무엇을 선택했는지 한 문장으로.)`는 결정 발췌에 그대로 보인다(지우지 않는 쪽을 택했다) | — |
+
+**비교 단위**: 절 하나 — 제목 줄과, 같거나 높은 단계의 다음 제목 전까지의 모든 줄(하위 제목 포함, 메모리 블록은 블록 끝까지)에서 빈 줄을 뺀
+목록. 줄마다 **끝 공백(CR 포함)만 무시한 정확한 문자열**로 비교한다. 빈 불릿이 하나 더 있거나, `*` 불릿이거나, 제목 단계·띄어쓰기가
+다르거나(`### 목표`, `##  목표`), 하위 절이 있거나, 코드 블록 안이거나, 자리표시와 비슷한 사용자 문장이면 템플릿이 아니다. 빈 절 비교는
+Context.md에만 쓴다(같은 `## 목표` + `- `도 Lessons 블록 안이면 남는다).
+
+정리 이유(`cleaned[].reason`, Context는 `sections[context].cleaned_sections[].reason`):
 
 - `memory_marker`: `<!-- devtrail-memory-patch: … -->` 줄 (귀속 근거는 `block_evidence`로 남는다)
-- `empty_scaffolding`: init-project/init-vault 템플릿 안내 줄(정확히 같은 문자열), 빈 불릿(`-`, `*`, `1.`)
-- `repeated_title`: 이미 항목 이름으로 드러난 제목 — 문서 H1(`# Process`, `# Plan`, `# OpenLoops`, Context 제목),
-  `## Next Session`·`## What Changed`·`## Goal`·`## 결정`, OpenLoops의 `## <프로젝트>`
-- `empty_section`: 위를 빼고 나니 **항목 구간 전체**에 내용이 남지 않은 절(템플릿의 빈 절 — 구간에 내용이 하나라도 남으면 빈 틀 줄만 빼고
-  그 안의 제목은 남긴다. 깊은 규칙 제목·제목으로 적은 할 일이 상위 항목 안에서 사라지지 않게), 그리고 하위 제목만 거느린 상위 제목(하위 절이 다른 항목으로
-  갈라진 경우 포함 — 하위 제목이 내용으로 남고, 상위 제목은 하위 항목의 `heading_path`로 실린다). **원문부터 본문 없이 제목만 있는 절은 지우지 않는다** — 제목 자체가 규칙·할 일
-  (`### main 브랜치에 직접 push 금지`)일 수 있어, 지우면 제약이 `heading_empty`로, 후속 항목이 "없음"으로 바뀐다.
+- `empty_scaffolding`: 위 자리표시 줄(정확히 같은 문자열)과 글자 없는 빈 불릿 줄(`-`, `*`, `1.`). 제목이 아니고 글자가 없는 줄이다 —
+  이 줄이 빠져도 그 위 제목은 남는다.
+- `repeated_title`: **줄 위치로** 정한 자리 제목만 — 문서 제목 줄(본문 첫 제목이 1단계이고 1단계 제목이 하나뿐일 때. 문서 자체 이름이라
+  `sources[].title`·경로로 드러난다), 항목 이름이 된 절 머리 제목(`## Next Session`·`## What Changed`·`## Goal`·`## 결정`), 프로젝트 메모리
+  블록 머리 제목(marker 바로 뒤 `## <프로젝트>`). 다른 위치의 같은 글자 제목은 남는다.
+- `template_section`: 위 표의 템플릿 빈 절과 절 전체가 정확히 같은 제목.
+- `parent_heading`: 이 항목 구간에 본문 없이 하위 절만 거느린 상위 제목 — 하위 절이 다음 항목으로 갈라졌다. 지운 것이 아니라 하위 항목의
+  `heading_path`·본문 `⤷ 상위 제목` 줄로 옮겨 싣는다. 그래서 그 절 안에 항목이 되는 하위 절이 하나도 없으면(하위 절이 모두 템플릿 빈 절)
+  옮길 곳이 없으므로 상위 제목을 제 항목(제목 한 줄)으로 남긴다.
+
+그 밖의 제목은 모두 남는다. 빈 틀 말고는 제목만 남은 Context·메모리 항목은 항목으로 실리고 `scaffold_only: true`·머리줄 "본문은 빈 틀뿐 —
+제목만 남김"으로 표시된다(예산·생략 규칙은 다른 항목과 같다 — 잘리면 정확한 줄 범위와 `read`가 남는다). 원문부터 본문 없이 제목만 있는
+절도 내용이다.
 
 제목은 CommonMark ATX 규칙처럼 들여쓰기 0~3칸까지 인정한다(4칸 이상은 제목이 아니다).
 코드 블록 안 줄은 건드리지 않고 제목으로도 보지 않는다. 코드 블록 판정은 CommonMark 펜스 규칙을 따른다 — 여는 펜스는
 들여쓰기 0~3칸의 ` 또는 ~ 3개 이상, 닫는 펜스는 **같은 문자·여는 길이 이상**이고 뒤에 공백 말고는 없어야 한다
-(`~~~markdown` 블록 안의 단독 ``` 줄은 블록을 닫지 않는다). 제목 탐지·정리·`unclosed_code_fence` 판정이 같은 규칙을 쓴다. 템플릿과 비슷하게 생긴 사용자 문장(`_(직접 쓴 메모)_`), 모르는 제목과 그 내용은 남는다.
-빈 틀뿐인 Context 맥락 절은 항목을 만들지 않고 `sections[context].cleaned_sections`에 남긴다(`reason: empty_section`) — 제약 절은 위
-"제약 상태"처럼 제목만 담은 항목으로 남는다. 하위 절만
-거느린 상위 제목은 `reason: parent_heading`으로 남고, 그 제목은 하위 항목의 `heading_path`·본문 `상위 제목` 줄로 실린다.
+(`~~~markdown` 블록 안의 단독 ``` 줄은 블록을 닫지 않는다). 제목 탐지·정리·`unclosed_code_fence` 판정이 같은 규칙을 쓴다.
+Context에서 항목이 되지 않은 절(템플릿 빈 절·상위 제목·문서 제목·자리표시뿐인 머리말)은 `sections[context].cleaned_sections`에
+`{path, lines, heading, reason}`으로 남는다.
 
 ## 표시 순서와 예산 — text 20000자
 
@@ -293,27 +322,41 @@ Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow
 | 병합 리뷰 지적(BLOCK) 회귀 — 하위 절만 거느린 상위 제목("운영 서버에서만 적용" / "로컬 환경")을 정리하면서 두 `### 제약`이 적용 범위 없이 실림 | `test_parent_heading_scope_stays_with_constraints`(리뷰 원문 사례), `test_heading_path_lists_every_enclosing_level_but_not_doc_title`, `test_memory_rule_keeps_parent_heading_inside_its_block_only`, `test_heading_path_line_is_counted_in_text_budget` (고치기 전 코드에서 4건 실패 확인). 리뷰어 퍼즈 150 vault 재실행 — 상한·발췌 회수·예산 순서 위반 0건 | 통과 |
 | 독립 리뷰 8차 지적 — `update_open_loops(section=)`로 쓰고 resolve로 다 지운 뒤 남은 `### 분류` 제목을 후속 항목(`has_items`)으로 보고(차단, 63cf1bb 회귀), 빈 불릿 위 제목 규칙이 본문에서 사라짐(비차단) | `test_open_loops_category_left_after_resolve_is_not_reported_as_open_work`(제품 쓰기 함수로 재현), `test_heading_only_follow_ups_are_not_reported_as_none`(OpenLoops 제목만 → `headings_only`로 갱신), `test_constraint_heading_over_empty_bullet_is_named_in_gap` (고치기 전 코드에서 3건 실패 확인). 퍼즈 150·40 vault 재실행 위반 0건. 재검토 비차단 지적 — 4칸 들여쓴 `#` 줄을 제목으로 봄, 본문 gap 400자 자름에 "외 N개"가 잘림: `test_four_space_indented_hash_line_in_open_loops_is_content_not_heading`, `test_heading_gaps_keep_count_in_text_and_full_list_in_json` (고치기 전 2건 실패 확인) | 통과 |
 | 병합 리뷰 지적(BLOCK) 회귀 — 다른 제약 항목이 있으면 빈 불릿만 거느린 규칙 제목(`### main 브랜치 직접 push 금지`)이 gap·critical 없이 사라짐(Context·CurrentFocus·Lessons) | `test_scaffold_only_rule_heading_kept_beside_real_constraints_in_context`, `test_scaffold_only_memory_rule_heading_kept_beside_real_rules[CurrentFocus·Lessons]`, `test_scaffold_only_rule_heading_cut_by_budget_is_critical` (고치기 전 코드에서 4건 실패 확인), 보호 검사 `test_parent_constraint_heading_without_scaffold_is_not_a_scaffold_item`. 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
-| 독립 리뷰 지적(BLOCK) 회귀 — 내용 있는 항목 안의 4단계 이하 규칙 제목·제목으로 적은 할 일이 빈 불릿 아래면 `empty_section`으로 소리 없이 사라짐(Context·CurrentFocus·Lessons·OpenLoops·Next Session) | `test_deep_rule_heading_over_empty_bullet_inside_constraint_item_is_shown`, `test_deep_memory_rule_heading_over_empty_bullet_is_shown[CurrentFocus·Lessons]`, `test_todo_heading_over_empty_bullet_beside_real_items_is_shown_in_follow_ups` (고치기 전 코드에서 4건 실패 확인), 보호 검사 `test_whole_scaffold_only_sections_are_still_cleaned`. 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
-| 재검토 비차단 지적 — 빈 틀뿐인 OpenLoops 블록·Next Session 안의 제목(할 일일 수 있음)이 `follow_up_section_empty` 안내에 이름 없이 빠짐 | `test_empty_follow_up_record_names_its_headings_in_gap[open_loops·next_session]` (고치기 전 2건 실패 확인) | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 823 통과. 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 독립 리뷰 지적(BLOCK) 회귀 — 내용 있는 항목 안의 4단계 이하 규칙 제목·제목으로 적은 할 일이 빈 불릿 아래면 `empty_section`으로 소리 없이 사라짐(Context·CurrentFocus·Lessons·OpenLoops·Next Session) | `test_deep_rule_heading_over_empty_bullet_inside_constraint_item_is_shown`, `test_deep_memory_rule_heading_over_empty_bullet_is_shown[CurrentFocus·Lessons]`, `test_todo_heading_over_empty_bullet_beside_real_items_is_shown_in_follow_ups` (고치기 전 코드에서 4건 실패 확인), 보호 검사 `test_whole_scaffold_only_sections_are_still_cleaned`(지금은 아래 행의 `test_exact_template_sections_are_cleaned_but_heading_over_empty_bullet_is_not_a_follow_up`). 퍼즈 150·40 vault 재실행 위반 0건 | 통과 |
+| 재검토 비차단 지적 — 빈 틀뿐인 OpenLoops 블록·Next Session 안의 제목(할 일일 수 있음)이 `follow_up_section_empty` 안내에 이름 없이 빠짐 | `test_heading_over_empty_bullet_in_follow_up_record_is_named_in_gap[open_loops·next_session]`(지금은 제목이 남아 `follow_up_headings_only` gap에 실린다) | 통과 |
+| 사용자 변경 지시 "템플릿과 정확히 같은 빈 틀만 지우고 나머지 제목은 남겨서 적용 범위를 보존" — 이전 규칙은 구간 전체가 빈 불릿이면 비템플릿 제목(`## 운영 서버에서만 적용` 맥락 절, 메모리 블록 `### …`, Next Session `### 기타`)을 지웠고, 프로젝트 이름과 글자가 같은 제목을 어디서든 '반복 제목'으로 지웠다 | 비교 기준이 실제 템플릿 출력과 같은지 `test_template_catalog_matches_real_repository_templates`, 제품 함수로 만든 템플릿 `test_real_init_project_template_is_cleaned_to_its_one_real_constraint`, 근사 사례 9종 `test_near_template_sections_keep_their_heading[*]`(빈 불릿 둘·`*`·`###`·띄어쓰기·비슷한 제목·비슷한 자리표시·자리표시+빈 불릿·코드 블록·비템플릿 제목), 끝 공백·CRLF `test_exact_template_section_with_trailing_whitespace_or_crlf_is_still_template`, 맥락 `test_non_template_context_heading_over_empty_bullet_is_kept_as_scaffold_only_item`, 계층 `test_template_heading_with_real_subsection_keeps_scope`·`test_multiple_h1_headings_are_all_kept_as_scope`, 혼합 `test_template_and_real_content_mixed_keeps_heading_and_content`, 유사성 `test_heading_equal_to_project_name_is_not_removed_by_similarity`, 메모리·블록 경계 `test_memory_block_keeps_template_like_heading_but_drops_block_heading`·`test_other_project_block_headings_never_leak_and_limit_stops_at_block_end`, 예산 생략 `test_scaffold_only_heading_cut_by_budget_keeps_exact_omission`(반환 `read`를 MCP `read_note`에 그대로), 고정 평가 `tests/test_briefing_eval.py::test_non_template_headings_over_empty_bullets_are_kept`. 이전 코드(ac00deb)에서 21건 실패 확인. 자체 퍼즈(무작위 Context 600개·메모리 블록 600개 — 모든 제목 줄이 발췌·정확한 생략·gap 제목
+목록 중 하나에 있거나, 지웠다면 사유가 템플릿 정확 일치·위치 제목·실제로 heading_path에 실린 상위 제목인지 검사)가 하위 절이 모두 템플릿 빈 절인
+상위 제목이 사라지는 경우를 찾아 고쳤다: `test_parent_heading_whose_children_are_all_template_sections_is_kept`(이전 코드에서 실패). 고친 뒤 퍼즈 위반 0건 | 통과 |
+| 긴 Context 조립 시간 — 항목마다 상위 제목 경로를 문서 처음부터 다시 훑어 제목이 많은 Context에서 느렸다(제목 3000개·13503줄 합성 Context에서 4.7초). 문서 제목 목록을 한 번만 구해 쓰도록 바꿨다(결과 동일, 같은 입력 0.22초). 정리도 구간 뒤는 판정에 필요한 몇 줄만 본다 | 같은 테스트·퍼즈 결과가 바뀌지 않음, 시간은 작업 컨테이너 1회 측정(환경에 따라 다르다) | 통과 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 845 통과(작업 컨테이너 실행 — 최종 판정은 같은 커밋의 깨끗한 환경 실행 결과로 한다). 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
 
 ## 고정 평가 — 기본 vs structured
 
-`python -m tests.briefing_eval` (회귀: `tests/test_briefing_eval.py`). 합성 fixture vault 6개 사례. 측정 정의는 스크립트 머리말.
+`python -m tests.briefing_eval` (회귀: `tests/test_briefing_eval.py`). 합성 fixture vault 7개 사례. 측정 정의는 스크립트 머리말.
 조건: Python 3.11.2, Linux aarch64 컨테이너(10코어), 같은 프로세스 안 함수 호출(MCP 직렬화·전송 제외), briefing 5회 중앙값.
 목표 줄은 사례마다 반드시 전달돼야 하는 원문 줄이고 종류(c 제약 · x 맥락 · f 후속)를 따로 센다.
 
 | 사례 | 목표 줄 | text 문자 기본→새 | 응답 문자 기본→새 | text에 목표 줄 기본→새 | 위치·버전 확보 기본→새 | 확인 호출 기본→새 | 확인 문자 기본→새 | ms 기본→새 | critical_omission | 보존 제약·맥락·후속 기본→새 | 예산으로 준 항목(새) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 일반 | 7 | 5275→9001 | 6295→41975 | 7→7 | 0→7 | 6→1 | 8173→41975 | 1.0→4.0 | False | c2/2 x2/2 f3/3→c2/2 x2/2 f3/3 | - |
-| 긴 Context 후반 제약 | 3 | 8993→12386 | 9860→43975 | 2→3 | 0→3 | 3→1 | 32394→43975 | 0.7→4.2 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
+| 긴 Context 후반 제약 | 3 | 8993→12386 | 9860→43975 | 2→3 | 0→3 | 3→1 | 32394→43975 | 0.7→3.9 | False | c0/1 x1/1 f1/1→c1/1 x1/1 f1/1 | - |
 | 이전 세션의 긴 Next Session | 2 | 5512→8926 | 6327→37246 | 0→2 | 0→2 | 3→1 | 8615→37246 | 0.7→3.0 | False | f0/2→f2/2 | - |
-| 제약만 2만 자 초과 | 2 | 6127→19922 | 6702→57075 | 1→1 | 0→1 | 2→2 | 32108→64965 | 0.5→3.5 | True | c1/2→c1/2 | constraints 1, recent 6, follow_ups 3 |
-| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19765 | 13221→60111 | 6→7 | 0→7 | 6→1 | 27853→60111 | 1.0→4.4 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
-| init-project 템플릿 | 1 | 477→991 | 630→5136 | 1→1 | 0→1 | 2→1 | 969→5136 | 0.2→0.5 | False | c1/1→c1/1 | - |
+| 제약만 2만 자 초과 | 2 | 6127→19922 | 6702→57075 | 1→1 | 0→1 | 2→2 | 32108→64965 | 0.5→3.7 | True | c1/2→c1/2 | constraints 1, recent 6, follow_ups 3 |
+| 본문 예산 초과 — 맥락·후속 vs 최근 결과 | 7 | 12353→19765 | 13221→60111 | 6→7 | 0→7 | 6→1 | 27853→60111 | 0.9→4.5 | False | c1/1 x4/4 f1/2→c1/1 x4/4 f2/2 | recent 2 |
+| init-project 템플릿 | 1 | 477→991 | 630→5143 | 1→1 | 0→1 | 2→1 | 969→5143 | 0.2→0.5 | False | c1/1→c1/1 | - |
+| 템플릿을 고쳐 쓴 Context·빈 불릿 아래 제목 | 7 | 4411→6799 | 5249→33913 | 7→7 | 0→7 | 4→1 | 8638→33913 | 0.7→3.1 | False | c2/2 x3/3 f2/2→c2/2 x3/3 f2/2 | - |
+
+"위치·버전 확보"는 발췌 구간뿐 아니라 상위 제목 경로(`heading_path` — 원문 줄 번호, 버전은 그 항목의 `source_version`)에 있는 목표
+줄도 센다(마지막 사례의 `## HEADING_SCOPE …`는 하위 항목의 상위 제목으로 실린다).
+
+**제목 보존 변경 전후(같은 평가, 이전 structured 구현 ac00deb → 지금)**: 앞 6개 사례는 text·응답이 같다(템플릿 사례만 정리 사유 이름이
+`empty_section`→`template_section`으로 바뀌어 응답 5136→5143자). 마지막 사례는 text 6491→6799자(+308), 응답 32613→33913자(+1300)이고,
+맥락 목표 제목 보존이 0/3→3/3이다 — 이전 구현은 빈 불릿만 거느린 비템플릿 맥락 제목(`## HEADING_SCOPE 운영 서버에서만 적용`·
+`### HEADING_GOAL 목표`·Lessons 블록의 `### HEADING_MEMO …`)을 지웠다. 제약(`### HEADING_RULE …`)과 후속(`### HEADING_NEXT …`)은
+이전에도 남았다. 보존이 늘어난 만큼 본문·응답이 길어진다.
 
 읽는 법:
 
@@ -328,11 +371,11 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
   가 같은 구성으로 두 순서를 비교한다). 기본 briefing은 최신 Process 밖 Next Session을 400자로 잘라 후속 1개를 놓친다.
 - "제약만 2만 자 초과" 사례는 제약이 고정부 뒤 예산을 모두 쓰고, 후속·최근 발췌는 예산 때문에 빠진다(예산 순서 그대로). 후속 기록의
   위치는 고정부 `후속 기록 위치` 목록에 남고 후속 판단은 "후속 작업 유무를 확인하지 못한 기록 있음"을 붙인다.
-- 평가 fixture에는 하위 절만 거느린 상위 제목이 없어 `상위 제목` 줄은 text에 더해지지 않았다(응답은 정리 사유 이름 차이로 1자 늘었다).
-  상위 제목이 있는 vault에서는 그 줄만큼 머리줄이 길어지고 발췌 예산이 준다.
+- 상위 제목 줄(`⤷ 상위 제목`)은 마지막 사례에만 있다(`## HEADING_SCOPE …` 아래 `### HEADING_GOAL 목표`). 상위 제목이 있는
+  vault에서는 그 줄만큼 머리줄이 길어지고 발췌 예산이 준다.
 - 결정 목록 줄(발췌가 있는 결정 포함)이 고정부에 들어가 직전 측정보다 "일반" text가 375자 늘었고, "본문 예산 초과" 사례는 그만큼
   최근 결과(What Changed) 발췌가 3줄 더 빠졌다 — 예산 순서대로 최근 결과 단계에서 줄어든 것이다.
-- 빈 틀뿐인 템플릿 Context도 새 응답이 더 길다 — 빈 틀은 지웠지만 매칭·상태·출처 줄이 더 붙는다.
+- 빈 틀뿐인 템플릿 Context도 새 응답이 더 길다 — 템플릿 빈 절은 지웠지만 매칭·상태·출처 줄이 더 붙는다.
 - 보존: 긴 Context 후반 제약과 이전 세션의 긴 Next Session 끝 줄은 기본 briefing text에 없고 새 text에는 있다.
   제약이 2만 자를 넘는 사례는 둘 다 꼬리 제약을 못 싣지만, 새 응답은 `critical_omission`과 정확한 이어읽기 구간을 낸다
   (기본은 `_전문: read_note(...)_` 안내뿐).
@@ -363,8 +406,12 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 - OpenLoops 블록에 빈 분류 제목과 사람이 손으로 쓴 `- 없음` 불릿이 함께 있으면, 불릿이 남은 블록이라 `items`다(빈 분류를 할 일로
   보지는 않지만 블록 상태는 `has_items`). `update_open_loops`는 모든 불릿에 날짜를 붙여 쓰므로 이 형태는 손으로 고친 경우뿐이다.
 - 본문도 하위 제목도 없는 제약 제목 한 줄(`## 제약 / 원칙`만 있고 다음이 같은 단계 제목)은 제목으로 쓴 규칙(`### main 브랜치에 직접
-  push 금지`)과 구조로 구분할 수 없어 `items`(제목 한 줄 항목)로 둔다. `heading_empty`는 알려진 빈 틀로 비게 된 경우만이다 —
-  규칙을 빈 틀로 숨기는 쪽보다 빈 제목을 항목으로 보여주는 쪽을 택했다.
+  push 금지`)과 구조로 구분할 수 없어 `items`(제목 한 줄 항목)로 둔다. `heading_empty`는 제약 항목이 모두 빈 틀 말고는 제목만 남은
+  경우다 — 규칙을 빈 틀로 숨기는 쪽보다 빈 제목을 항목으로 보여주는 쪽을 택했다.
+- 템플릿 빈 절이 아닌 제목은 모두 남기므로, 사람이 지우지 않은 빈 분류 제목(`## 메모` + `- `)도 맥락 항목(`scaffold_only`)으로 실려
+  본문이 조금 길어진다. 제목이 규칙·적용 범위인지 빈 분류인지는 판정하지 않는다.
+- `docs/vault-templates/Decision.md`를 채우지 않고 그대로 둔 결정은 `## 결정` 자리표시 문장이 결정 발췌로 보인다 — 템플릿 비교는
+  코드가 만드는 템플릿(init-project·init-vault·write_session_process·update_open_loops)에만 한다.
 - 결정 발췌는 `## 결정`/`## Decision` 절 또는 한 줄짜리 `summary:`만 쓴다. 둘 다 없으면 제목·경로만 남긴다(`no_excerpt`).
 - 기본 briefing과 식별 규칙이 다르다(디렉터리 이름 매칭 없음). 같은 repo 경로가 기본에서는 매칭되고 structured에서는
   `unresolved`일 수 있다 — `.claude/vault.json`이나 매핑으로 명시한다.

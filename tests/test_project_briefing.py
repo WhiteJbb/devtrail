@@ -1636,20 +1636,23 @@ def test_todo_heading_over_empty_bullet_beside_real_items_is_shown_in_follow_ups
         assert heading in shown and heading in resp["text"]
 
 
-def test_whole_scaffold_only_sections_are_still_cleaned(tmp_path):
-    """구간 전체가 빈 틀인 절(템플릿)은 여전히 지운다 — 정리 규칙을 좁혔을 뿐 없애지 않았다."""
+def test_exact_template_sections_are_cleaned_but_heading_over_empty_bullet_is_not_a_follow_up(tmp_path):
+    """템플릿과 정확히 같은 빈 절(`## 배경`·`## 목표`)만 지운다. 빈 불릿 위 `### 기타`는 지우지 않지만 할 일로도 보지 않는다."""
     _ctx(tmp_path, TEMPLATE_CONTEXT)
     _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("### 기타\n\n- "))
     resp = _brief(tmp_path)
-    assert {"배경", "목표"} <= {c["heading"] for c in _section(resp, "context")["cleaned_sections"]}
+    reasons = {c["heading"]: c["reason"] for c in _section(resp, "context")["cleaned_sections"]}
+    assert reasons["배경"] == reasons["목표"] == "template_section"
     assert "## 목표" not in resp["text"]
     fu = _section(resp, "follow_ups")
-    assert [s["state"] for s in fu["sources_checked"] if s["source"] == "next_session"] == ["empty"]
+    assert [s["state"] for s in fu["sources_checked"] if s["source"] == "next_session"] == ["headings_only"]
+    assert fu["state"] == "unknown"
+    assert "### 기타" in resp["text"]
 
 
 @pytest.mark.parametrize("where", ["open_loops", "next_session"])
-def test_empty_follow_up_record_names_its_headings_in_gap(tmp_path, where):
-    """빈 틀뿐인 후속 기록 안의 제목(할 일일 수 있다)은 확인 불가 gap에 건수·줄과 함께 본문에 남는다."""
+def test_heading_over_empty_bullet_in_follow_up_record_is_named_in_gap(tmp_path, where):
+    """빈 불릿을 거느린 후속 기록 안의 제목(할 일일 수 있다)은 지우지 않고, 확인 불가 gap에 건수·줄과 함께 본문에 남는다."""
     _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
     if where == "open_loops":
         _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
@@ -1660,7 +1663,197 @@ def test_empty_follow_up_record_names_its_headings_in_gap(tmp_path, where):
         rel, heading = "60_Candidates/SessionHandoffs/Devtrail/p1.md", "### 운영 DB 롤백 확인"
     resp = _brief(tmp_path)
     assert _section(resp, "follow_ups")["state"] == "unknown"
-    gap = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_section_empty")
+    gap = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_headings_only")
     n = _file_lines(tmp_path, rel).index(heading) + 1
     assert gap["headings"] == [{"line": n, "text": heading}]
-    assert f"빈 틀 아래 제목 1개" in gap["message"] and f"L{n} {heading}" in resp["text"]
+    assert "제목 1개만 남았다" in gap["message"] and f"L{n} {heading}" in resp["text"]
+    assert "follow_up_section_empty" not in {g["code"] for g in _items(resp, "gaps")}
+
+
+# ── 사용자 변경 지시: 템플릿과 정확히 같은 빈 틀만 지우고 나머지 제목은 남겨 적용 범위를 보존한다 ──────────────────
+
+
+def _template_sections(text: str) -> dict[str, tuple[str, ...]]:
+    """렌더된 템플릿에서 '자리표시 줄만 거느린 절' — 제목 줄 → 본문(빈 줄 뺀, 끝 공백 무시) 목록."""
+    lines = text.splitlines()
+    out: dict[str, tuple[str, ...]] = {}
+    for i, line in enumerate(lines):
+        h = pb._heading(line)
+        if not h:
+            continue
+        body: list[str] = []
+        for nxt in lines[i + 1:]:
+            nh = pb._heading(nxt)
+            if nh and nh[0] <= h[0]:
+                break
+            if nxt.strip():
+                body.append(nxt.rstrip())
+        if body and all(b.strip() in pb._SCAFFOLD_LINES or pb._EMPTY_BULLET_RE.match(b.strip()) for b in body):
+            out[line.rstrip()] = tuple(body)
+    return out
+
+
+def test_template_catalog_matches_real_repository_templates(tmp_path):
+    """비교 기준은 저장소의 실제 템플릿 출력이다 — 목록이 템플릿과 어긋나면 이 테스트가 깨진다."""
+    from app.services.wiki_service import WikiService
+
+    ws = WikiService(tmp_path)
+    context = ws._default_project_context("Devtrail")
+    assert _template_sections(context) == pb._CONTEXT_TEMPLATE_SECTIONS
+    memory = ws._default_agent_memory("Lessons")
+    # 메모리 템플릿의 빈 절은 문서 제목(1단계, 하나뿐) + 자리표시 한 줄 — 문서 제목 줄(위치)과 자리표시 줄(문자열)로 빠진다
+    assert _template_sections(memory) == {"# Lessons": ("_Fill this note with durable context that future agents should know._",)}
+    template_lines = {l.strip() for l in (context + memory).splitlines()}
+    assert pb._SCAFFOLD_LINES <= template_lines  # 자리표시 줄은 모두 실제 템플릿에 있는 문자열이다
+
+
+def test_real_init_project_template_is_cleaned_to_its_one_real_constraint(tmp_path):
+    """제품 함수(init-project)가 만든 Context.md 그대로 — 템플릿 빈 절은 지우고 실제 문장이 든 절은 남긴다."""
+    from app.services.wiki_service import WikiService
+
+    WikiService(tmp_path).init_project("Devtrail")
+    resp = _brief(tmp_path)
+    reasons = {c["heading"]: c["reason"] for c in _section(resp, "context")["cleaned_sections"]}
+    assert reasons["배경"] == reasons["목표"] == "template_section"
+    assert reasons["Devtrail — Project Context"] == "repeated_title"
+    (cons,) = _items(resp, "constraints")
+    assert "- 사용자의 결정이 필요한 부분은 진행하지 말고 질문한다" in cons["segments"][0]["text"]
+    assert "## 관련 문서" in resp["text"]
+
+
+@pytest.mark.parametrize("section, why", [
+    ("## 목표\n\n- \n- \n", "빈 불릿 둘 — 템플릿은 하나"),
+    ("## 목표\n\n* \n", "다른 불릿 기호"),
+    ("### 목표\n\n- \n", "다른 제목 단계"),
+    ("##  목표\n\n- \n", "제목 띄어쓰기 다름"),
+    ("## 목표들\n\n- \n", "비슷한 제목"),
+    ("## 배경\n\n_(이 프로젝트가 왜 존재하는지)_\n", "자리표시와 비슷한 사용자 문장"),
+    ("## 배경\n\n_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_\n- \n", "자리표시 + 빈 불릿"),
+    ("## 목표\n\n```\n- \n```\n", "코드 블록 안 빈 불릿"),
+    ("## 운영 서버에서만 적용\n\n- \n", "템플릿에 없는 제목"),
+])
+def test_near_template_sections_keep_their_heading(tmp_path, section, why):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n\n" + section)
+    resp = _brief(tmp_path)
+    heading = section.split("\n", 1)[0]
+    assert heading in resp["text"], why
+    n = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md").index(heading) + 1
+    (item,) = [i for i in _all_items(resp) if i["span"][0] == n]  # `### 목표`는 `## 제약` 아래라 제약 항목이다
+    assert any(s["start_line"] <= n <= s["end_line"] for s in item["segments"])
+    assert [c["reason"] for c in _section(resp, "context").get("cleaned_sections", [])] == ["repeated_title"]  # `# Devtrail`만
+
+
+def test_exact_template_section_with_trailing_whitespace_or_crlf_is_still_template(tmp_path):
+    """비교는 끝 공백만 무시한다 — 편집기가 `- `의 끝 공백을 지우거나 CRLF로 저장해도 같은 템플릿 절이다."""
+    body = "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n\n## 목표\n\n-\n\n## 배경 \n\n_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_  \n"
+    _ctx(tmp_path, body.replace("\n", "\r\n"))
+    resp = _brief(tmp_path)
+    reasons = {c["heading"]: c["reason"] for c in _section(resp, "context")["cleaned_sections"]}
+    assert reasons == {"Devtrail": "repeated_title", "목표": "template_section", "배경": "template_section"}
+
+
+def test_non_template_context_heading_over_empty_bullet_is_kept_as_scaffold_only_item(tmp_path):
+    """예전에는 맥락 절 전체가 빈 불릿이면 제목째 정리했다 — 이제 제목은 남기고 빈 틀 줄만 뺀다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n\n## 운영 서버에서만 적용\n\n- \n\n## 메모\n\n- 실제 메모\n")
+    resp = _brief(tmp_path)
+    ctx = _items(resp, "context")
+    item = next(i for i in ctx if i["label"] == "운영 서버에서만 적용")
+    assert item["scaffold_only"] is True and item["segments"][0]["text"] == "## 운영 서버에서만 적용"
+    assert item["cleaned"] == [{"lines": [item["span"][0] + 2] * 2, "reason": "empty_scaffolding"}]
+    assert "본문은 빈 틀뿐 — 제목만 남김" in resp["text"]
+    assert _section(resp, "constraints")["state"] == "items"
+
+
+def test_template_heading_with_real_subsection_keeps_scope(tmp_path):
+    """`## 목표` 아래 빈 불릿 + 실제 하위 절 — 절 전체가 템플릿과 다르므로 `## 목표`는 하위 항목의 상위 제목으로 남는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n\n## 목표\n\n- \n\n### 분기 목표\n\n- 실제 목표\n")
+    resp = _brief(tmp_path)
+    item = next(i for i in _items(resp, "context") if i["label"] == "분기 목표")
+    assert [h["text"] for h in item["heading_path"]] == ["목표"]
+    reasons = {c["heading"]: c["reason"] for c in _section(resp, "context")["cleaned_sections"]}
+    assert reasons["목표"] == "parent_heading"
+    assert "⤷ 상위 제목: L" in resp["text"] and "## 목표" in resp["text"]
+
+
+def test_template_and_real_content_mixed_keeps_heading_and_content(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n\n## 목표\n\n- \n- 실제 목표\n")
+    resp = _brief(tmp_path)
+    item = next(i for i in _items(resp, "context") if i["label"] == "목표")
+    assert item["segments"][0]["text"].startswith("## 목표") and "- 실제 목표" in item["segments"][-1]["text"]
+    assert "scaffold_only" not in item
+
+
+def test_heading_equal_to_project_name_is_not_removed_by_similarity(tmp_path):
+    """예전에는 프로젝트 이름과 같은 제목을 어디서든 '반복 제목'으로 지웠다 — 이제 문서 제목 줄만 위치로 뺀다."""
+    _ctx(tmp_path, "\n# Devtrail — Project Context\n\n## 제약\n\n- 공통 규칙\n\n### Devtrail\n\n- 이 저장소에서만 적용\n")
+    resp = _brief(tmp_path)
+    shown = "\n".join(s["text"] for i in _items(resp, "constraints") for s in i["segments"])
+    assert "### Devtrail" in shown and "# Devtrail — Project Context" not in resp["text"]
+
+
+def test_multiple_h1_headings_are_all_kept_as_scope(tmp_path):
+    """1단계 제목이 여럿이면 어느 것도 문서 제목으로 보지 않는다 — 각각이 적용 범위일 수 있다."""
+    _ctx(tmp_path, "\n# 운영\n\n## 제약\n\n- 재시작 금지\n\n# 로컬\n\n## 제약\n\n- 마음대로 재시작\n")
+    resp = _brief(tmp_path)
+    paths = [[h["text"] for h in i["heading_path"]] for i in _items(resp, "constraints")]
+    assert paths == [["운영"], ["로컬"]]
+
+
+def test_memory_block_keeps_template_like_heading_but_drops_block_heading(tmp_path):
+    """메모리 파일에는 템플릿 빈 절이 없다 — `## 목표` + 빈 불릿도 남는다. 블록 머리 제목 `## Devtrail`만 뺀다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _w(tmp_path, "40_AgentMemory/06_Lessons.md", _fm(type="agent_memory", scope="global", updated_at=TODAY) + "# Lessons\n\n"
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n### 목표\n\n- \n\n### Devtrail\n\n- 프로젝트 이름과 같은 하위 제목\n")
+    resp = _brief(tmp_path)
+    (item,) = [i for i in _items(resp, "context") if i["kind"] == "lessons"]
+    text = "\n".join(s["text"] for s in item["segments"])
+    assert "### 목표" in text and "### Devtrail" in text
+    assert not any(l == "## Devtrail" for l in text.splitlines())
+    assert {"lines": [item["span"][0] + 1] * 2, "reason": "repeated_title"} in item["cleaned"]
+
+
+def test_other_project_block_headings_never_leak_and_limit_stops_at_block_end(tmp_path):
+    """다른 프로젝트 블록의 제목(빈 불릿을 거느린 것 포함)은 싣지 않고, 우리 블록 끝 제목의 상위 판정이 그 블록을 보지 않는다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _w(tmp_path, "40_AgentMemory/01_CurrentFocus.md", _fm(type="agent_memory", scope="global", updated_at=TODAY)
+       + "# Current Focus\n\n"
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n- 지금 하는 일\n\n### 운영 서버 범위\n"
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Other"} -->\n'
+       + "## Other\n\n#### 비밀 프로젝트 제목\n\n- \n")
+    resp = _brief(tmp_path)
+    assert "비밀 프로젝트 제목" not in json.dumps(resp, ensure_ascii=False)
+    (item,) = [i for i in _items(resp, "context") if i["kind"] == "current_focus"]
+    assert "### 운영 서버 범위" in item["segments"][-1]["text"]
+
+
+def test_scaffold_only_heading_cut_by_budget_keeps_exact_omission(tmp_path, monkeypatch):
+    """제약이 예산을 다 쓰면 제목만 남은 맥락 절도 조용히 사라지지 않고 정확한 줄 범위·이어읽기 인자로 남는다."""
+    filler = "".join(f"- 긴 규칙 {i} " + "가" * 180 + "\n" for i in range(130))
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + filler + "\n## 운영 서버 범위\n\n- \n")
+    resp = _brief(tmp_path)
+    n = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md").index("## 운영 서버 범위") + 1
+    item = next(i for i in _items(resp, "context") if i["label"] == "운영 서버 범위")
+    assert item["shown"] == "omitted" and item["scaffold_only"] is True
+    om = next(o for o in resp["omissions"] if o["item"] == item["id"])
+    assert om["lines"] == [n, n] and om["read"]["start_line"] == n
+    assert om["read"]["expected_version"] == item["source_version"]
+    page = _mcp_read_note(monkeypatch, tmp_path, om["read"])  # 반환된 인자 그대로 회수한다
+    assert page["ok"] and page["content"].splitlines()[0] == "## 운영 서버 범위"
+    assert resp["critical_omission"] is True  # 제약 일부도 잘렸다
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+
+
+def test_parent_heading_whose_children_are_all_template_sections_is_kept(tmp_path):
+    """하위 절이 모두 템플릿 빈 절로 지워지면 상위 제목을 실을 하위 항목이 없다 — 상위 제목을 제 항목으로 남긴다(퍼즈 재현)."""
+    _ctx(tmp_path, "\n# 운영\n\n## 배경\n\n_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_\n\n## 목표\n\n- \n\n"
+                   "# 로컬\n\n## 제약\n\n- 마음대로 재시작\n")
+    resp = _brief(tmp_path)
+    n = _file_lines(tmp_path, "30_Projects/Devtrail/Context.md").index("# 운영") + 1
+    item = next(i for i in _items(resp, "context") if i["span"][0] == n)
+    assert item["segments"][0]["text"] == "# 운영" and "# 운영" in resp["text"]
+    reasons = {c["heading"]: c["reason"] for c in _section(resp, "context")["cleaned_sections"]}
+    assert reasons == {"배경": "template_section", "목표": "template_section", "로컬": "parent_heading"}
+    (cons,) = _items(resp, "constraints")
+    assert [h["text"] for h in cons["heading_path"]] == ["로컬"]

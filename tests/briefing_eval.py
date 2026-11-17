@@ -12,7 +12,8 @@
 - targets_in_text: 목표 줄 문구가 text에 그대로 있는 수
 - kept: 목표 줄 종류(제약 c·맥락 x·후속 f)별 text 보존 수 / 목표 수
 - budget_cut: structured에서 text 예산(`budget`) 때문에 발췌가 줄어든 항목 수를 갈래별로 (상한 cap 때문에 준 것은 세지 않는다)
-- located: 목표 줄의 경로·줄 번호·source_version을 응답만으로 아는 수 (기본 briefing은 줄 번호·버전을 주지 않는다)
+- located: 목표 줄의 경로·줄 번호·source_version을 응답만으로 아는 수 — 발췌 구간 또는 상위 제목 경로(heading_path)
+  (기본 briefing은 줄 번호·버전을 주지 않는다)
 - confirm_calls: 모든 목표 줄을 경로·줄 번호와 함께 확보하기까지의 호출 수 — briefing 1회 + 추가 읽기.
   기본: 목표 줄이 있는 파일마다 read_note 전문 1회(줄 번호는 호출자가 직접 센다, 버전은 얻을 수 없다).
   structured: 발췌에 없는 목표 줄만 omissions의 read 인자로 read_note(structured=True) 1회씩.
@@ -141,7 +142,27 @@ def _scenarios() -> tuple[Scenario, ...]:
         Scenario("init-project 템플릿", {ctx: _context(_TEMPLATE)},
                  ((ctx, "사용자의 결정이 필요한 부분은", "constraint"),),
                  "빈 틀만 있는 Context"),
+        Scenario("템플릿을 고쳐 쓴 Context·빈 불릿 아래 제목", _heading_files(),
+                 ((ctx, "사용자의 결정이 필요한 부분은", "constraint"), (ctx, "HEADING_RULE", "constraint"),
+                  (ctx, "HEADING_SCOPE", "context"), (ctx, "HEADING_GOAL", "context"), (lessons, "HEADING_MEMO", "context"),
+                  (nxt % "s3", "NEXT_TARGET_s3", "follow_up"), (nxt % "s3", "HEADING_NEXT", "follow_up")),
+                 "템플릿 빈 절 2개는 그대로, 비템플릿 제목 5개는 빈 불릿만 거느림 — 제목이 남는지"),
     )
+
+
+def _heading_files() -> dict[str, str]:
+    """템플릿과 정확히 같은 빈 절(`## 배경`·`## 목표`)과, 템플릿과 비슷하지만 다른 제목(빈 불릿만 거느림)을 섞은 vault."""
+    body = _TEMPLATE.replace(
+        "## 제약 / 원칙\n\n- 사용자의 결정이 필요한 부분은 진행하지 말고 질문한다\n\n",
+        "## HEADING_SCOPE 운영 서버에서만 적용\n\n- \n\n### HEADING_GOAL 목표\n\n- \n\n"
+        "## 제약 / 원칙\n\n- 사용자의 결정이 필요한 부분은 진행하지 말고 질문한다\n\n"
+        "### HEADING_RULE main 브랜치 직접 push 금지\n\n- \n\n")
+    files = {"30_Projects/Devtrail/Context.md": _context(body), **_sessions(), **_MEMORY}
+    files["40_AgentMemory/06_Lessons.md"] += ('<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+                                              "### HEADING_MEMO 배포 전 체크\n\n- \n")
+    files["60_Candidates/SessionHandoffs/Devtrail/process-s3.md"] = _process(
+        "s3", "2026-11-03T10:00:00", "- NEXT_TARGET_s3 후속 항목\n\n### HEADING_NEXT 롤백 확인\n\n- ")
+    return files
 
 
 def _over_budget_files() -> dict[str, str]:
@@ -235,7 +256,9 @@ def run_scenario(root: Path, scenario: Scenario) -> dict:
     reads: list[dict] = []
     for rel, needle, _ in scenario.targets:
         line = _target_line(root, rel, needle)
-        if any(i["path"] == rel and any(s["start_line"] <= line <= s["end_line"] for s in i["segments"]) for i in items):
+        # 발췌 구간 안이거나, 상위 제목 경로(heading_path — 원문 줄 번호, 버전은 그 항목의 source_version)에 있으면 위치를 안다
+        if any(i["path"] == rel and (any(s["start_line"] <= line <= s["end_line"] for s in i["segments"])
+                                     or any(h["line"] == line for h in i.get("heading_path", []))) for i in items):
             located += 1
             continue
         om = next((o for o in resp["omissions"] if o["path"] == rel and o["lines"][0] <= line <= o["lines"][1]), None)

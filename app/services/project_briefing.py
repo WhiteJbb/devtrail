@@ -18,10 +18,11 @@
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -104,13 +105,23 @@ _MEMORY_FILES = {
     "lessons": "40_AgentMemory/06_Lessons.md",
 }
 
-# 알려진 빈 틀 — init-project·init-vault·write_session_process가 만드는 자리표시 줄. 이 목록에 없는 줄은 지우지 않는다.
+# 템플릿 빈 틀 — 저장소의 실제 템플릿(WikiService._default_project_context·_default_agent_memory)이 만드는 자리표시 줄.
+# 줄 비교는 끝 공백(CR 포함)만 무시한 **정확한 문자열** 일치다 — 비슷한 사용자 문장(`_(직접 쓴 메모)_`)은 남는다.
+# tests/test_project_briefing.py가 실제 템플릿 출력과 이 목록·아래 절 목록이 맞는지 검사한다.
 _SCAFFOLD_LINES = frozenset({
     "> 이 파일은 `get_project_briefing`이 세션 시작 시 자동 주입하는 프로젝트 정본 컨텍스트다.",
     "> 배경·목표·제약이 바뀔 때마다 갱신한다.",
     "_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_",
     "_Fill this note with durable context that future agents should know._",
 })
+# 제목을 지울 수 있는 유일한 경우 — init-project Context.md 템플릿의 **빈 절과 정확히 같은 절**. 비교 단위는 절 하나:
+# 제목 줄 + 같거나 높은 단계의 다음 제목 전까지의 모든 줄(하위 제목 포함)에서 빈 줄을 뺀 목록이고, 줄마다 끝 공백만 무시한
+# 정확한 문자열로 비교한다. 한 줄이라도 다르거나(빈 불릿 하나 더, `*` 불릿, 하위 제목, 다른 단계·띄어쓰기) Context.md가
+# 아닌 문서면 제목을 남긴다. 템플릿의 `## 제약 / 원칙`·`## 관련 문서`는 실제 내용 줄이 있어 빈 절이 아니다.
+_CONTEXT_TEMPLATE_SECTIONS: dict[str, tuple[str, ...]] = {
+    "## 배경": ("_(이 프로젝트가 왜 존재하는지, 어떤 문제를 푸는지)_",),
+    "## 목표": ("-",),
+}
 _EMPTY_BULLET_RE = re.compile(r"^(?:[-*+]|\d+[.)])$")
 # ATX 제목 — CommonMark처럼 들여쓰기 0~3칸까지 제목이다(펜스 규칙과 같은 기준). 들여쓴 제약 제목을 놓치면 맥락으로 잘린다.
 _HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -265,15 +276,33 @@ def _headings(lines: list[str], start: int, end: int) -> list[tuple[int, int, st
     return out
 
 
-def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tuple[list[int], list[tuple[int, str]]]:
+def _clean(lines: list[str], start: int, end: int, title_lines: Collection[int] = (),
+           template: Mapping[str, tuple[str, ...]] | None = None,
+           limit: int | None = None, parents: bool = True) -> tuple[list[int], list[tuple[int, str]]]:
     """[start, end]에서 보여줄 줄과 정리한 줄(줄, 이유). 줄 내용은 바꾸지 않고 줄을 빼기만 한다 — 번호가 그대로다.
 
-    정리 대상은 알려진 것뿐이다: memory marker 줄, 알려진 빈 틀 줄·빈 불릿, 이미 항목 이름으로 드러난 반복 제목,
-    내용 없이 제목만 남은 절. 그 밖의 줄(모르는 제목 포함)은 남긴다.
+    빼는 것은 다음뿐이다(docs/project-briefing.md "정리"):
+    - `memory_marker`·`empty_scaffolding`: marker 줄, 템플릿 자리표시 줄(정확히 같은 문자열), 글자 없는 빈 불릿 줄. 제목이 아니다.
+    - `repeated_title`: 호출부가 **줄 번호로** 넘긴 자리 제목(title_lines) — 문서 제목 줄, 항목 이름이 된 절 머리 제목,
+      프로젝트 블록 머리 제목. 글자가 비슷하다는 이유로 다른 제목을 지우지 않는다.
+    - `template_section`: template(문서별 템플릿 빈 절 목록)과 절 전체가 정확히 같은 제목.
+    - `parent_heading`: 이 구간에는 본문이 없고 하위 절이 다음 항목으로 갈라진 상위 제목 — 지운 게 아니라 하위 항목의
+      heading_path로 옮겨 싣는다.
+    그 밖의 제목은 본문이 없거나 빈 불릿만 거느려도(제목 자체가 규칙·할 일·적용 범위일 수 있다) 남긴다.
+    limit은 절 비교·하위 절 확인이 넘지 않는 끝 줄(메모리 블록 끝 등, 기본은 문서 끝)이다. parents=False면 상위 제목도
+    남긴다 — 하위 절이 모두 지워져(템플릿 빈 절) 그 제목을 heading_path로 실을 하위 항목이 없을 때 호출부가 쓴다.
     """
+    limit = len(lines) if limit is None else limit
+    # 구간 뒤는 몇 줄만 본다 — 템플릿 절 비교(본문이 템플릿보다 길어지면 바로 다르다)와 상위 제목 판정(바로 다음 줄)에 충분하다.
+    # 문서 끝까지 보면 항목마다 문서 전체를 다시 훑어 긴 Context에서 느려진다.
+    need = max((len(v) for v in (template or {}).values()), default=0) + 2
+    ext = end
+    while ext < limit and need:
+        ext += 1
+        need -= bool(lines[ext - 1].strip())
     keep: list[int] = []
     cleaned: list[tuple[int, str]] = []
-    fenced, _ = _fence_map(lines, start, end)  # 코드 블록 안 줄 — 제목·빈 틀로 보지 않는다
+    fenced, _ = _fence_map(lines, start, ext)  # 코드 블록 안 줄 — 제목·빈 틀로 보지 않는다
     for n in range(start, end + 1):
         text = lines[n - 1]
         s = text.strip()
@@ -286,49 +315,34 @@ def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tup
         if s in _SCAFFOLD_LINES or _EMPTY_BULLET_RE.match(s):
             cleaned.append((n, "empty_scaffolding"))
             continue
-        h = _heading(text)
-        if h and _norm(h[1]) in drop_titles:
+        if n in title_lines and _heading(text):
             cleaned.append((n, "repeated_title"))
             continue
         keep.append(n)
-    # 내용 없이 제목만 남은 절 — 알려진 정리(빈 틀·marker·반복 제목)로 비게 된 절(구간 전체가 빈 경우만), 그리고 하위 제목만 거느린 상위 제목
-    # (하위 절이 다른 항목으로 갈라진 경우 포함)만 뺀다. 원문부터 본문 없이 제목만 있는 절은 제목 자체가 내용(제목으로 쓴
-    # 규칙·할 일)일 수 있어 남긴다 — 빼면 제약이 '빈 틀'로, 후속 항목이 '없음'으로 둔갑한다.
     removed = {n for n, _ in cleaned}
-    heads = {n: h for n in range(start, end + 1) if n not in fenced and (h := _heading(lines[n - 1]))}
-    drop: set[int] = set()
-    emptied_only: set[int] = set()  # 정리로 비게 된 제목 (상위 제목 판정과 별개)
-    for n in sorted((n for n in keep if n in heads), reverse=True):  # 하위 절을 먼저 판정한다
+    heads = {n: h for n in range(start, ext + 1) if n not in fenced and (h := _heading(lines[n - 1]))}
+    drop: dict[int, str] = {}
+    for n in (n for n in keep if n in heads):
         level = heads[n][0]
-        has_content = emptied = False
-        boundary = None
+        if template and _is_template_section(lines, n, level, heads, ext, template):
+            drop[n] = "template_section"
+            continue
+        # 상위 제목: 이 구간 안에 본문이 남지 않았고, 구간이 같은 단계 제목 전에 끝나며, 구간 바로 뒤가 하위 제목이다
+        body = False
         for m in range(n + 1, end + 1):
             if m in heads and heads[m][0] <= level:
-                boundary = m
+                body = True  # 같은 단계 제목으로 끝나는 절은 상위 제목이 아니다 — 남긴다
                 break
-            if m in removed or m in drop:
-                emptied = True
-                continue
-            if lines[m - 1].strip():
-                has_content = True  # 남은 하위 제목도 내용이다
+            if m not in removed and lines[m - 1].strip():
+                body = True
                 break
-        if has_content:
+        if body:
             continue
-        container = False
-        if boundary is None:
-            nxt = next((m for m in range(end + 1, len(lines) + 1) if lines[m - 1].strip()), None)
-            sub = _heading(lines[nxt - 1]) if nxt else None
-            container = bool(sub and sub[0] > level)
-        if emptied or container:
-            drop.add(n)
-            if not container:
-                emptied_only.add(n)
-    # 빈 틀로 비게 된 제목은 구간 전체가 빈 틀일 때만 지운다(템플릿의 빈 절). 내용이 남는 구간 안에서는 빈 틀 줄만 빼고 제목은
-    # 남긴다 — 깊은 단계(4단계 이하) 규칙 제목·제목으로 적은 할 일이 상위 항목 안에서 소리 없이 사라지지 않게 한다.
-    if emptied_only and any(lines[n - 1].strip() for n in keep if n not in drop):
-        drop -= emptied_only
+        nxt = next((m for m in range(end + 1, ext + 1) if lines[m - 1].strip()), None)
+        if parents and nxt is not None and nxt in heads and heads[nxt][0] > level:
+            drop[n] = "parent_heading"
     if drop:
-        cleaned.extend((n, "empty_section") for n in sorted(drop))
+        cleaned.extend(drop.items())
         keep = [n for n in keep if n not in drop]
     # 구간 가장자리의 빈 줄은 뺀다 (번호가 바뀌지 않는다 — 보고하지 않는 공백 정리)
     out: list[int] = []
@@ -341,6 +355,24 @@ def _clean(lines: list[str], start: int, end: int, drop_titles: set[str]) -> tup
         out.extend(range(s, e + 1))
     cleaned.sort()
     return out, cleaned
+
+
+def _is_template_section(lines: list[str], n: int, level: int, heads: dict[int, tuple[int, str]], limit: int,
+                         template: Mapping[str, tuple[str, ...]]) -> bool:
+    """n줄 제목의 절 전체(같거나 높은 단계의 다음 제목 전까지, 하위 제목 포함)가 템플릿 빈 절과 정확히 같은가."""
+    expected = template.get(lines[n - 1].rstrip())
+    if expected is None:
+        return False
+    body: list[str] = []
+    for m in range(n + 1, limit + 1):
+        if m in heads and heads[m][0] <= level:
+            break
+        text = lines[m - 1].rstrip()
+        if text.strip():
+            body.append(text)
+            if len(body) > len(expected):
+                return False
+    return tuple(body) == expected
 
 
 def _segments(nums: list[int]) -> list[tuple[int, int]]:
@@ -372,15 +404,6 @@ def _content_nums(lines: list[str], nums: list[int]) -> list[int]:
 
 def _content_lines(lines: list[str], nums: list[int]) -> list[str]:
     return [lines[n - 1].strip() for n in _content_nums(lines, nums)]
-
-
-def _emptied_headings_note(lines: list[str], cleaned: list[tuple[int, str]]) -> tuple[str, dict[str, Any]]:
-    """빈 틀뿐이라 정리된 후속 기록 안의 제목 — 제목 자체가 할 일일 수 있어 gap 메시지(건수 먼저)와 JSON headings에 남긴다."""
-    nums = sorted(n for n, r in cleaned if r == "empty_section")
-    if not nums:
-        return "", {}
-    short, full = _heading_list(lines, nums)
-    return (f" 빈 틀 아래 제목 {len(full)}개 — 제목 자체가 할 일인지는 판정하지 않았다: {short}", {"headings": full})
 
 
 def _heading_list(lines: list[str], nums: list[int]) -> tuple[str, list[dict[str, Any]]]:
@@ -435,8 +458,9 @@ def _days_old(value: str, now: datetime) -> int | None:
 
 
 def _add_item(b: _Build, section: str, group: str, label: str, doc: Any, span: tuple[int, int],
-              drop_titles: set[str], scope: str, **extra: Any) -> _Item:
-    keep, cleaned = _clean(doc.source.lines, span[0], span[1], drop_titles)
+              title_lines: Collection[int], scope: str, *, template: Mapping[str, tuple[str, ...]] | None = None,
+              limit: int | None = None, parents: bool = True, **extra: Any) -> _Item:
+    keep, cleaned = _clean(doc.source.lines, span[0], span[1], title_lines, template, limit, parents)
     item = _Item(id=b.next_id({"constraints": "c", "context": "x", "recent": "r", "follow_ups": "f"}[section]),
                  section=section, group=group, label=evidence_search._clip(label, _FIELD_CHARS), doc=doc, span=span,
                  candidates=keep, cleaned=cleaned,
@@ -445,34 +469,33 @@ def _add_item(b: _Build, section: str, group: str, label: str, doc: Any, span: t
     return item
 
 
-def _scaffold_only_headings(lines: list[str], start: int, end: int, drop_titles: set[str]) -> list[int]:
-    """제약·규칙으로 분류된 절이 알려진 빈 틀만 거느려 정리로 비었을 때, 그 절의 제목 줄들. 제목 자체가 규칙일 수
-    있으므로(`### main 브랜치 직접 push 금지` 아래 빈 불릿) 지우지 않고 제목만 담은 제약 항목으로 남긴다. 빈 틀이 없는
-    상위 제목(하위 절만 거느림)은 해당하지 않는다 — 하위 항목의 heading_path로 실린다."""
-    keep, cleaned = _clean(lines, start, end, drop_titles)
-    if keep or not any(r == "empty_scaffolding" for _, r in cleaned):
+def _scaffold_heads(lines: list[str], keep: list[int], cleaned: list[tuple[int, str]]) -> list[int]:
+    """빈 틀(자리표시 줄·빈 불릿) 말고는 제목만 남은 항목의 제목 줄들. 제목은 지우지 않고 그대로 싣되(규칙·할 일·적용
+    범위일 수 있다), 내용이 있는 항목과 구분해 `scaffold_only`로 표시한다 — 제약 상태(`heading_empty`)·후속 상태 판단에 쓴다.
+    빈 틀이 없던 제목만의 절(원문부터 본문 없음)은 해당하지 않는다."""
+    if not any(r == "empty_scaffolding" for _, r in cleaned):
         return []
-    return [n for n, r in cleaned if r == "empty_section"]
+    content = _content_nums(lines, keep)
+    if not content or not all(_heading(lines[n - 1]) for n in content):
+        return []
+    return [n for n in keep if lines[n - 1].strip() and _heading(lines[n - 1])]
 
 
-def _add_scaffold_only(b: _Build, heads: list[int], *args: Any, **extra: Any) -> _Item:
-    item = _add_item(b, *args, scaffold_only=True, **extra)
-    item.candidates = list(heads)
-    item.cleaned = [(n, r) for n, r in item.cleaned if n not in heads]
-    return item
-
-
-def _heading_path(lines: list[str], lo: int, start: int, drop_titles: set[str]) -> list[dict[str, Any]]:
+def _heading_path(lines: list[str], lo: int, start: int, title_lines: Collection[int],
+                  heads: list[tuple[int, int, str]] | None = None) -> list[dict[str, Any]]:
     """[lo, start) 안에서 start 줄을 감싸는 상위 제목들(바깥부터). 상위 제목이 하위 절만 거느려 따로 항목이 되지 않아도
-    "운영 서버에서만 적용" 같은 적용 범위가 항목에서 떨어지지 않게 한다. 이미 항목·출처로 드러난 문서 제목은 뺀다."""
+    "운영 서버에서만 적용" 같은 적용 범위가 항목에서 떨어지지 않게 한다. 빼는 것은 줄 번호로 받은 자리 제목(문서 제목·
+    프로젝트 블록 머리 제목)뿐이다 — 문서·블록 자체가 항목의 출처·귀속으로 드러난다.
+    heads는 `_headings(lines, lo, 문서 끝)`을 미리 구한 것(같은 lo) — 항목마다 문서 앞부분을 다시 훑지 않게 한다."""
     own = _heading(lines[start - 1])
     level = own[0] if own else 7
     out: list[dict[str, Any]] = []
-    for n, lv, text in reversed(_headings(lines, lo, start - 1)):
+    before = heads[:bisect.bisect_left(heads, (start,))] if heads is not None else _headings(lines, lo, start - 1)
+    for n, lv, text in reversed(before):
         if lv >= level:
             continue
         level = lv
-        if _norm(text) not in drop_titles:
+        if n not in title_lines:
             out.append({"line": n, "level": lv, "text": evidence_search._clip(text, _FIELD_CHARS)})
         if lv == 1:
             break
@@ -489,6 +512,29 @@ def _safe_title(doc: Any, project: str) -> str:
         if not any(u.start <= doc.title_line <= u.end for u in allowed):
             return Path(doc.rel).stem
     return doc.title
+
+
+def _doc_title_lines(doc: Any) -> set[int]:
+    """문서 제목 줄 — 본문의 첫 제목이 1단계이고 1단계 제목이 그것 하나뿐일 때 그 줄. 문서 자체의 이름이라(sources[].title·
+    경로로 드러난다) 발췌·상위 제목 경로에 다시 싣지 않는다. 1단계 제목이 여럿이면 각각이 적용 범위일 수 있어 모두 남긴다."""
+    heads = _headings(doc.source.lines, doc.body_start, doc.source.total_lines)
+    if heads and heads[0][1] == 1 and sum(1 for _, lv, _ in heads if lv == 1) == 1:
+        return {heads[0][0]}
+    return set()
+
+
+def _block_title_lines(lines: list[str], unit: Any) -> set[int]:
+    """프로젝트 메모리 블록의 머리 제목 줄 — marker 바로 뒤 첫 줄(빈 줄 제외)이 그 블록 프로젝트 이름과 같은 제목일 때만
+    (`update_open_loops`가 쓰는 `## <프로젝트>`). 블록 귀속(block_evidence)·항목 이름으로 이미 드러난다."""
+    if unit.scope != "project":
+        return set()
+    for n in range(unit.start, unit.end + 1):
+        text = lines[n - 1]
+        if not text.strip() or text.startswith(evidence_search._MARKER_PREFIX):
+            continue
+        h = _heading(text)
+        return {n} if h and h[1].casefold() == unit.project.casefold() else set()
+    return set()
 
 
 def _attributed_to(doc: Any, project: str) -> bool:
@@ -522,8 +568,9 @@ def _collect_context(b: _Build) -> None:
         return
     lines = doc.source.lines
     total = doc.source.total_lines
-    drop = {_norm(_safe_title(doc, b.project)), _norm(b.project), _norm(f"{b.project} - Project Context"), _norm("Project Context")}
-    heads = _context_blocks(_headings(lines, doc.body_start, total))
+    titles = _doc_title_lines(doc)
+    all_heads = _headings(lines, doc.body_start, total)
+    heads = _context_blocks(all_heads)
     _, unclosed = _fence_map(lines, doc.body_start, total)
     if unclosed is not None:
         b.gap("unclosed_code_fence", f"Context.md {unclosed}행의 코드 블록이 닫히지 않아 그 뒤 제목(제약 절 포함)을 "
@@ -534,36 +581,52 @@ def _collect_context(b: _Build) -> None:
     starts += heads
     constraint_heads = 0
     constraint_items = 0
-    emptied_rules: list[int] = []  # 빈 틀만 남아 항목이 되지 않은 제약 제목 — 제목 자체가 규칙일 수 있어 본문에 위치를 남긴다
+    emptied_rules: list[int] = []  # 빈 틀 말고는 제목만 남은 제약 항목의 제목 — 제목 자체가 규칙일 수 있어 위치를 gap에도 남긴다
+    ends = [starts[i + 1][0] - 1 if i + 1 < len(starts) else total for i in range(len(starts))]
+    plans: list[tuple[list[int], list[tuple[int, str]], bool]] = [([], [], True)] * len(starts)
+    # 뒤에서부터 정한다 — 상위 제목은 그 절 안에 항목이 되는 하위 절이 있을 때만 하위 항목의 heading_path로 옮긴다. 하위 절이
+    # 모두 템플릿 빈 절로 지워졌으면 옮겨 실을 곳이 없으므로 상위 제목을 제 항목으로 남긴다(제목만 남은 항목).
+    for i in range(len(starts) - 1, -1, -1):
+        n, level = starts[i][0], starts[i][1]
+        keep, cleaned = _clean(lines, n, ends[i], titles, _CONTEXT_TEMPLATE_SECTIONS, total)
+        parents = True
+        if (n, "parent_heading") in cleaned:
+            below = []
+            for j in range(i + 1, len(starts)):
+                if starts[j][1] <= level:
+                    break
+                below.append(j)
+            if not any(_has_content(lines, plans[j][0]) for j in below):
+                parents = False
+                keep, cleaned = _clean(lines, n, ends[i], titles, _CONTEXT_TEMPLATE_SECTIONS, total, parents=False)
+        plans[i] = (keep, cleaned, parents)
     for i, (n, level, text, is_constraint) in enumerate(starts):
-        end = starts[i + 1][0] - 1 if i + 1 < len(starts) else total
+        end = ends[i]
         if is_constraint:
             constraint_heads += 1
         section, group = ("constraints", "constraint") if is_constraint else ("context", "context_section")
         label = text or "(첫 제목 앞 머리말)"
-        keep, _ = _clean(lines, n, end, drop)
+        keep, cleaned, parents = plans[i]
         if not _has_content(lines, keep):
             if not any(lines[m - 1].strip() for m in range(n, end + 1)):
                 continue  # 빈 줄뿐인 머리말
-            heads_only = _scaffold_only_headings(lines, n, end, drop) if is_constraint else []
-            if heads_only:
-                # 다른 제약 항목이 있어도 사라지지 않게 제약 항목으로 남긴다 — 예산은 제약 단계, 잘리면 critical_omission
-                emptied_rules.extend(heads_only)
-                _add_scaffold_only(b, heads_only, section, group, label, doc, (n, end), drop, "project",
-                                   heading_line=n if level else None, heading_level=level or None,
-                                   heading_path=_heading_path(lines, doc.body_start, n, drop))
-                continue
-            # 빈 틀·제목만 있는 절은 항목을 만들지 않고 정리 목록에만 남긴다. 하위 절만 거느린 상위 제목은 비어 있는 게
-            # 아니라 하위 항목의 적용 범위다 — 하위 항목의 heading_path로 실리고, 정리 사유도 따로 적는다.
-            parent = bool(level and i + 1 < len(starts) and starts[i + 1][1] > level
-                          and not any(lines[m - 1].strip() for m in range(n + 1, end + 1)))
+            # 여기 오는 절은 제목이 지워진 경우뿐이다: 템플릿 빈 절과 정확히 같은 절(template_section), 하위 절만 거느린
+            # 상위 제목(parent_heading — 하위 항목의 heading_path로 실린다), 문서 제목 줄(repeated_title), 제목 없는 머리말의
+            # 자리표시 줄(empty_scaffolding). 항목을 만들지 않고 정리 목록에 사유와 함께 남긴다.
+            reason = next((r for m, r in cleaned if m == n), "empty_scaffolding")
             b.states.setdefault("cleaned_sections", []).append({"path": doc.rel, "lines": [n, end], "heading": label,
-                                                                "reason": "parent_heading" if parent else "empty_section"})
+                                                                "reason": reason})
             continue
+        heads_only = _scaffold_heads(lines, keep, cleaned)
         if is_constraint:
-            constraint_items += 1
-        _add_item(b, section, group, label, doc, (n, end), drop, "project", heading_line=n if level else None,
-                  heading_level=level or None, heading_path=_heading_path(lines, doc.body_start, n, drop))
+            if heads_only:
+                emptied_rules.extend(heads_only)  # 제목만 담은 제약 항목 — 예산은 제약 단계, 잘리면 critical_omission
+            else:
+                constraint_items += 1
+        _add_item(b, section, group, label, doc, (n, end), titles, "project", template=_CONTEXT_TEMPLATE_SECTIONS,
+                  limit=total, parents=parents, heading_line=n if level else None, heading_level=level or None,
+                  heading_path=_heading_path(lines, doc.body_start, n, titles, all_heads),
+                  scaffold_only=True if heads_only else None)
     if constraint_items:
         b.states["constraints"] = "items"
     elif constraint_heads:
@@ -665,13 +728,12 @@ def _memory_units(b: _Build, key: str) -> list[tuple[Any, Any]]:
 
 
 def _collect_memory(b: _Build) -> None:
-    project_key = _norm(b.project)
     for key, group in (("current_focus", "current_focus"), ("lessons", "lessons")):
         for doc, unit in _memory_units(b, key):
             title = _safe_title(doc, b.project)
-            drop = {_norm(title), project_key, "current focus", "currentfocus", "lessons", "openloops", "open loops"}
             label = title + (" — 프로젝트 블록" if unit.scope == "project" else " — 공통")
             lines = doc.source.lines
+            titles = (_doc_title_lines(doc) | _block_title_lines(lines, unit))
             _, unclosed = _fence_map(lines, unit.start, unit.end)
             if unclosed is not None:
                 # 펜스는 블록 단위로 본다 — 닫히지 않은 펜스 뒤의 규칙 제목은 제목으로 보지 않으므로 숨기지 않고 알린다
@@ -680,68 +742,68 @@ def _collect_memory(b: _Build) -> None:
                       path=doc.rel, lines=[unclosed, unit.end])
             # 블록 안의 명시적 규칙 제목 절(제약·원칙·규칙·금지·불변식…)은 제약으로 — Context.md와 같은 제목 계층 규칙.
             # 공통/프로젝트 귀속은 그대로 두고, Context 제약과 충돌해도 어느 쪽을 우선하거나 합치지 않는다(둘 다 싣는다).
+            # 메모리 파일에는 템플릿 빈 절이 없다(init-vault 템플릿은 제목 + 자리표시 한 줄) — 제목은 자리 제목만 뺀다.
             for start, end, is_rule, heading, hline in _memory_pieces(lines, unit.start, unit.end):
-                keep, _ = _clean(lines, start, end, drop)
+                keep, cleaned = _clean(lines, start, end, titles, None, unit.end)
                 if not _has_content(lines, keep):
-                    heads_only = _scaffold_only_headings(lines, start, end, drop) if is_rule else []
-                    if heads_only:
-                        b.states["memory_rule_items"] = b.states.get("memory_rule_items", 0) + 1
-                        _add_scaffold_only(b, heads_only, "constraints", "constraint", f"{label} · 적용 규칙: {heading}",
-                                           doc, (start, end), drop, unit.scope, block_evidence=list(unit.evidence),
-                                           heading_line=hline, memory_rule=True,
-                                           heading_path=_heading_path(lines, unit.start, start, drop))
-                    continue
+                    continue  # 자리 제목·상위 제목(하위 항목 heading_path로 실림)·자리표시 줄뿐인 구간
+                heads_only = _scaffold_heads(lines, keep, cleaned)
+                extra: dict[str, Any] = {"block_evidence": list(unit.evidence), "limit": unit.end,
+                                         "heading_path": _heading_path(lines, unit.start, start, titles),
+                                         "scaffold_only": True if heads_only else None}
                 if is_rule:
                     b.states["memory_rule_items"] = b.states.get("memory_rule_items", 0) + 1
-                    _add_item(b, "constraints", "constraint", f"{label} · 적용 규칙: {heading}", doc, (start, end), drop,
-                              unit.scope, block_evidence=list(unit.evidence), heading_line=hline, memory_rule=True,
-                              heading_path=_heading_path(lines, unit.start, start, drop))
+                    _add_item(b, "constraints", "constraint", f"{label} · 적용 규칙: {heading}", doc, (start, end), titles,
+                              unit.scope, heading_line=hline, memory_rule=True, **extra)
                 else:
-                    _add_item(b, "context", group, label, doc, (start, end), drop, unit.scope,
-                              block_evidence=list(unit.evidence), heading_path=_heading_path(lines, unit.start, start, drop))
+                    _add_item(b, "context", group, label, doc, (start, end), titles, unit.scope, **extra)
     open_units = _memory_units(b, "open_loops")
     project_blocks = 0
     for doc, unit in open_units:
-        drop = {_norm(_safe_title(doc, b.project)), project_key, "openloops", "open loops"}
+        titles = _doc_title_lines(doc) | _block_title_lines(doc.source.lines, unit)
         if unit.scope == "project":
             project_blocks += 1
-            keep, cleaned = _clean(doc.source.lines, unit.start, unit.end, drop)
-            # 빈 틀(빈 불릿)만 남은 블록은 확인 불가, 제목만 있는 블록(항목을 다 지운 상태)은 기록된 항목 없음.
+            keep, cleaned = _clean(doc.source.lines, unit.start, unit.end, titles, None, unit.end)
+            # 빈 틀(빈 불릿)만 남은 블록은 확인 불가, 머리 제목만 있는 블록(항목을 다 지운 상태)은 기록된 항목 없음.
             # 내용이 "없음" 한 줄뿐이면 Next Session과 같이 명시적 없음 — 이 블록에만 해당하고, 원문 발췌는 남긴다.
-            # update_open_loops는 할 일을 불릿으로만 쓰고 `### 분류` 제목은 resolve 뒤에도 남긴다. 불릿 없이 제목만 남은 블록은
-            # 다 비운 분류인지 제목으로 적은 할 일인지 근거가 없다 — '있음'도 '없음'도 아닌 확인 불가(headings_only)로 둔다.
+            # update_open_loops는 할 일을 불릿으로만 쓰고 `### 분류` 제목은 resolve 뒤에도 남긴다. 불릿 없이 제목만 남은 블록
+            # (빈 불릿을 거느린 제목 포함)은 다 비운 분류인지 제목으로 적은 할 일인지 근거가 없다 — '있음'도 '없음'도 아닌
+            # 확인 불가(headings_only)로 두고, 제목은 지우지 않고 gap에 줄 번호와 함께 모두 남긴다.
             content = _content_nums(doc.source.lines, keep)  # 제목 판정은 원래 줄로 한다(4칸 들여쓰기는 제목이 아니다)
             state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
                      else "headings_only" if content and all(_heading(doc.source.lines[n - 1]) for n in content)
                      else "items" if content
                      else "empty" if any(r == "empty_scaffolding" for _, r in cleaned) else "block_empty")
             item = _add_item(b, "follow_ups", "project_open_loops", "프로젝트 Open Loops", doc, (unit.start, unit.end),
-                             drop, "project", follow_up_state=state, block_evidence=list(unit.evidence))
+                             titles, "project", limit=unit.end, follow_up_state=state, block_evidence=list(unit.evidence))
             shown_item = state in ("items", "explicit_none")
             b.follow_sources.append({"source": "project_open_loops", "path": doc.rel, "lines": [unit.start, unit.end],
                                      "state": state, "item": item.id if shown_item else None})
             if not shown_item:
                 b.items.remove(item)
             if state == "empty":
-                note, extra = _emptied_headings_note(doc.source.lines, cleaned)
-                b.gap("follow_up_section_empty", "OpenLoops의 이 프로젝트 블록이 빈 틀뿐이다(데이터 부족) — '없음'으로 보지 않았다."
-                      + note, path=doc.rel, lines=[unit.start, unit.end], **extra)
+                b.gap("follow_up_section_empty", "OpenLoops의 이 프로젝트 블록이 빈 틀뿐이다(데이터 부족) — '없음'으로 보지 않았다.",
+                      path=doc.rel, lines=[unit.start, unit.end])
             elif state == "headings_only":
-                heads = [n for n in keep if doc.source.lines[n - 1].strip() and _heading(doc.source.lines[n - 1])]
-                short, full = _heading_list(doc.source.lines, heads)
-                b.gap("follow_up_headings_only", f"OpenLoops의 이 프로젝트 블록에 불릿 항목 없이 제목 {len(full)}개만 남았다 — 항목을 "
-                      "다 지운 분류 제목인지 제목으로 적은 할 일인지 판정하지 않았다('없음'·'있음' 모두 아님): " + short,
-                      path=doc.rel, lines=[unit.start, unit.end], headings=full)
+                _headings_only_gap(b, doc, keep, [unit.start, unit.end], "OpenLoops의 이 프로젝트 블록에 불릿 항목 없이")
         else:
-            keep, _ = _clean(doc.source.lines, unit.start, unit.end, drop)
+            keep, _ = _clean(doc.source.lines, unit.start, unit.end, titles, None, unit.end)
             if _has_content(doc.source.lines, keep):
                 # 공통(전역) Open Loops는 이 프로젝트의 후속 항목이 아니다 — 맥락으로만 둔다
                 _add_item(b, "context", "common_open_loops", "Open Loops — 공통(이 프로젝트 후속 항목으로 보지 않음)",
-                          doc, (unit.start, unit.end), drop, "common", block_evidence=list(unit.evidence))
+                          doc, (unit.start, unit.end), titles, "common", limit=unit.end, block_evidence=list(unit.evidence))
     if b.states.get("open_loops_unreadable"):
         b.follow_sources.append({"source": "project_open_loops", "path": _MEMORY_FILES["open_loops"], "state": "unreadable"})
     elif not project_blocks:
         b.follow_sources.append({"source": "project_open_loops", "path": _MEMORY_FILES["open_loops"], "state": "no_block"})
+
+
+def _headings_only_gap(b: _Build, doc: Any, keep: list[int], rng: list[int], where: str) -> None:
+    lines = doc.source.lines
+    heads = [n for n in keep if lines[n - 1].strip() and _heading(lines[n - 1])]
+    short, full = _heading_list(lines, heads)
+    b.gap("follow_up_headings_only", f"{where} 제목 {len(full)}개만 남았다 — 항목을 다 지운 분류 제목인지 제목으로 적은 할 일인지 "
+          "판정하지 않았다('없음'·'있음' 모두 아님): " + short, path=doc.rel, lines=rng, headings=full)
 
 
 _SHARED_DECISIONS_DIR = "60_Candidates/Decisions/"
@@ -793,7 +855,7 @@ def _collect_decisions(b: _Build, decisions: list[dict], unlisted: list[dict]) -
         if spans:
             n, end = spans[0]
             item = _add_item(b, "recent", "decision", f"결정: {title}", doc, (n, end),
-                             {"결정", "decision"}, "project", **meta)
+                             {n}, "project", **meta)
             entry["item"] = item.id
             entry["state"] = "excerpt" if item.candidates else "section_empty"
             if not item.candidates:
@@ -889,19 +951,24 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                                   "후속 작업 유무는 판정하지 않았다.", path=doc.rel)
                         continue
                     for n, end in spans:
-                        drop = {name}
-                        keep, cleaned = _clean(doc.source.lines, n, end, drop)
+                        titles = {n}  # 절 머리 제목(`## Next Session` 등)은 항목 이름으로 실린다
+                        keep, cleaned = _clean(doc.source.lines, n, end, titles)
                         if section == "follow_ups":
+                            # 빈 불릿을 거느린 제목만 남은 절은 제목을 지우지 않되, 그 제목을 근거로 할 일이 있다고도 하지 않는다
+                            # (확인 불가 headings_only — 제약의 scaffold_only와 같은 기준). 빈 틀 없이 제목만 적은 절은 내용이다.
                             state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
+                                     else "headings_only" if _scaffold_heads(doc.source.lines, keep, cleaned)
                                      else "items" if _has_content(doc.source.lines, keep) else "empty")
-                            if state == "empty":
+                            if state in ("empty", "headings_only"):
                                 b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
-                                                         "state": "empty", "session_id": sid})
-                                note, extra = _emptied_headings_note(doc.source.lines, cleaned)
-                                b.gap("follow_up_section_empty", "Next Session 절이 비었거나 빈 틀뿐이다(데이터 부족) — "
-                                      "'없음'으로 보지 않았다." + note, path=doc.rel, lines=[n, end], **extra)
+                                                         "state": state, "session_id": sid})
+                                if state == "empty":
+                                    b.gap("follow_up_section_empty", "Next Session 절이 비었거나 빈 틀뿐이다(데이터 부족) — "
+                                          "'없음'으로 보지 않았다.", path=doc.rel, lines=[n, end])
+                                else:
+                                    _headings_only_gap(b, doc, keep, [n, end], "Next Session 절에 빈 틀 말고는")
                                 continue
-                            item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project",
+                            item = _add_item(b, section, group_key, label, doc, (n, end), titles, "project",
                                              follow_up_state=state, **meta)
                             b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
                                                      "state": state, "session_id": sid, "item": item.id})
@@ -909,15 +976,15 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                             if not _has_content(doc.source.lines, keep):
                                 entry.setdefault("empty", []).append(name)
                                 continue
-                            item = _add_item(b, section, group_key, label, doc, (n, end), drop, "project", **meta)
+                            item = _add_item(b, section, group_key, label, doc, (n, end), titles, "project", **meta)
                         entry["items"].append(item.id)
             elif kind == "plan":
                 for n, end in _sections_named(doc, {"goal"}):
-                    keep, _ = _clean(doc.source.lines, n, end, {"goal"})
+                    keep, _ = _clean(doc.source.lines, n, end, {n})
                     if not _has_content(doc.source.lines, keep):
                         continue
                     item = _add_item(b, "recent", "plan_goal", "Plan Goal (기록 당시 목표 — 완료 여부는 판정하지 않음)",
-                                     doc, (n, end), {"goal"}, "project", **meta)
+                                     doc, (n, end), {n}, "project", **meta)
                     entry["items"].append(item.id)
         # 검증을 통과한 문서가 모두 있고 그중 Process가 없을 때만 "Plan만 있다"고 말한다 (실패한 문서가 Process였을 수 있다)
         if valid and len(valid) == len(ordered) and "process" not in kinds:
@@ -1062,7 +1129,8 @@ def _header(item: _Item) -> str:
     if item.extra.get("follow_up_state") == "explicit_none":
         bits.append("명시적 없음 — 이 기록 범위 한정")
     if item.extra.get("scaffold_only"):
-        bits.append("본문은 빈 틀뿐 — 제목만 남김(규칙 여부는 판정하지 않음)")
+        bits.append("본문은 빈 틀뿐 — 제목만 남김(" + ("규칙 여부는" if item.section == "constraints" else "제목의 뜻은")
+                    + " 판정하지 않음)")
     bits.append(item.doc.rel)
     return "▸ " + " · ".join(bits) + _path_line(item)
 

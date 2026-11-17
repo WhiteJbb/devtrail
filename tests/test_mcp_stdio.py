@@ -152,7 +152,8 @@ def test_cli_stdio_structured_briefing_then_evidence_read() -> None:
         process_rel = "60_Candidates/SessionHandoffs/Alpha/process.md"
         notes = {
             context_rel: "---\nproject: Alpha\nupdated_at: 2099-01-01\n---\n# Alpha — Project Context\n\n## 배경\n\n"
-                         + background + "\n## 제약\n\n- 왕복 제약: 공식 영역 직접 쓰기 금지\n- \n- 두 번째 제약\n",
+                         + background + "\n## 목표\n\n- \n\n## 제약\n\n- 왕복 제약: 공식 영역 직접 쓰기 금지\n- \n- 두 번째 제약\n"
+                         "\n### 운영 서버에서만 적용\n\n- \n",
             "30_Projects/Beta/Context.md": "---\nproject: Beta\n---\n## 제약\n\n- 베타 제약\n",
             process_rel: "---\ntitle: Alpha Process\nproject: Alpha\nhandoff_type: process\nsession_id: s1\n"
                          "created_at: 2026-11-10T10:00:00\n---\n# Process\n\n## What Changed\n\n- 결과\n\n"
@@ -226,6 +227,17 @@ def test_cli_stdio_structured_briefing_then_evidence_read() -> None:
                             assert page["content"] == seg["text"] == "\n".join(
                                 raw_lines[seg["start_line"] - 1:seg["end_line"]])
                             assert seg["text"] in brief["text"]
+                        # 템플릿과 정확히 같은 빈 절(`## 목표` + `- `)만 지우고, 빈 불릿만 거느린 비템플릿 제목은 남긴다
+                        assert "## 목표" not in brief["text"]
+                        assert {"heading": "목표", "reason": "template_section"}.items() <= next(
+                            c for c in sections["context"]["cleaned_sections"] if c["heading"] == "목표").items()
+                        scope = next(i for i in sections["constraints"]["items"] if i.get("scaffold_only"))
+                        assert [h["text"] for h in scope["heading_path"]] == ["제약"]
+                        (seg,) = scope["segments"]
+                        page = await call("read_note", rel_path=context_rel, structured=True, start_line=seg["start_line"],
+                                          max_lines=1, expected_version=scope["source_version"])
+                        assert page["ok"] and page["content"] == seg["text"] == "### 운영 서버에서만 적용"
+                        assert seg["text"] in brief["text"]
                         follow = sections["follow_ups"]["items"][0]
                         assert follow["segments"][0]["text"] == "- 왕복 후속 항목" and follow["path"] == process_rel
                         # 긴 배경 뒤의 제약이 남고, 잘린 배경은 생략 위치·이어읽기 인자로 회수된다

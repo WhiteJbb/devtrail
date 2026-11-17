@@ -45,3 +45,10 @@ def test_budget_order_keeps_context_and_follow_ups_before_recent(rows):
     assert r["kept"] == {"constraint": "1/1", "context": "4/4", "follow_up": "2/2"}
     assert set(r["budget_cut"]) == {"recent"}
     assert r["critical_omission"] is False and r["text_chars"] <= 20000
+
+
+def test_non_template_headings_over_empty_bullets_are_kept(rows):
+    """템플릿과 정확히 같은 빈 절만 지운다 — 빈 불릿만 거느린 비템플릿 제목(제약·맥락·메모리·후속)은 모두 본문에 남는다."""
+    r = rows["템플릿을 고쳐 쓴 Context·빈 불릿 아래 제목"]["structured"]
+    assert r["kept"] == {"constraint": "2/2", "context": "3/3", "follow_up": "2/2"}
+    assert r["critical_omission"] is False
