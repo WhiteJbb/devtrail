@@ -799,7 +799,11 @@ def _collect_memory(b: _Build) -> None:
             # (빈 불릿을 거느린 제목 포함)은 다 비운 분류인지 제목으로 적은 할 일인지 근거가 없다 — '있음'도 '없음'도 아닌
             # 확인 불가(headings_only)로 두고, 제목은 지우지 않고 gap에 줄 번호와 함께 모두 남긴다.
             content = _content_nums(doc.source.lines, keep)  # 제목 판정은 원래 줄로 한다(4칸 들여쓰기는 제목이 아니다)
-            state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
+            # 빈 틀 아래 제목 + '없음' 한 줄도 Next Session과 같이 확인 불가다 — 그 제목만으로 있음·없음을 말하지 않는다
+            sh = _scaffold_heading_set(doc.source.lines, keep, cleaned)
+            real = [x for x in content if x not in sh]
+            state = ("headings_only" if sh and len(real) == 1 and _is_none_text(doc.source.lines[real[0] - 1].strip())
+                     else "explicit_none" if _explicit_none(doc.source.lines, keep)
                      else "headings_only" if content and all(_heading(doc.source.lines[n - 1]) for n in content)
                      else "items" if content
                      else "empty" if any(r == "empty_scaffolding" for _, r in cleaned) else "block_empty")

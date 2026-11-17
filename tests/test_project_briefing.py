@@ -1925,3 +1925,13 @@ def test_constraint_with_scaffold_heading_and_bare_heading_counts_as_items(tmp_p
     resp = _brief(tmp_path)
     assert _section(resp, "constraints")["state"] == "items"
     assert not [i for i in _items(resp, "constraints") if i.get("scaffold_only")]
+
+
+def test_open_loops_none_plus_scaffold_heading_is_unknown_like_next_session(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
+    _open_loops_block(tmp_path, "- 없음\n\n### 기타\n\n- \n")
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert {s["source"]: s["state"] for s in fu["sources_checked"]}["project_open_loops"] == "headings_only"
+    assert fu["state"] == "unknown" and "### 기타" in resp["text"]
