@@ -1857,3 +1857,71 @@ def test_parent_heading_whose_children_are_all_template_sections_is_kept(tmp_pat
     assert reasons == {"배경": "template_section", "목표": "template_section", "로컬": "parent_heading"}
     (cons,) = _items(resp, "constraints")
     assert [h["text"] for h in cons["heading_path"]] == ["로컬"]
+
+
+# ── 독립 리뷰 지적 회귀 — 문서 제목 판정, 빈 틀 아래 제목과 후속 상태 ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize("body, meta_title", [
+    ("\n# 운영 서버에서만 적용\n\n## 제약\n\n- 직접 재시작 금지\n", "Devtrail 컨텍스트"),  # 응답 제목은 frontmatter에서
+    ("\n```bash\n# 예시 주석\n```\n\n# 운영 서버에서만 적용\n\n## 제약\n\n- 직접 재시작 금지\n", None),  # 코드 블록 안 '# ' 줄이 제목
+    ("\n#\t운영 서버에서만 적용\n\n## 제약\n\n- 직접 재시작 금지\n", None),  # 탭 구분 — 응답 제목은 파일명
+])
+def test_lone_h1_is_kept_unless_it_is_the_response_title(tmp_path, body, meta_title):
+    """1단계 제목 하나가 응답의 문서 제목(sources[].title)으로 실리지 않으면 그 제목은 적용 범위로 남는다."""
+    meta = dict(type="project_context", project="Devtrail", status="active", updated_at=TODAY)
+    if meta_title:
+        meta["title"] = meta_title
+    _w(tmp_path, "30_Projects/Devtrail/Context.md", _fm(**meta) + body)
+    resp = _brief(tmp_path)
+    (cons,) = _items(resp, "constraints")
+    assert [h["text"] for h in cons["heading_path"]] == ["운영 서버에서만 적용"]
+    assert "운영 서버에서만 적용" in resp["text"]
+    src = next(s for s in resp["sources"] if s["path"].endswith("Context.md"))
+    assert src["title"] != "운영 서버에서만 적용"
+
+
+def test_lone_h1_that_is_the_response_title_is_not_repeated(tmp_path):
+    _ctx(tmp_path, "\n# 운영 서버에서만 적용\n\n## 제약\n\n- 직접 재시작 금지\n")
+    resp = _brief(tmp_path)
+    (cons,) = _items(resp, "constraints")
+    assert "heading_path" not in cons
+    assert next(s for s in resp["sources"] if s["path"].endswith("Context.md"))["title"] == "운영 서버에서만 적용"
+
+
+def test_memory_block_h1_is_kept_when_file_title_comes_from_frontmatter(tmp_path):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _w(tmp_path, "40_AgentMemory/01_CurrentFocus.md", _fm(type="agent_memory", scope="global", title="CurrentFocus",
+                                                         updated_at=TODAY)
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "# 운영 서버에서만 적용\n### 금지\n- 직접 재시작\n")
+    resp = _brief(tmp_path)
+    (rule,) = [i for i in _items(resp, "constraints") if i.get("memory_rule")]
+    assert [h["text"] for h in rule["heading_path"]] == ["운영 서버에서만 적용"]
+
+
+@pytest.mark.parametrize("next_session, state", [
+    ("- 없음\n\n### 기타\n\n- ", "headings_only"),  # '없음' + 빈 틀 아래 제목 — 있음도 없음도 아니다
+    ("### A\n\n- \n\n### B", "items"),  # 빈 틀 없이 적은 제목 B는 내용이다
+    ("### 배포\n- \n#### 확인\n- ", "headings_only"),  # 중첩된 빈 틀 아래 제목뿐
+    ("- 실제 할 일\n\n### 기타\n\n- ", "items"),
+    ("- 없음", "explicit_none"),
+    ("### 기타\n\n- 없음", "explicit_none"),
+])
+def test_next_session_state_ignores_headings_that_only_hold_scaffolding(tmp_path, next_session, state):
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process(next_session))
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert [s["state"] for s in fu["sources_checked"] if s["source"] == "next_session"] == [state]
+    for line in next_session.splitlines():
+        if line.startswith("#"):
+            assert line in resp["text"]  # 어느 경우든 제목은 본문(발췌 또는 gap)에 남는다
+
+
+def test_constraint_with_scaffold_heading_and_bare_heading_counts_as_items(tmp_path):
+    """빈 틀 아래 제목과 빈 틀 없이 적은 제목이 한 항목에 있으면 내용 있는 제약이다(scaffold_only 아님)."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n#### A\n\n- \n\n#### main 브랜치 직접 push 금지\n")
+    resp = _brief(tmp_path)
+    assert _section(resp, "constraints")["state"] == "items"
+    assert not [i for i in _items(resp, "constraints") if i.get("scaffold_only")]

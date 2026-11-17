@@ -419,9 +419,11 @@ def _has_content(lines: list[str], nums: list[int]) -> bool:
 
 def _explicit_none(lines: list[str], nums: list[int]) -> bool:
     content = _content_lines(lines, nums)
-    if len(content) != 1:
-        return False
-    text = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", content[0]).strip().rstrip(".").strip()
+    return len(content) == 1 and _is_none_text(content[0])
+
+
+def _is_none_text(text: str) -> bool:
+    text = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", text).strip().rstrip(".").strip()
     return text.casefold() in _EXPLICIT_NONE
 
 
@@ -469,14 +471,38 @@ def _add_item(b: _Build, section: str, group: str, label: str, doc: Any, span: t
     return item
 
 
+def _scaffold_heading_set(lines: list[str], keep: list[int], cleaned: list[tuple[int, str]]) -> set[int]:
+    """빈 틀 아래 제목 — 자기 본문(다음 제목 전까지, 단계 무관)이 정리된 자리표시 줄·빈 불릿뿐인 제목(`### 기타` + `- `).
+    제목은 지우지 않지만 이 제목만으로 규칙·할 일이 있다고 하지 않는다. 원문부터 본문 없이 제목만 적은 절은 해당하지 않는다(내용)."""
+    kept = {n for n in keep if lines[n - 1].strip()}
+    scaffold = {n for n, r in cleaned if r == "empty_scaffolding"}
+    last = max([*keep, *(n for n, _ in cleaned)], default=0)  # 이 항목 구간의 끝 — 그 뒤는 보지 않는다
+    out: set[int] = set()
+    for n in kept:
+        if not _heading(lines[n - 1]):
+            continue
+        body_scaffold = False
+        for m in range(n + 1, last + 1):
+            if m in kept:
+                if not _heading(lines[m - 1]):
+                    body_scaffold = False  # 남은 본문이 있다 — 내용 있는 제목
+                break
+            if m in scaffold:
+                body_scaffold = True
+            elif lines[m - 1].strip():
+                break  # 다른 이유로 정리된 제목 줄(템플릿 절·상위 제목 등) — 본문이 거기서 끝난다
+        if body_scaffold:
+            out.add(n)
+    return out
+
+
 def _scaffold_heads(lines: list[str], keep: list[int], cleaned: list[tuple[int, str]]) -> list[int]:
-    """빈 틀(자리표시 줄·빈 불릿) 말고는 제목만 남은 항목의 제목 줄들. 제목은 지우지 않고 그대로 싣되(규칙·할 일·적용
-    범위일 수 있다), 내용이 있는 항목과 구분해 `scaffold_only`로 표시한다 — 제약 상태(`heading_empty`)·후속 상태 판단에 쓴다.
-    빈 틀이 없던 제목만의 절(원문부터 본문 없음)은 해당하지 않는다."""
-    if not any(r == "empty_scaffolding" for _, r in cleaned):
-        return []
+    """빈 틀 말고는 제목만 남은 항목의 제목 줄들 — 내용 줄이 모두 빈 틀 아래 제목일 때. 제목은 지우지 않고 그대로 싣되(규칙·할 일·
+    적용 범위일 수 있다), 내용이 있는 항목과 구분해 `scaffold_only`로 표시한다 — 제약 상태(`heading_empty`) 판단에 쓴다.
+    빈 틀 없이 제목만 적은 절이 하나라도 있으면 해당하지 않는다(그 제목은 내용이다)."""
     content = _content_nums(lines, keep)
-    if not content or not all(_heading(lines[n - 1]) for n in content):
+    sh = _scaffold_heading_set(lines, keep, cleaned)
+    if not content or not all(n in sh for n in content):
         return []
     return [n for n in keep if lines[n - 1].strip() and _heading(lines[n - 1])]
 
@@ -515,10 +541,13 @@ def _safe_title(doc: Any, project: str) -> str:
 
 
 def _doc_title_lines(doc: Any) -> set[int]:
-    """문서 제목 줄 — 본문의 첫 제목이 1단계이고 1단계 제목이 그것 하나뿐일 때 그 줄. 문서 자체의 이름이라(sources[].title·
-    경로로 드러난다) 발췌·상위 제목 경로에 다시 싣지 않는다. 1단계 제목이 여럿이면 각각이 적용 범위일 수 있어 모두 남긴다."""
+    """문서 제목 줄 — 본문의 첫 제목(코드 블록 밖)이 1단계이고, 1단계 제목이 그것 하나뿐이며, **응답의 문서 제목
+    (sources[].title)이 바로 그 줄에서 왔을 때만**(doc.title_line) 그 줄. 이때만 제목 글자가 응답에 그대로 남으므로 발췌·상위
+    제목 경로에 다시 싣지 않는다. frontmatter `title:`이 있거나 제목을 다른 줄(코드 블록 안 `# ` 줄 등)에서 얻었으면 이 제목은
+    응답 어디에도 없게 되므로 남긴다. 1단계 제목이 여럿이면 각각이 적용 범위일 수 있어 모두 남긴다."""
     heads = _headings(doc.source.lines, doc.body_start, doc.source.total_lines)
-    if heads and heads[0][1] == 1 and sum(1 for _, lv, _ in heads if lv == 1) == 1:
+    if (heads and heads[0][1] == 1 and heads[0][0] == doc.title_line
+            and sum(1 for _, lv, _ in heads if lv == 1) == 1):
         return {heads[0][0]}
     return set()
 
@@ -954,11 +983,15 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                         titles = {n}  # 절 머리 제목(`## Next Session` 등)은 항목 이름으로 실린다
                         keep, cleaned = _clean(doc.source.lines, n, end, titles)
                         if section == "follow_ups":
-                            # 빈 불릿을 거느린 제목만 남은 절은 제목을 지우지 않되, 그 제목을 근거로 할 일이 있다고도 하지 않는다
-                            # (확인 불가 headings_only — 제약의 scaffold_only와 같은 기준). 빈 틀 없이 제목만 적은 절은 내용이다.
-                            state = ("explicit_none" if _explicit_none(doc.source.lines, keep)
-                                     else "headings_only" if _scaffold_heads(doc.source.lines, keep, cleaned)
-                                     else "items" if _has_content(doc.source.lines, keep) else "empty")
+                            # 빈 틀 아래 제목(`### 기타` + `- `)은 지우지 않되, 그 제목을 근거로 할 일이 있다고도(items) 없다고도
+                            # (explicit_none) 하지 않는다 — 남은 내용이 그런 제목뿐이거나 그런 제목 + 명시적 '없음' 한 줄이면 확인 불가
+                            # (headings_only). 빈 틀 없이 제목만 적은 절·실제 불릿은 내용이다.
+                            src = doc.source.lines
+                            sh = _scaffold_heading_set(src, keep, cleaned)
+                            real = [x for x in _content_nums(src, keep) if x not in sh]
+                            state = ("headings_only" if sh and (not real or (len(real) == 1 and _is_none_text(src[real[0] - 1].strip())))
+                                     else "explicit_none" if _explicit_none(src, keep)
+                                     else "items" if real else "empty")
                             if state in ("empty", "headings_only"):
                                 b.follow_sources.append({"source": "next_session", "path": doc.rel, "lines": [n, end],
                                                          "state": state, "session_id": sid})
@@ -966,7 +999,8 @@ def _collect_sessions(b: _Build, groups: list[list[dict]], unlisted: list[dict],
                                     b.gap("follow_up_section_empty", "Next Session 절이 비었거나 빈 틀뿐이다(데이터 부족) — "
                                           "'없음'으로 보지 않았다.", path=doc.rel, lines=[n, end])
                                 else:
-                                    _headings_only_gap(b, doc, keep, [n, end], "Next Session 절에 빈 틀 말고는")
+                                    _headings_only_gap(b, doc, keep, [n, end], "Next Session 절에 '없음' 한 줄 말고는 빈 틀 아래"
+                                                       if real else "Next Session 절에 빈 틀 아래")
                                 continue
                             item = _add_item(b, section, group_key, label, doc, (n, end), titles, "project",
                                              follow_up_state=state, **meta)

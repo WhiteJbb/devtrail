@@ -62,8 +62,8 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 - Context·메모리 블록 항목은 감싸는 상위 제목이 있으면 `heading_path: [{line, level, text}]`(바깥부터, 원문 줄 번호·단계·제목
   그대로)를 단다. 본문에는 머리줄 바로 아래 `  ⤷ 상위 제목: L10 ## 운영 서버에서만 적용 › L14 ### …` 한 줄로 실리고 머리줄과
   같이 예산에 잡힌다. 하위 절만 거느려 따로 항목이 되지 않는 상위 제목("운영 서버에서만 적용" 아래 `### 제약`)의 적용 범위가 제약에서
-  떨어지지 않게 하기 위해서다. 빼는 것은 줄 위치로 정한 자리 제목 — 문서 제목 줄(본문 첫 제목이 1단계이고 1단계 제목이 그것 하나뿐일
-  때)과 프로젝트 메모리 블록 머리 제목(marker 바로 뒤 `## <프로젝트>`) — 과 블록 밖 제목뿐이다. 블록 귀속 경계를 넘지 않는다. 프로젝트
+  떨어지지 않게 하기 위해서다. 빼는 것은 줄 위치로 정한 자리 제목 — 문서 제목 줄(아래 "정리"의 `repeated_title` 조건)과 프로젝트
+  메모리 블록 머리 제목(marker 바로 뒤 첫 줄의 `## <프로젝트>`) — 과 블록 밖 제목뿐이다. 블록 귀속 경계를 넘지 않는다. 프로젝트
   이름과 글자가 같은 다른 제목(`### Devtrail`)이나 1단계 제목이 여럿인 문서의 각 1단계 제목(`# 운영`·`# 로컬`)은 남는다. 결정·세션 항목은 정해진 절(`## 결정`·`## Next Session`…)이라 달지 않는다.
 - 다시 읽기: `read_note(path, structured=True, start_line, max_lines, expected_version=source_version)`. 그 사이 파일이
   바뀌었으면 `version_mismatch`로 거절된다.
@@ -138,8 +138,10 @@ OpenLoops 블록에 불릿 없이 하위 제목만 남았으면 `headings_only`(
 할 일(`### 결제 웹훅 재시도 미해결`)일 수도 있다. 어느 쪽인지 근거가 없어 '있음'(`items`)으로도 '없음'(`block_empty`)으로도 보지 않고,
 `follow_up_headings_only` gap에 제목 수와 제목 줄 위치를 남긴다(본문은 5개·제목 40자, JSON `headings`에 전체 `{line, text}`). 불릿이 하나라도 남은 블록은 `items`이고 빈 분류 제목은 발췌 안에 그대로 보인다.
 Next Session은 자유 서식이라 본문 없는 하위 제목도 내용이다(`없음` 아래 `### …` 제목이 더 있으면 `items` — 명시적 없음이 아니다).
-단 빈 불릿만 거느린 제목만 남은 Next Session(`### 기타` + `- `)은 제목을 지우지 않되 그것을 근거로 할 일이 있다고도 하지 않는다 —
-`headings_only`(확인 불가)로 두고 `follow_up_headings_only` gap에 제목을 줄 번호와 함께 싣는다(제약의 `scaffold_only`와 같은 기준).
+단 **빈 틀 아래 제목**(자기 본문이 빈 불릿·자리표시 줄뿐인 제목, `### 기타` + `- `)은 지우지 않되 그것을 근거로 할 일이 있다고도,
+없다고도 하지 않는다. Next Session에 남은 내용이 그런 제목뿐이거나 그런 제목 + 명시적 `없음` 한 줄이면 `headings_only`(확인 불가)로 두고
+`follow_up_headings_only` gap에 제목을 줄 번호와 함께 싣는다. 빈 틀 없이 적은 제목이나 실제 불릿이 하나라도 있으면 `items`다
+(`### A` + `- ` + `### B` → `items`). 제약의 `scaffold_only`도 같은 기준이다.
 내용을 거느린 하위 제목(`### 기타` 아래 `- 없음`)은 내용 줄로 세지 않는다.
 명시적 없음은 내용이 `없음·없다·해당 없음·none·n/a·na`(대소문자 무시, 앞 불릿·끝 마침표 제외) 한 줄일 때만이다 — "없음 — 단 실측은 남음"은 항목으로 본다.
 Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow_up_state: explicit_none`, 원문 발췌는 남는다). 명시적 없음은 그 기록에만
@@ -156,7 +158,7 @@ gap 메시지에 건수·줄 번호와 함께 최대 5개 실린다(JSON `headin
 `critical_omission`), `not_evaluated`.
 
 **빈 틀만 거느린 제약·규칙 제목은 사라지지 않는다.** 제약 절은 템플릿 빈 절이 아니므로(템플릿의 `## 제약 / 원칙`에는 실제 문장이 있다)
-제목은 언제나 남고 빈 틀 줄만 빠진다. 항목 하나(1~3단계 제목 절, 또는 제약 여부가 바뀌어 갈라진 절)에 빈 틀 말고는 제목만 남으면
+제목은 언제나 남고 빈 틀 줄만 빠진다. 항목 하나(1~3단계 제목 절, 또는 제약 여부가 바뀌어 갈라진 절)의 내용이 빈 틀 아래 제목뿐이면
 `scaffold_only: true`(본문 머리줄에 "본문은 빈 틀뿐 — 제목만 남김")로 표시한다. 내용이 있는 항목 안의 깊은 제목(`#### …` 아래 빈 불릿)도
 빈 틀 줄만 빠지고 제목은 그 항목 발췌에 남는다.
 `### main 브랜치 직접 push 금지` 아래 빈 불릿처럼 제목 자체가 규칙일 수 있어서다 — 규칙인지는 판정하지 않는다. 다른 제약 항목이 있든 없든
@@ -200,15 +202,17 @@ Context.md에만 쓴다(같은 `## 목표` + `- `도 Lessons 블록 안이면 �
 - `memory_marker`: `<!-- devtrail-memory-patch: … -->` 줄 (귀속 근거는 `block_evidence`로 남는다)
 - `empty_scaffolding`: 위 자리표시 줄(정확히 같은 문자열)과 글자 없는 빈 불릿 줄(`-`, `*`, `1.`). 제목이 아니고 글자가 없는 줄이다 —
   이 줄이 빠져도 그 위 제목은 남는다.
-- `repeated_title`: **줄 위치로** 정한 자리 제목만 — 문서 제목 줄(본문 첫 제목이 1단계이고 1단계 제목이 하나뿐일 때. 문서 자체 이름이라
-  `sources[].title`·경로로 드러난다), 항목 이름이 된 절 머리 제목(`## Next Session`·`## What Changed`·`## Goal`·`## 결정`), 프로젝트 메모리
-  블록 머리 제목(marker 바로 뒤 `## <프로젝트>`). 다른 위치의 같은 글자 제목은 남는다.
+- `repeated_title`: **줄 위치로** 정한 자리 제목만 — 문서 제목 줄(본문의 코드 블록 밖 첫 제목이 1단계이고, 1단계 제목이 그것 하나뿐이며,
+  응답의 `sources[].title`이 바로 그 줄에서 왔을 때만 — 그래야 제목 글자가 응답에 남는다. frontmatter `title:`이 있거나 제목을 다른 줄에서
+  얻었으면 그 1단계 제목은 적용 범위로 남는다), 항목 이름이 된 절 머리 제목(`## Next Session`·`## What Changed`·`## Goal`·`## 결정`),
+  프로젝트 메모리 블록 머리 제목(marker 바로 뒤 첫 줄이 그 블록 프로젝트 이름과 같은 제목일 때 — `update_open_loops`는 `## <프로젝트>`로 쓴다).
+  다른 위치의 같은 글자 제목은 남는다.
 - `template_section`: 위 표의 템플릿 빈 절과 절 전체가 정확히 같은 제목.
 - `parent_heading`: 이 항목 구간에 본문 없이 하위 절만 거느린 상위 제목 — 하위 절이 다음 항목으로 갈라졌다. 지운 것이 아니라 하위 항목의
   `heading_path`·본문 `⤷ 상위 제목` 줄로 옮겨 싣는다. 그래서 그 절 안에 항목이 되는 하위 절이 하나도 없으면(하위 절이 모두 템플릿 빈 절)
   옮길 곳이 없으므로 상위 제목을 제 항목(제목 한 줄)으로 남긴다.
 
-그 밖의 제목은 모두 남는다. 빈 틀 말고는 제목만 남은 Context·메모리 항목은 항목으로 실리고 `scaffold_only: true`·머리줄 "본문은 빈 틀뿐 —
+그 밖의 제목은 모두 남는다. 내용이 빈 틀 아래 제목뿐인 Context·메모리 항목은 항목으로 실리고 `scaffold_only: true`·머리줄 "본문은 빈 틀뿐 —
 제목만 남김"으로 표시된다(예산·생략 규칙은 다른 항목과 같다 — 잘리면 정확한 줄 범위와 `read`가 남는다). 원문부터 본문 없이 제목만 있는
 절도 내용이다.
 
@@ -327,8 +331,9 @@ Context에서 항목이 되지 않은 절(템플릿 빈 절·상위 제목·문�
 | 사용자 변경 지시 "템플릿과 정확히 같은 빈 틀만 지우고 나머지 제목은 남겨서 적용 범위를 보존" — 이전 규칙은 구간 전체가 빈 불릿이면 비템플릿 제목(`## 운영 서버에서만 적용` 맥락 절, 메모리 블록 `### …`, Next Session `### 기타`)을 지웠고, 프로젝트 이름과 글자가 같은 제목을 어디서든 '반복 제목'으로 지웠다 | 비교 기준이 실제 템플릿 출력과 같은지 `test_template_catalog_matches_real_repository_templates`, 제품 함수로 만든 템플릿 `test_real_init_project_template_is_cleaned_to_its_one_real_constraint`, 근사 사례 9종 `test_near_template_sections_keep_their_heading[*]`(빈 불릿 둘·`*`·`###`·띄어쓰기·비슷한 제목·비슷한 자리표시·자리표시+빈 불릿·코드 블록·비템플릿 제목), 끝 공백·CRLF `test_exact_template_section_with_trailing_whitespace_or_crlf_is_still_template`, 맥락 `test_non_template_context_heading_over_empty_bullet_is_kept_as_scaffold_only_item`, 계층 `test_template_heading_with_real_subsection_keeps_scope`·`test_multiple_h1_headings_are_all_kept_as_scope`, 혼합 `test_template_and_real_content_mixed_keeps_heading_and_content`, 유사성 `test_heading_equal_to_project_name_is_not_removed_by_similarity`, 메모리·블록 경계 `test_memory_block_keeps_template_like_heading_but_drops_block_heading`·`test_other_project_block_headings_never_leak_and_limit_stops_at_block_end`, 예산 생략 `test_scaffold_only_heading_cut_by_budget_keeps_exact_omission`(반환 `read`를 MCP `read_note`에 그대로), 고정 평가 `tests/test_briefing_eval.py::test_non_template_headings_over_empty_bullets_are_kept`. 이전 코드(ac00deb)에서 21건 실패 확인. 자체 퍼즈(무작위 Context 600개·메모리 블록 600개 — 모든 제목 줄이 발췌·정확한 생략·gap 제목
 목록 중 하나에 있거나, 지웠다면 사유가 템플릿 정확 일치·위치 제목·실제로 heading_path에 실린 상위 제목인지 검사)가 하위 절이 모두 템플릿 빈 절인
 상위 제목이 사라지는 경우를 찾아 고쳤다: `test_parent_heading_whose_children_are_all_template_sections_is_kept`(이전 코드에서 실패). 고친 뒤 퍼즈 위반 0건 | 통과 |
+| 독립 리뷰 지적(이번 변경) — (차단) 1단계 제목 하나를 위치만으로 문서 제목으로 보고 지웠는데, 응답 제목이 frontmatter `title:`·코드 블록 안 `# ` 줄·파일명에서 오면 그 제목(`# 운영 서버에서만 적용`)이 응답 어디에도 남지 않음(Context·메모리 블록). (비차단) Next Session `- 없음` + 빈 틀 아래 제목이 `has_items`, `### A` + `- ` + `### B`가 `headings_only` | `test_lone_h1_is_kept_unless_it_is_the_response_title[3종]`, `test_lone_h1_that_is_the_response_title_is_not_repeated`, `test_memory_block_h1_is_kept_when_file_title_comes_from_frontmatter`, `test_next_session_state_ignores_headings_that_only_hold_scaffolding[6종]`, `test_constraint_with_scaffold_heading_and_bare_heading_counts_as_items` (고치기 전 코드에서 7건 실패 확인). 리뷰어 재현 스크립트·퍼즈(Context 400×2, 메모리 400×3)와 자체 퍼즈(Context 500, 메모리 500) 재실행 위반 0건 | 통과 |
 | 긴 Context 조립 시간 — 항목마다 상위 제목 경로를 문서 처음부터 다시 훑어 제목이 많은 Context에서 느렸다(제목 3000개·13503줄 합성 Context에서 4.7초). 문서 제목 목록을 한 번만 구해 쓰도록 바꿨다(결과 동일, 같은 입력 0.22초). 정리도 구간 뒤는 판정에 필요한 몇 줄만 본다 | 같은 테스트·퍼즈 결과가 바뀌지 않음, 시간은 작업 컨테이너 1회 측정(환경에 따라 다르다) | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 845 통과(작업 컨테이너 실행 — 최종 판정은 같은 커밋의 깨끗한 환경 실행 결과로 한다). 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 857 통과(작업 컨테이너 실행 — 최종 판정은 같은 커밋의 깨끗한 환경 실행 결과로 한다). 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
