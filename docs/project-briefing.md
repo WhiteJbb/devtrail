@@ -30,7 +30,7 @@ get_project_briefing(project_or_repo, structured=True)  # 새 응답
 | `candidates`, `source_refs` | 기본 호출과 같은 키. `candidates`는 확정하지 못했을 때 고를 프로젝트 이름(확정이면 `[]`), `source_refs`는 소속 검증을 통과해 실제로 쓴 문서 경로(읽은 순서 — `sources`에서 `excluded` 아닌 것과 같다) |
 | `matching` | 식별 결과 — `input, status, project, method, evidence, candidates, hint, basis` (+ 확정 못 했을 때 `registered_projects`) |
 | `sections` | 표시 순서대로 5개: `constraints`, `context`, `recent`, `follow_ups`, `gaps` |
-| `omissions` | 본문에 못 넣은 구간(한 항목에 여러 건일 수 있다 — 건너뛴 긴 줄마다 한 건 + 예산·상한으로 못 넣은 나머지 구간 한 건. 나머지 구간은 보통 뒤쪽, append형 Lessons·공통 OpenLoops는 앞쪽) — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, first_read_end_line, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래) |
+| `omissions` | 본문에 못 넣은 구간(한 항목에 여러 건일 수 있다 — 건너뛴 긴 줄마다 한 건 + 예산·상한으로 못 넣은 나머지 구간 한 건. 나머지 구간은 보통 뒤쪽, append형 Lessons·공통 OpenLoops는 앞쪽) — `item, section, kind, path, lines:[시작,끝], reason, critical, read, read_continues, first_read_end_line, structured_readable` (+ `line_chars`). `read`는 MCP `read_note` 인자 그대로다(아래). gap 제목 목록에서 잘린 제목도 한 줄짜리 생략으로 여기 들어간다 — `item: null, gap: <gap 코드>, section: gaps, kind: heading, reason: heading_clipped, critical: false`(아래 "gap 제목 목록") |
 | `critical_omission` | 제약이 일부라도 본문에 없거나, 제약 출처(Context.md)를 확인하지 못했다 |
 | `requires_read` | 먼저 읽어야 할 것 — `{path, lines, reason: critical_omission, item, read}`(빠진 제약 구간) 또는 `{path, reason: context_unreadable·context_unverifiable, read: {rel_path}, unverified?}`. `read`는 그대로 `read_note(**read)` |
 | `partial` | 일부 기록을 읽지 못했다(읽기 실패·frontmatter 해석 실패로 기본 목록에서 빠진 파일·등록부 미확인) |
@@ -136,13 +136,22 @@ OpenLoops 프로젝트 블록이 빈 틀("- ")뿐이면 `empty`(확인 불가), 
 OpenLoops 블록에 불릿 없이 하위 제목만 남았으면 `headings_only`(확인 불가)다. `update_open_loops`는 할 일을 `- ` 불릿으로만 쓰고
 `section=`의 `### 분류` 제목은 resolve 뒤에도 남긴다 — 그래서 제목만 남은 블록은 할 일을 다 지운 분류일 수도, 사람이 제목으로 적은
 할 일(`### 결제 웹훅 재시도 미해결`)일 수도 있다. 어느 쪽인지 근거가 없어 '있음'(`items`)으로도 '없음'(`block_empty`)으로도 보지 않고,
-`follow_up_headings_only` gap에 제목 수와 제목 줄 위치를 남긴다(본문은 5개·제목 40자, JSON `headings`에 전체 `{line, text}`). 불릿이 하나라도 남은 블록은 `items`이고 빈 분류 제목은 발췌 안에 그대로 보인다.
+`follow_up_headings_only` gap에 제목 수와 제목 줄 위치를 남긴다(본문은 5개·제목 40자, JSON `headings`에 전체 — 아래 "gap 제목 목록"). 불릿이 하나라도 남은 블록은 `items`이고 빈 분류 제목은 발췌 안에 그대로 보인다.
 Next Session은 자유 서식이라 본문 없는 하위 제목도 내용이다(`없음` 아래 `### …` 제목이 더 있으면 `items` — 명시적 없음이 아니다).
 단 **빈 틀 아래 제목**(자기 본문이 빈 불릿·자리표시 줄뿐인 제목, `### 기타` + `- `)은 지우지 않되 그것을 근거로 할 일이 있다고도,
 없다고도 하지 않는다. Next Session에 남은 내용이 그런 제목뿐이거나 그런 제목 + 명시적 `없음` 한 줄이면 `headings_only`(확인 불가)로 두고
 `follow_up_headings_only` gap에 제목을 줄 번호와 함께 싣는다. 빈 틀 없이 적은 제목이나 실제 불릿이 하나라도 있으면 `items`다
 (`### A` + `- ` + `### B` → `items`). 제약의 `scaffold_only`도 같은 기준이다.
 내용을 거느린 하위 제목(`### 기타` 아래 `- 없음`)은 내용 줄로 세지 않는다.
+
+**gap 제목 목록** (`follow_up_headings_only`·`constraint_section_empty`의 `headings`, gap에 `source_version`): 제목마다 `{line, text}`.
+`text`는 원문 줄의 앞뒤 공백을 뺀 제목이고 200자(`_FIELD_CHARS`)까지만 싣는다 — 제목 수만큼 응답이 커지지 않게 하려는 상한이다.
+200자를 넘는 제목은 **잘렸다고 표시**하고 회수 수단을 붙인다: `text_complete: false`, `line_chars`(원문 줄 길이), `structured_readable`,
+`read`(그 한 줄을 읽는 `read_note` 인자 — 그대로 `read_note(**read)`). 같은 생략이 `omissions`에도 `reason: heading_clipped`로 들어간다
+(제목만 남은 기록은 발췌 항목이 없어 예전에는 생략도 read도 없었다). `text_complete`가 없으면 `text`가 제목 전체다. 원문 한 줄이
+16000자를 넘으면 structured로 못 읽으므로 `read`는 전문 읽기 `{rel_path}`(버전 확인 없음 — gap의 `source_version`과 대조)이고, 본문 gap
+메시지도 그 사실을 적는다. 본문 gap 메시지는 잘린 제목 수와 회수 위치(headings[].read·omissions)를 건수 바로 뒤에 적는다(본문 목록 자체는
+원래대로 5개·제목 40자 약식). 제목이 잘려도 그 제목으로 할 일·상태를 만들지 않는다(`headings_only` 판정 그대로).
 명시적 없음은 내용이 `없음·없다·해당 없음·none·n/a·na`(대소문자 무시, 앞 불릿·끝 마침표 제외) 한 줄일 때만이다 — "없음 — 단 실측은 남음"은 항목으로 본다.
 Next Session과 프로젝트 OpenLoops 블록에 같은 규칙을 쓴다(`follow_up_state: explicit_none`, 원문 발췌는 남는다). 명시적 없음은 그 기록에만
 해당한다 — 다른 세션·블록의 후속 항목을 지우거나 해결 처리하지 않는다.
@@ -332,8 +341,9 @@ Context에서 항목이 되지 않은 절(템플릿 빈 절·상위 제목·문�
 목록 중 하나에 있거나, 지웠다면 사유가 템플릿 정확 일치·위치 제목·실제로 heading_path에 실린 상위 제목인지 검사)가 하위 절이 모두 템플릿 빈 절인
 상위 제목이 사라지는 경우를 찾아 고쳤다: `test_parent_heading_whose_children_are_all_template_sections_is_kept`(이전 코드에서 실패). 고친 뒤 퍼즈 위반 0건 | 통과 |
 | 독립 리뷰 지적(이번 변경) — (차단) 1단계 제목 하나를 위치만으로 문서 제목으로 보고 지웠는데, 응답 제목이 frontmatter `title:`·코드 블록 안 `# ` 줄·파일명에서 오면 그 제목(`# 운영 서버에서만 적용`)이 응답 어디에도 남지 않음(Context·메모리 블록). (비차단) Next Session `- 없음` + 빈 틀 아래 제목이 `has_items`, `### A` + `- ` + `### B`가 `headings_only` | `test_lone_h1_is_kept_unless_it_is_the_response_title[3종]`, `test_lone_h1_that_is_the_response_title_is_not_repeated`, `test_memory_block_h1_is_kept_when_file_title_comes_from_frontmatter`, `test_next_session_state_ignores_headings_that_only_hold_scaffolding[6종]`, `test_constraint_with_scaffold_heading_and_bare_heading_counts_as_items` (고치기 전 코드에서 7건 실패 확인), 재검토에서 같은 기준을 OpenLoops `- 없음` + 빈 틀 아래 제목에도 맞춤 `test_open_loops_none_plus_scaffold_heading_is_unknown_like_next_session`. 리뷰어 재현 스크립트·퍼즈(Context 400×2, 메모리 400×3)와 자체 퍼즈(Context 500, 메모리 500) 재실행 위반 0건 | 통과 |
+| 독립 리뷰 잔존 지적(비차단으로 분류됐으나 제목 보존 요구라 보완) — 제목만 남은 후속 기록(Next Session·OpenLoops `headings_only`)의 긴 제목(리뷰 재현 364자 + 빈 불릿)이 JSON `headings[].text`에서 200자로 조용히 잘리고, 발췌 항목이 없어 `omissions`·`read`도 없었다 (리뷰 보고는 300자였으나 이 브랜치 상한은 200자다) | `test_long_heading_only_follow_up_heading_is_marked_clipped_and_recoverable[Next Session·OpenLoops × LF·CRLF+BOM]`(비ASCII 제목, 반환 `read`를 MCP `read_note`에 그대로 → 같은 원문 줄, 원문 변경 뒤 `version_mismatch`, 제목으로 항목을 만들지 않음), `test_heading_clip_boundary[199·200·201]`, `test_heading_over_read_line_limit_gives_full_read_and_version`(16000자 초과 한 줄 → 전문 읽기+`source_version`), `test_long_heading_in_other_project_block_is_never_listed`, `test_long_empty_constraint_heading_in_context_gap_is_recoverable` (고치기 전 코드에서 8건 실패, 199·200 경계 2건은 원래도 통과) | 통과 |
 | 긴 Context 조립 시간 — 항목마다 상위 제목 경로를 문서 처음부터 다시 훑어 제목이 많은 Context에서 느렸다(제목 3000개·13503줄 합성 Context에서 4.7초). 문서 제목 목록을 한 번만 구해 쓰도록 바꿨다(결과 동일, 같은 입력 0.22초). 정리도 구간 뒤는 판정에 필요한 몇 줄만 본다 | 같은 테스트·퍼즈 결과가 바뀌지 않음, 시간은 작업 컨테이너 1회 측정(환경에 따라 다르다) | 통과 |
-| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 858 통과(작업 컨테이너 실행 — 최종 판정은 같은 커밋의 깨끗한 환경 실행 결과로 한다). 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
+| 기존 소비자 회귀(MCP·CLI·훅·식별·인계 정렬·메모리 격리) | 등록 전체 검사 | 868 통과(작업 컨테이너 실행 — 최종 판정은 같은 커밋의 깨끗한 환경 실행 결과로 한다). 지정 제외 3개(`test_session_markers` 2·`test_get_recent_sessions_groups_plan_and_process`)는 이 브랜치와 `main`에서 똑같이 실패한다 — 이번 변경과 무관 |
 
 stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설정·런타임 트리·실제 vault)에는 적용·재연결하지 않았고,
 그쪽 연결 확인은 별개다([`docs/mcp-search-connection.md`](mcp-search-connection.md)의 절차).
@@ -362,6 +372,8 @@ stdio 왕복은 **제품 왕복 검증**이다. 운영 PM(실사용 Claude 설�
 맥락 목표 제목 보존이 0/3→3/3이다 — 이전 구현은 빈 불릿만 거느린 비템플릿 맥락 제목(`## HEADING_SCOPE 운영 서버에서만 적용`·
 `### HEADING_GOAL 목표`·Lessons 블록의 `### HEADING_MEMO …`)을 지웠다. 제약(`### HEADING_RULE …`)과 후속(`### HEADING_NEXT …`)은
 이전에도 남았다. 보존이 늘어난 만큼 본문·응답이 길어진다.
+
+**긴 제목 회수 보완 전후(4e81997 → 지금)**: 위 7개 사례는 text·응답 문자가 같다 — 고정 fixture에는 200자를 넘는 제목만 남은 후속 기록이 없다(이 보완이 닿지 않는다). 따로 잰 비용(같은 조건, 제목 364자 + 빈 불릿만 남은 Next Session): 제목 1개면 text 1393→1479자(+86, gap 메시지의 절단 안내), 응답 6909→7849자(+940, 제목의 `read`·표시 필드와 `omissions` 한 건). 같은 기록에 그런 제목 5개면 text 1577→1655자(+78 — 본문 gap 메시지는 400자에서 잘려 제목 수와 무관하다), 응답 8181→12014자(+3833, 제목당 약 770자). 200자 이하 제목은 비용이 늘지 않는다(gap마다 `source_version` 한 필드뿐).
 
 읽는 법:
 

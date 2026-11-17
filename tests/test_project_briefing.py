@@ -1935,3 +1935,120 @@ def test_open_loops_none_plus_scaffold_heading_is_unknown_like_next_session(tmp_
     fu = _section(resp, "follow_ups")
     assert {s["source"]: s["state"] for s in fu["sources_checked"]}["project_open_loops"] == "headings_only"
     assert fu["state"] == "unknown" and "### 기타" in resp["text"]
+
+
+# ── 독립 리뷰 잔존 지적: 제목만 남은 기록의 긴 제목이 JSON에서 조용히 잘리고 회수 수단도 없었다 ──────────────────
+
+
+def _headings_only_record(vault: Path, where: str, heading: str, *, crlf_bom: bool = False) -> tuple[str, int]:
+    """where의 후속 기록에 '긴 제목 + 빈 불릿'만 둔다(headings_only). (원문 경로, 제목 줄 번호)."""
+    _ctx(vault, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    if where == "open_loops":
+        _handoff(vault, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
+        _open_loops_block(vault, heading + "\n\n- \n")
+        rel = "40_AgentMemory/05_OpenLoops.md"
+    else:
+        _handoff(vault, "p1", "process", "s1", "2026-11-10T10:00:00", _process(heading + "\n\n- "))
+        rel = "60_Candidates/SessionHandoffs/Devtrail/p1.md"
+    if crlf_bom:
+        path = vault / rel
+        path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes().replace(b"\n", b"\r\n"))
+    return rel, _file_lines(vault, rel).index(heading) + 1
+
+
+@pytest.mark.parametrize("crlf_bom", [False, True])
+@pytest.mark.parametrize("where", ["next_session", "open_loops"])
+def test_long_heading_only_follow_up_heading_is_marked_clipped_and_recoverable(tmp_path, monkeypatch, where, crlf_bom):
+    """리뷰 재현: 364자 제목 + 빈 불릿. JSON 제목이 잘린 사실을 표시하고, 반환된 read를 그대로 넘기면 같은 원문 줄이 온다."""
+    heading = "### " + "가나다 " * 90  # 364자, 비ASCII
+    assert len(heading) == 364
+    rel, n = _headings_only_record(tmp_path, where, heading, crlf_bom=crlf_bom)
+    resp = _brief(tmp_path)
+    fu = _section(resp, "follow_ups")
+    assert fu["state"] == "unknown" and FOLLOW_UP_UNKNOWN_TEXT in fu["message"]
+    assert not [i for i in _items(resp, "follow_ups") if i["path"] == rel]  # 제목만으로 후속 항목·상태를 만들지 않는다
+    gap = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_headings_only")
+    version = content_version((tmp_path / rel).read_bytes())
+    assert gap["path"] == rel and gap["source_version"] == version
+    [h] = gap["headings"]
+    assert h["line"] == n and h["text_complete"] is False and h["line_chars"] == 364
+    assert len(h["text"]) == pb._FIELD_CHARS and h["text"].endswith("…") and heading.startswith(h["text"][:-1])
+    assert h["structured_readable"] is True
+    assert h["read"] == {"rel_path": rel, "structured": True, "start_line": n, "max_lines": 1, "expected_version": version}
+    page = _mcp_read_note(monkeypatch, tmp_path, h["read"])
+    assert page["ok"] and page["start_line"] == page["end_line"] == n and page["content"] == heading
+    # 같은 생략이 omissions에도 있다 — 항목이 아니라 gap을 가리키고, 제약이 아니라 critical이 아니다
+    [om] = [o for o in resp["omissions"] if o["reason"] == "heading_clipped"]
+    assert om["item"] is None and om["gap"] == "follow_up_headings_only" and om["section"] == "gaps"
+    assert om["path"] == rel and om["lines"] == [n, n] and om["read"] == h["read"] and om["critical"] is False
+    assert om["line_chars"] == 364 and om["first_read_end_line"] == n and om["read_continues"] is False
+    assert resp["critical_omission"] is False
+    # 본문 gap 줄은 잘렸다는 사실과 회수 위치를 알린다(제목 목록 자체는 원래대로 40자 약식)
+    line = next(l for l in resp["text"].splitlines() if l.startswith("- [follow_up_headings_only]"))
+    assert "앞부분만 실었다" in line and f"L{n} " in line
+    # 원문이 바뀌면 같은 인자의 다시 읽기는 버전 불일치로 거절된다
+    path = tmp_path / rel
+    path.write_bytes(path.read_bytes() + "- 새 줄\n".encode())
+    page = _mcp_read_note(monkeypatch, tmp_path, h["read"])
+    assert not page["ok"] and page["error"]["code"] == "version_mismatch"
+
+
+@pytest.mark.parametrize("width,clipped", [(pb._FIELD_CHARS - 1, False), (pb._FIELD_CHARS, False),
+                                           (pb._FIELD_CHARS + 1, True)])
+def test_heading_clip_boundary(tmp_path, width, clipped):
+    heading = "### " + "나" * (width - 4)
+    rel, n = _headings_only_record(tmp_path, "next_session", heading)
+    resp = _brief(tmp_path)
+    [h] = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_headings_only")["headings"]
+    heading_oms = [o for o in resp["omissions"] if o["reason"] == "heading_clipped"]
+    if clipped:
+        assert h["text_complete"] is False and h["line_chars"] == width and len(heading_oms) == 1
+    else:
+        assert h == {"line": n, "text": heading} and not heading_oms
+
+
+def test_heading_over_read_line_limit_gives_full_read_and_version(tmp_path, monkeypatch):
+    """structured 한 줄 상한(16000자)을 넘는 제목은 structured로 못 읽는다 — 전문 읽기 인자와 비교할 버전을 준다."""
+    heading = "### " + "다" * (pb.READ_MAX_CHARS + 10)
+    rel, n = _headings_only_record(tmp_path, "open_loops", heading)
+    resp = _brief(tmp_path)
+    assert len(resp["text"]) <= pb.TEXT_MAX_CHARS
+    gap = next(g for g in _items(resp, "gaps") if g["code"] == "follow_up_headings_only")
+    [h] = gap["headings"]
+    assert h["text_complete"] is False and h["structured_readable"] is False and h["read"] == {"rel_path": rel}
+    assert gap["source_version"] == content_version((tmp_path / rel).read_bytes())
+    assert "16000자를 넘는 한 줄" in gap["message"]
+    [om] = [o for o in resp["omissions"] if o["reason"] == "heading_clipped"]
+    assert om["structured_readable"] is False and om["first_read_end_line"] == n - 1
+    full = _mcp_read_note(monkeypatch, tmp_path, h["read"])
+    assert heading in (full if isinstance(full, str) else json.dumps(full, ensure_ascii=False))
+
+
+def test_long_heading_in_other_project_block_is_never_listed(tmp_path):
+    """긴 제목 처리도 블록 경계 안에서만 — 다른 프로젝트 블록의 제목·줄은 gap·omissions 어디에도 없다."""
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n- 규칙 하나\n")
+    _handoff(tmp_path, "p1", "process", "s1", "2026-11-10T10:00:00", _process("- 없음"))
+    own = "### " + "우리 " * 120
+    other = "### OTHER_SECRET " + "남의 " * 120
+    _w(tmp_path, "40_AgentMemory/05_OpenLoops.md", _fm(type="agent_memory", scope="global", updated_at=TODAY)
+       + "# OpenLoops\n\n" + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Devtrail"} -->\n'
+       + "## Devtrail\n\n" + own + "\n\n- \n\n"
+       + '<!-- devtrail-memory-patch: {"scope": "project", "project": "Other"} -->\n## Other\n\n' + other + "\n\n- \n")
+    resp = _brief(tmp_path)
+    dump = json.dumps(resp, ensure_ascii=False)
+    assert "OTHER_SECRET" not in dump and "남의" not in dump
+    ol = _file_lines(tmp_path, "40_AgentMemory/05_OpenLoops.md")
+    [om] = [o for o in resp["omissions"] if o["reason"] == "heading_clipped"]
+    assert om["lines"] == [ol.index(own) + 1] * 2
+
+
+def test_long_empty_constraint_heading_in_context_gap_is_recoverable(tmp_path, monkeypatch):
+    """Context 제약 빈 틀 gap의 제목 목록도 같은 처리 — 잘린 제목은 표시·회수 인자를 갖는다."""
+    heading = "### " + "금지 규칙 " * 50
+    _ctx(tmp_path, "\n# Devtrail\n\n## 제약\n\n" + heading + "\n\n- \n")
+    resp = _brief(tmp_path)
+    gap = next(g for g in _items(resp, "gaps") if g["code"] == "constraint_section_empty")
+    [h] = gap["headings"]
+    assert h["text_complete"] is False
+    page = _mcp_read_note(monkeypatch, tmp_path, h["read"])
+    assert page["ok"] and page["content"] == heading

@@ -406,11 +406,34 @@ def _content_lines(lines: list[str], nums: list[int]) -> list[str]:
     return [lines[n - 1].strip() for n in _content_nums(lines, nums)]
 
 
-def _heading_list(lines: list[str], nums: list[int]) -> tuple[str, list[dict[str, Any]]]:
-    """gap에 싣는 제목 목록 — 본문용 짧은 목록(5개·제목 40자)과 JSON용 전체 목록(줄 번호·제목)."""
-    full = [{"line": n, "text": evidence_search._clip(lines[n - 1].strip(), _FIELD_CHARS)} for n in nums]
+def _heading_list(doc: Any, nums: list[int]) -> tuple[str, list[dict[str, Any]], str]:
+    """gap에 싣는 제목 목록 — 본문용 짧은 목록(5개·제목 40자), JSON용 전체 목록(줄 번호·제목), 제목 절단 안내.
+
+    JSON 제목은 _FIELD_CHARS까지만 싣는다(제목 수만큼 응답이 커지지 않게). 그보다 긴 제목은 잘렸다는 표시(text_complete
+    False)·원문 줄 길이·그 한 줄을 읽는 `read_note` 인자를 함께 둔다 — 잘린 제목을 완전한 보존으로 보이지 않게 하고, 그대로
+    원문을 회수하게 한다. 16000자를 넘는 한 줄은 structured로 못 읽어 전문 읽기 인자(버전 확인 없음 — gap의
+    source_version과 비교)다. build가 이 표시로 omissions(reason heading_clipped)도 만든다.
+    """
+    lines = doc.source.lines
+    full: list[dict[str, Any]] = []
+    for n in nums:
+        text = lines[n - 1].strip()
+        entry: dict[str, Any] = {"line": n, "text": evidence_search._clip(text, _FIELD_CHARS)}
+        if len(text) > _FIELD_CHARS:
+            entry.update(text_complete=False, line_chars=len(lines[n - 1]), read=_read_args(doc, n, n),
+                         structured_readable=_read_info(doc, n, n)["structured_readable"])
+        full.append(entry)
     short = ", ".join(f"L{n} {evidence_search._clip(lines[n - 1].strip(), 40)}" for n in nums[:5])
-    return short + (f" 외 {len(nums) - 5}개" if len(nums) > 5 else ""), full
+    clipped = [h for h in full if h.get("text_complete") is False]
+    note = ""
+    if clipped:
+        note = (f" (그중 {len(clipped)}개는 {_FIELD_CHARS}자가 넘어 JSON headings에도 앞부분만 실었다 — 원문은 "
+                "headings[].read·omissions의 read로 읽는다")
+        too_long = sum(1 for h in clipped if not h["structured_readable"])
+        if too_long:
+            note += f". {too_long}개는 {READ_MAX_CHARS}자를 넘는 한 줄이라 structured로 못 읽어 전문 읽기(버전 확인 없음)다"
+        note += ")"
+    return short + (f" 외 {len(nums) - 5}개" if len(nums) > 5 else ""), full, note
 
 
 def _has_content(lines: list[str], nums: list[int]) -> bool:
@@ -661,9 +684,10 @@ def _collect_context(b: _Build) -> None:
     elif constraint_heads:
         b.states["constraints"] = "heading_empty"
         # 건수를 먼저 적는다 — 본문은 gap 메시지를 400자에서 자르므로 목록이 잘려도 건수는 남는다. 전체 목록은 JSON headings.
-        short, full = _heading_list(lines, emptied_rules)
+        short, full, note = _heading_list(doc, emptied_rules)
         b.gap("constraint_section_empty", f"Context.md에 제약 제목 절은 있지만 내용이 비어 있다(빈 틀). 빈 틀만 남은 제약 제목 "
-              f"{len(full)}개 — 제목 자체가 규칙인지는 판정하지 않았다: {short}", path=doc.rel, headings=full)
+              f"{len(full)}개{note} — 제목 자체가 규칙인지는 판정하지 않았다: {short}", path=doc.rel,
+              source_version=doc.source.version, headings=full)
     else:
         b.states["constraints"] = "none_found"
         b.gap("no_constraint_heading",
@@ -834,9 +858,10 @@ def _collect_memory(b: _Build) -> None:
 def _headings_only_gap(b: _Build, doc: Any, keep: list[int], rng: list[int], where: str) -> None:
     lines = doc.source.lines
     heads = [n for n in keep if lines[n - 1].strip() and _heading(lines[n - 1])]
-    short, full = _heading_list(lines, heads)
-    b.gap("follow_up_headings_only", f"{where} 제목 {len(full)}개만 남았다 — 항목을 다 지운 분류 제목인지 제목으로 적은 할 일인지 "
-          "판정하지 않았다('없음'·'있음' 모두 아님): " + short, path=doc.rel, lines=rng, headings=full)
+    short, full, note = _heading_list(doc, heads)
+    b.gap("follow_up_headings_only", f"{where} 제목 {len(full)}개만 남았다{note} — 항목을 다 지운 분류 제목인지 제목으로 적은 "
+          "할 일인지 판정하지 않았다('없음'·'있음' 모두 아님): " + short, path=doc.rel, lines=rng,
+          source_version=doc.source.version, headings=full)
 
 
 _SHARED_DECISIONS_DIR = "60_Candidates/Decisions/"
@@ -1653,6 +1678,15 @@ def build(
         for om_ in [_skip_omission(item, n) for n in item.skipped] + ([item.omission] if item.omission else []):
             omissions.append({"item": item.id, "section": item.section, "kind": item.group, "path": item.doc.rel,
                               "critical": item.section == "constraints", **om_})
+    # gap 제목 목록에서 잘린 제목(제목만 남은 후속 기록 등 — 발췌 항목이 없다)도 같은 자리에서 회수할 수 있게 생략으로 남긴다.
+    # 항목이 아니므로 item은 None이고 gap 코드로 가리킨다. 제약 항목의 제목이면 그 항목의 발췌·생략이 critical을 따로 맡는다
+    for g in b.gaps:
+        doc = b.docs.get(g.get("path", ""))
+        for h in g.get("headings") or ():
+            if h.get("text_complete") is False and doc is not None:
+                omissions.append({"item": None, "gap": g["code"], "section": "gaps", "kind": "heading", "path": doc.rel,
+                                  "critical": False, **_omission(doc, [h["line"], h["line"]], "heading_clipped"),
+                                  "line_chars": h["line_chars"]})
     critical_gaps = [g for g in b.gaps if g.get("critical")]
     requires_read = [{"path": om["path"], "lines": om["lines"], "reason": "critical_omission", "item": om["item"],
                       "read": om["read"]} for om in omissions if om["critical"]]
