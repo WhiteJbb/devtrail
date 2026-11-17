@@ -15,7 +15,9 @@ write_session_process는 60_Candidates/SessionHandoffs/<Project>/만, record_age
 from __future__ import annotations
 
 import json
+import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -220,13 +222,20 @@ def _canonicalize_project(vault_dir: Path, project: str) -> str:
     return match.project if match else project
 
 
-def _list_session_handoffs(vault_dir: Path, project: str) -> list[dict]:
-    """60_Candidates/SessionHandoffs/<project>/의 candidate를 frontmatter와 함께 반환한다."""
+def _list_session_handoffs(
+    vault_dir: Path, project: str, path_filter: Callable[[Path], bool] | None = None
+) -> list[dict]:
+    """60_Candidates/SessionHandoffs/<project>/의 candidate를 frontmatter와 함께 반환한다.
+
+    path_filter: 파일을 **열기 전에** 거르는 조건. None이면 기존 동작(링크도 따라 읽는다).
+    """
     handoff_dir = vault_dir / handoff_project_dir(project)
     if not handoff_dir.exists():
         return []
     items: list[dict] = []
     for md_path in sorted(handoff_dir.glob("*.md")):
+        if path_filter is not None and not path_filter(md_path):
+            continue
         try:
             post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
         except Exception:
@@ -255,6 +264,19 @@ def _handoff_timestamp(handoff: dict) -> float:
         return datetime.fromisoformat(str(value)).timestamp()
     except ValueError:
         return 0.0
+
+
+def _recent_session_groups(handoffs: list[dict], limit: int = _RECENT_HANDOFF_LIMIT) -> list[list[dict]]:
+    """briefing의 최근 세션 창 — session_id로 묶고 묶음 안 최신 시각 순으로 limit개.
+
+    기본 briefing과 structured briefing이 같은 창·정렬을 쓰도록 한 곳에 둔다.
+    """
+    sessions: dict[str, list[dict]] = {}
+    for h in handoffs:
+        sessions.setdefault(h["session_id"] or h["rel_path"], []).append(h)
+    return sorted(
+        sessions.values(), key=lambda group: max(_handoff_timestamp(h) for h in group), reverse=True
+    )[:limit]
 
 
 def _find_session_handoff(vault_dir: Path, project: str, session_id: str, handoff_type: str) -> dict | None:
@@ -452,14 +474,20 @@ def _load_project_config(repo_dir: Path) -> str:
     return str(data.get("project", "")).strip()
 
 
-def _list_decisions(vault_dir: Path, project: str, include_archived: bool = False) -> list[dict]:
+def _list_decisions(
+    vault_dir: Path, project: str, include_archived: bool = False, project_dir: str = "",
+    path_filter: Callable[[Path], bool] | None = None,
+) -> list[dict]:
     """프로젝트의 결정을 최신순으로 반환한다 — 승격 전 후보 + 승격된 정본 (+ 보관).
 
     후보만 읽으면 promote하는 순간 결정이 사라져, 검토를 성실히 할수록 컨텍스트를 잃는다.
+    project_dir: 승격 결정을 읽을 30_Projects 폴더명. 비면 project(기존 동작) — Context.md가 선언한 이름과 폴더명이
+    다른 프로젝트는 structured briefing이 실제 폴더를 넘긴다.
+    path_filter: 파일을 **열기 전에** 거르는 조건. None이면 기존 동작(링크도 따라 읽는다).
     """
     sources = [
         (vault_dir / "60_Candidates" / "Decisions", True, "candidate"),
-        (vault_dir / "30_Projects" / project / "Decisions", False, "promoted"),
+        (vault_dir / "30_Projects" / (project_dir or project) / "Decisions", False, "promoted"),
     ]
     if include_archived:
         sources.append((vault_dir / "60_Candidates" / "_Archive" / "Decisions", True, "archived"))
@@ -469,6 +497,8 @@ def _list_decisions(vault_dir: Path, project: str, include_archived: bool = Fals
         if not dir_path.exists():
             continue
         for md_path in dir_path.glob("*.md"):
+            if path_filter is not None and not path_filter(md_path):
+                continue
             try:
                 post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
             except Exception:
@@ -906,12 +936,7 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
         reverse=True,
     )
     paired_ids = {p["session_id"] for p in processes}
-    sessions: dict[str, list[dict]] = {}
-    for h in handoffs:
-        sessions.setdefault(h["session_id"] or h["rel_path"], []).append(h)
-    recent_sessions = sorted(
-        sessions.values(), key=lambda group: max(_handoff_timestamp(h) for h in group), reverse=True
-    )[:_RECENT_HANDOFF_LIMIT]
+    recent_sessions = _recent_session_groups(handoffs)
     if recent_sessions:
         excerpt_parts = []
         for group in recent_sessions:
@@ -959,6 +984,103 @@ def get_project_briefing(project_or_repo: str, settings: Settings | None = None)
         candidates=[],
         text="\n\n".join(sections),
         source_refs=source_refs,
+    )
+
+
+def _structured_source_ok(vault_dir: Path, path: Path) -> bool:
+    """structured briefing이 목록 단계에서 열어도 되는 파일 — 근거 검색 스캔(evidence_search.scan_vault)과 같은 경계.
+
+    링크 파일은 열지 않고, 링크 폴더를 거친 경로처럼 실제 위치가 요청 경로와 다르면 열지 않는다. 열기 전에 거르므로
+    범위 밖 문서의 제목·날짜 같은 메타데이터도 응답에 들어오지 않는다.
+    """
+    rel = path.relative_to(vault_dir).as_posix()
+    try:
+        if path.is_symlink():
+            return False
+    except OSError:
+        return False
+    return _real_scoped_rel(vault_dir, path) == rel
+
+
+def _unlisted_files(dir_path: Path, listed: set[str], vault_dir: Path, accept: Callable[[str, str], bool]) -> list[dict]:
+    """기본 목록 함수가 조용히 건너뛴 파일 — 읽기·frontmatter 해석 실패. structured briefing이 partial로 드러낸다.
+
+    accept(rel, text)가 False면 이 프로젝트 것이 아니라 정상적으로 빠진 파일로 보고 넘긴다.
+    읽기 경계 밖(링크) 파일은 열지 않고 경로만 알린다 — 내용·메타데이터를 응답에 싣지 않는다.
+    """
+    out: list[dict] = []
+    try:
+        if not dir_path.is_dir():
+            return out
+        # glob은 목록을 못 읽는 폴더를 조용히 빈 결과로 넘긴다(3.11) — 직접 열어 실패를 드러낸다
+        with os.scandir(dir_path):
+            pass
+        paths = sorted(dir_path.glob("*.md"))
+    except OSError as exc:
+        rel = str(dir_path.relative_to(vault_dir)).replace("\\", "/") + "/"
+        return [{"code": "read_failed", "path": rel, "message": f"폴더를 읽지 못했습니다: {exc.strerror or exc}"}]
+    for md_path in paths:
+        rel = str(md_path.relative_to(vault_dir)).replace("\\", "/")
+        if rel in listed:
+            continue
+        if not _structured_source_ok(vault_dir, md_path):
+            out.append({"code": "link_skipped", "path": rel, "skip_only": True,
+                        "message": "링크 파일이거나 실제 경로가 요청 경로와 달라 열지 않았습니다(근거 검색과 같은 읽기 경계)."})
+            continue
+        try:
+            text = md_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            out.append({"code": "read_failed", "path": rel,
+                        "message": f"파일을 읽지 못해 목록에서 빠졌습니다: {getattr(exc, 'strerror', None) or exc}"})
+            continue
+        try:
+            frontmatter.loads(text)
+        except Exception:
+            out.append({"code": "frontmatter_unparsed", "path": rel,
+                        "message": "frontmatter를 해석하지 못해 기본 목록에서 빠졌습니다 — 이 프로젝트 기록인지 확인하지 않았습니다."})
+            continue
+        if accept(rel, text):
+            out.append({"code": "unlisted", "path": rel, "message": "기본 목록에 들지 않은 파일입니다."})
+    return out
+
+
+def get_structured_project_briefing(project_or_repo: str, settings: Settings | None = None) -> dict:
+    """get_project_briefing(structured=True) — 계약은 app/services/project_briefing.py, 사용법은 docs/project-briefing.md.
+
+    최근 결정·세션의 창과 순서는 기본 briefing 함수(_list_decisions·_list_session_handoffs·_recent_session_groups)를
+    그대로 넘겨 쓴다. 이 함수들이 조용히 건너뛰는 파일은 따로 세어 partial로 드러낸다.
+    """
+    from app.services import project_briefing
+
+    vault_dir = _vault_dir(settings)
+
+    def source_ok(path: Path) -> bool:
+        return _structured_source_ok(vault_dir, path)
+
+    def unlisted_decisions(project: str, project_dir: str, decisions: list[dict]) -> list[dict]:
+        listed = {d["rel_path"] for d in decisions}
+        # 후보 폴더의 다른 프로젝트·뒤집힌 결정은 정상적으로 빠진 것이다 — 해석은 성공했으니 여기 오지 않는다
+        # 공유 후보 폴더는 모든 프로젝트의 결정 후보가 섞여 있다 — 빠진 파일의 소속을 확인할 수 없으므로 shared로 표시해
+        # 응답에는 파일명 없이 집계만 싣게 한다(파일명이 다른 프로젝트 결정의 제목 구실을 한다)
+        out = [{**w, "shared": True} for w in
+               _unlisted_files(vault_dir / "60_Candidates" / "Decisions", listed, vault_dir, lambda rel, text: False)]
+        out += _unlisted_files(vault_dir / "30_Projects" / project_dir / "Decisions", listed, vault_dir,
+                               lambda rel, text: str(frontmatter.loads(text).metadata.get("status", "") or "")
+                               .strip().lower() != "superseded")
+        return out
+
+    def unlisted_handoffs(project: str, handoffs: list[dict]) -> list[dict]:
+        listed = {h["rel_path"] for h in handoffs}
+        return _unlisted_files(vault_dir / handoff_project_dir(project), listed, vault_dir, lambda rel, text: True)
+
+    return project_briefing.build(
+        vault_dir, project_or_repo, project_map=_project_map_path(settings),
+        list_decisions=lambda p, folder: _list_decisions(vault_dir, p, project_dir=folder, path_filter=source_ok),
+        list_handoffs=lambda p: _list_session_handoffs(vault_dir, p, path_filter=source_ok),
+        recent_groups=_recent_session_groups,
+        handoff_timestamp=_handoff_timestamp,
+        unlisted_decisions=unlisted_decisions,
+        unlisted_handoffs=unlisted_handoffs,
     )
 
 

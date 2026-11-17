@@ -277,7 +277,7 @@ claude mcp add devtrail-vault -- <repo>/.venv/bin/devtrail mcp-serve
 
 | Tool | 역할 |
 |------|------|
-| `get_project_briefing` | 세션 시작 시 프로젝트 컨텍스트 · 최근 handoff · decision · Open Loops 반환 |
+| `get_project_briefing` | 세션 시작 시 프로젝트 컨텍스트 · 최근 handoff · decision · Open Loops 반환. `structured=True`면 제약·맥락·최근 결과/결정·명시적 후속 항목·정보 부족/경고/근거를 나눠 원문 줄 위치·`source_version`·생략 위치와 함께 준다 |
 | `search_vault` | read_scope 안 노트 검색 (status=stable/candidate 포함). `structured=True`면 프로젝트 범위 근거 검색 — 원문 줄 발췌·소속 근거·상태·`source_version`·cursor |
 | `read_note` | scope 안 노트 전문 읽기. `structured=True`면 줄 구간 읽기 — 전체 줄 수·잘림·다음 위치·내용 버전 |
 | `get_recent_sessions` | 프로젝트의 최근 세션 목록 (세션당 한 항목: goal · what_changed · next_session 발췌) |
@@ -318,6 +318,26 @@ read_note("60_Candidates/SessionHandoffs/Devtrail/….md", structured=True, star
   으로만 확정한다. repo 디렉터리 이름만으로는 확정하지 않는다.
 - 기본 분량: 검색 5개(최대 20)·문서당 발췌 2개×800자·응답 12000자, 구간 읽기 120줄(최대 400)·16000자.
 - 발췌와 구간 읽기는 완전한 줄만 준다. 한 줄이 상한보다 길면 줄을 자르지 않고 `line_too_long`으로 알린다(발췌는 `text: null`).
+
+### 구분된 briefing (`get_project_briefing(structured=True)`)
+
+기본 호출(`get_project_briefing(project_or_repo)` → `project/matched/candidates/text/source_refs`)과 SessionStart 훅·
+`devtrail project-briefing` CLI는 그대로다. `structured=True`를 줄 때만 새 응답이 나온다 — 계약·상한·한계는
+[`docs/project-briefing.md`](docs/project-briefing.md).
+
+```text
+get_project_briefing("Devtrail", structured=True)
+  → sections: 제약 / 프로젝트 맥락 / 기록된 최근 결과·결정 / 명시적 후속 항목 / 정보 부족·경고·근거
+    각 발췌 = 원문 줄 그대로 + path · @L시작-L끝 · source_version
+  → omissions[i].read = {rel_path, structured, start_line, max_lines, expected_version}  # read_note(**read) 그대로
+  → critical_omission=True면 requires_read(빠진 제약 구간)를 먼저 읽는다
+```
+
+- 정리로 지우는 제목은 init-project 템플릿의 빈 절과 **정확히 같은** 절(`## 배경` 자리표시·`## 목표` 빈 불릿)과 문서·블록 제목 줄뿐이다. 빈 불릿만 거느린 제목·템플릿과 비슷한 제목·깊은 제목은 남겨 적용 범위를 보존한다(기준·비교 단위는 문서의 "정리" 절).
+- 분류는 제목·메타데이터로만 한다(제약은 Context.md와 CurrentFocus·Lessons의 이 프로젝트·공통 블록에 있는 `제약·원칙·규칙·금지·불변식·constraints…` 제목 절 — 공통/프로젝트 출처를 단다). 내용으로 중요도·완료 여부를 추론하지 않는다.
+- 후속 항목은 최근 세션 Process의 `## Next Session`과 OpenLoops의 이 프로젝트 블록뿐이다(둘 다 명시적 "없음"은 그 기록에만 해당). Plan Goal은 기록 당시 목표로 따로 둔다. 후속 기록이 본문에서 생략되면 "후속 작업 유무를 확인하지 못한 기록 있음"으로 표시한다.
+- text 본문은 20000자 이하·완전한 줄만. 표시는 제약 → 맥락 → 최근 결과·결정 → 후속 항목 → 정보 부족·경고·근거, 예산은 제약 → 맥락 → 후속 항목 → 최근 결과·결정 순으로 배정한다. 응답 JSON 전체는 상한이 없고 `budget.response_chars`로 잰다(기본 호출보다 수 배 크다 — 측정은 문서 참조).
+- 프로젝트는 명시적 근거로만 확정한다(repo 디렉터리 이름만으로는 안 된다 — 기본 호출과 다르다). 확정 못 하면 어떤 프로젝트 기록도 넣지 않는다.
 
 ### 새 머신 점검 — `devtrail doctor`
 
